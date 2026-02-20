@@ -68,7 +68,10 @@ class Head:
             sound_path = f"{self._emotions_storage.abspath()}/{name}.wav"
 
         await self.mini.async_play_move(RecordedMove(move=params, sound_path=sound_path))
-        await self.reset()
+        await self.mini.async_play_move(move=HeadMove(
+            self.mini.get_current_head_pose(),
+            create_head_pose(),
+        ))
 
     async def move(
             self,
