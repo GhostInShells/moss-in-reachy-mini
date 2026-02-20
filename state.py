@@ -13,6 +13,7 @@ class ReachyMiniState:
         self.waken = asyncio.Event()
         self.tracking = asyncio.Event()
         self.twisting = asyncio.Event()
+        self.flapping = asyncio.Event()
         self.start_body_yaw = 0.0
 
 

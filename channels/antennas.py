@@ -51,9 +51,7 @@ class Antennas:
         self.logger = logger
 
         self.is_idle = asyncio.Event()
-        self.idle_move_enable = asyncio.Event()
-        self.idle_move_enable.set()
-        self.idle_move_params: List[Dict] = [
+        self.idle_flapping_params: List[Dict] = [
             {"left": 30, "right": -30, "duration": 1.0},
             {"left": -10, "right": 10, "duration": 1.0},
         ]
@@ -87,7 +85,7 @@ class Antennas:
             duration=duration,
         ))
 
-    async def set_idle_move(self,  text__: str):
+    async def set_idle_flapping(self, text__: str):
         """
         Give a params to move antennas on idle state
 
@@ -95,16 +93,16 @@ class Antennas:
             text__ (str): using JSON to implement the cyclic reciprocation of antenna movements, like `[{"left": 30, "right": -30, "duration": 1.0}, {"left": -10, "right": 10, "duration": 1.0}]`
         """
 
-        self.idle_move_params = json.loads(text__)
+        self.idle_flapping_params = json.loads(text__)
 
-    async def idle_move_switch(self, enable: bool=True):
+    async def flapping_switch(self, enable: bool=True):
         """
         Enable antenna move on idle state or not.
         """
         if enable:
-            self.idle_move_enable.set()
+            self._state.flapping.set()
         else:
-            self.idle_move_enable.clear()
+            self._state.flapping.clear()
 
     def _get_current_position(self):
         r_rad, l_rad = self.mini.get_present_antenna_joint_positions()
@@ -119,9 +117,9 @@ class Antennas:
             Text(text=f"Current antennas right degree:{r_degree}, left degree: {l_degree}")
         )
 
-        if self.idle_move_enable.is_set():
+        if self._state.flapping.is_set():
             msg.with_content(
-                Text(text=f"You are moving antenna on idle with move {self.idle_move_params}")
+                Text(text=f"You are flapping antenna on idle with move {self.idle_flapping_params}")
             )
 
         return [msg]
@@ -129,8 +127,8 @@ class Antennas:
     async def on_policy_run(self):
         await self.reset(duration=1.0)
         self.is_idle.set()
-        while self._state.waken.is_set() and self.is_idle.is_set() and self.idle_move_enable.is_set():
-            for params in self.idle_move_params:
+        while self._state.waken.is_set() and self.is_idle.is_set() and self._state.flapping.is_set():
+            for params in self.idle_flapping_params:
                 await self.move(**params)
                 await asyncio.sleep(0.1)
 
@@ -142,11 +140,11 @@ class Antennas:
         antennas = PyChannel(name="antennas", description="This channel should only be used when the user explicitly and actively specifies an antenna-related command.", block=True)
 
         antennas.build.with_context_messages(self.context_messages)
-        antennas.build.on_policy_run(self.on_policy_run)
-        antennas.build.on_policy_pause(self.on_policy_pause)
+        # antennas.build.on_policy_run(self.on_policy_run)
+        # antennas.build.on_policy_pause(self.on_policy_pause)
         antennas.build.command()(self.move)
         antennas.build.command()(self.reset)
-        antennas.build.command()(self.set_idle_move)
-        antennas.build.command()(self.idle_move_switch)
+        # antennas.build.command()(self.set_idle_flapping)
+        # antennas.build.command()(self.flapping_switch)
 
         return antennas

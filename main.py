@@ -86,11 +86,9 @@ class ReachyMiniMoss:
     async def on_policy_run(self):
         if not self._state.waken.is_set():
             return
-        if not self._state.twisting.is_set():
-            return
 
         self._enable_twisting.set()
-        while self._enable_twisting.is_set():
+        while self._enable_twisting.is_set() and self._state.twisting.is_set():
             await self.mini.async_play_move(
                 BodyYawMove(self._state.start_body_yaw, 10, 1.5),
             )
@@ -113,10 +111,10 @@ class ReachyMiniMoss:
         body.build.command()(self.wake_up)
         body.build.command()(self.goto_sleep)
 
-        body.build.command()(self.start_twisting)
-        body.build.command()(self.stop_twisting)
-        body.build.on_policy_run(self.on_policy_run)
-        body.build.on_policy_pause(self.on_policy_pause)
+        # body.build.command()(self.start_twisting)
+        # body.build.command()(self.stop_twisting)
+        # body.build.on_policy_run(self.on_policy_run)
+        # body.build.on_policy_pause(self.on_policy_pause)
 
         body.import_channels(
             self._head.as_channel(),
