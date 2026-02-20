@@ -56,7 +56,10 @@ class Head:
         if not AVAILABLE_MOVES.get(name):
             raise ValueError(f'{name} is not a valid dance')
         await self.mini.async_play_move(DanceMove(name))
-        await self.reset()
+        await self.mini.async_play_move(move=HeadMove(
+            self.mini.get_current_head_pose(),
+            create_head_pose(),
+        ))
 
     async def emotion(self, name: str, play_sound: bool = True):
         params = self._emotions.get(name)
