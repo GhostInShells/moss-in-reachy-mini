@@ -50,6 +50,11 @@ class CameraWorker:
         self.face_tracking_lock = threading.Lock()
         self.face_positons: List[Position] = []
         self.current_track_id = -1
+        
+        # Smoothing parameters
+        self.smoothing_alpha = 0.3  # Exponential smoothing factor (0.1-0.3 for smooth tracking)
+        self.max_movement_per_frame = 0.08  # Maximum movement per frame to prevent jerky motion
+        self.prev_face_position = None  # Previous face position for smoothing
 
         # Face tracking timing variables (same as main_works.py)
         self.last_face_detected_time: float | None = None
@@ -170,16 +175,29 @@ class CameraWorker:
                             translation *= 0.6
                             rotation *= 0.6
 
-                            # Thread-safe update of face tracking offsets (use pose as-is)
+                            # Apply smoothing to prevent jerky movements
                             with self.face_tracking_lock:
-                                self.face_tracking_offsets = [
-                                    translation[0],
-                                    translation[1],
-                                    translation[2],  # x, y, z
-                                    rotation[0],
-                                    rotation[1],
-                                    rotation[2],  # roll, pitch, yaw
-                                ]
+                                current_offsets = self.face_tracking_offsets
+                                smoothed_offsets = []
+                                
+                                # Combine translation and rotation for smoothing
+                                target_values = list(translation) + list(rotation)
+                                
+                                for i, target in enumerate(target_values):
+                                    # Exponential smoothing
+                                    smoothed = current_offsets[i] * (1 - self.smoothing_alpha) + target * self.smoothing_alpha
+                                    
+                                    # Velocity limiting to prevent sudden jumps
+                                    max_change = self.max_movement_per_frame
+                                    if abs(smoothed - current_offsets[i]) > max_change:
+                                        if smoothed > current_offsets[i]:
+                                            smoothed = current_offsets[i] + max_change
+                                        else:
+                                            smoothed = current_offsets[i] - max_change
+                                    
+                                    smoothed_offsets.append(smoothed)
+                                
+                                self.face_tracking_offsets = smoothed_offsets
 
                         # No face detected while tracking enabled - set face lost timestamp
                         elif self.last_face_detected_time is None or self.last_face_detected_time == current_time:
