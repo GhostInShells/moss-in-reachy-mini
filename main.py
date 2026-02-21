@@ -16,13 +16,14 @@ from reachy_mini.utils import create_head_pose
 from audio.player import ReachyMiniStreamPlayer
 from channels.antennas import Antennas
 from channels.head import Head, HeadMove
+from listener.chat.console_ptt import ConsolePTTChat
 from reachy_mini_dances_library import DanceMove
 from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 from state import ReachyMiniState, BodyYawMove
 from utils import load_instructions, load_emotions
 
 logger = logging.getLogger('reachy_mini_moss')
-logger.setLevel(logging.INFO)
+# logger.setLevel(logging.INFO)
 
 
 class ReachyMiniMoss:
@@ -270,6 +271,7 @@ async def run_agent(container, root_dir):
             )
             agent = SimpleAgent(
                 instruction=instructions,
+                chat=ConsolePTTChat(logger=logger, mini=_mini),
                 shell=shell,
                 speech=speech,
                 model=ModelConf(
