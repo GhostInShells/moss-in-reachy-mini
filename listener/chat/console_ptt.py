@@ -46,11 +46,10 @@ class ConsolePTTChat(BaseChat):
         self._quit_event = threading.Event()
         self._input_thread: Optional[threading.Thread] = None
 
-        self._setup_enter_to_talk_mode(mini)
-
         # 打印启动信息
         self._print_startup_info()
 
+        self._setup_enter_to_talk_mode(mini)
         self.ai_response_done = asyncio.Event()
 
     def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):

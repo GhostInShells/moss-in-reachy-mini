@@ -103,7 +103,7 @@ class ListenerConfig(YamlConfig):
     )
 
     default_state_name: Literal["listening", "deaf", "asleep"] = Field(
-        default=ListenerStateName.listening.value,
+        default=ListenerStateName.pdt_waiting.value,
         description="开启后默认的状态",
     )
 

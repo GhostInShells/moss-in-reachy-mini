@@ -138,8 +138,8 @@ class ReachyMiniInput(AudioInput):
         try:
             # 直接读取数据
             data = self.mini.media.get_audio_sample()
-            if data is None or not data.any():
-                return self._return_zero(duration) if duration is not None else np.array([], dtype=self.dtype)
+            if data is None:
+                return self._return_zero(duration)
 
             # 转换为numpy数组
             np_data = np.frombuffer(data, dtype=self.dtype)

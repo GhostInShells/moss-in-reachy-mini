@@ -1,11 +1,13 @@
+import asyncio
 import logging
+from typing import Optional
 
 from ghoshell_container import IoCContainer
 from ghoshell_moss import PyChannel, Message, Text
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
-from moves.head_move import HeadMove
+from moves.head_move import HeadMove, BreathingMove
 from state import ReachyMiniState
 from vision.head_tracker import HeadTracker
 from vision.yolo.model import stringify_positions
@@ -18,7 +20,11 @@ class Head:
         self.logger = logger
 
         self._head_tracker = HeadTracker(mini, logger)
+        self._tracking_event = asyncio.Event()
 
+        self._breathing_task: Optional[asyncio.Task] = None
+        self._breathing_event = asyncio.Event()
+        self._breathing_event.set()
 
     async def move(
             self,
@@ -51,7 +57,7 @@ class Head:
         """
         Reset the head, watching forward
         """
-        self._state.tracking.clear()
+        self._tracking_event.clear()
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(),
@@ -62,16 +68,38 @@ class Head:
         """
         Keep gazing at the user.
         """
-        self._state.tracking.set()
+        self._tracking_event.set()
         self._head_tracker.set_tracking_id(tracking_id)
 
     async def stop_tracking_face(self):
-        self._state.tracking.clear()
+        self._tracking_event.clear()
         self._head_tracker.set_tracking_id(-1)
+
+    async def start_breathing(self):
+        self._breathing_event.set()
+
+    async def stop_breathing(self):
+        self.mini.set_target_body_yaw(0.0)
+        self._breathing_event.clear()
+
+    async def _breathing(self):
+        try:  # 捕获取消异常，确保任务优雅退出
+            if self._state.waken.is_set() and self._breathing_event.is_set():
+                _, current_antennas = self.mini.get_current_joint_positions()
+                current_head_pose = self.mini.get_current_head_pose()
+                breathing_move = BreathingMove(
+                    interpolation_start_pose=current_head_pose,
+                    interpolation_start_antennas=current_antennas,
+                    interpolation_duration=1.0,
+                )
+                await self.mini.async_play_move(breathing_move)
+        except asyncio.CancelledError:
+            self.logger.info("Breathing task was cancelled")
+            raise  # 重新抛出，让外层await能捕获
 
     async def context_messages(self):
         msg = Message.new(role="user", name="__reachy_mini_head__")
-        if self._state.tracking.is_set() and self._head_tracker.face_tracking_positions:
+        if self._tracking_event.is_set() and self._head_tracker.face_tracking_positions:
             msg.with_content(
                 Text(text=f"You are keep looking user with head tracking"),
                 Text(text=f"Head tracking information is {stringify_positions(self._head_tracker.face_tracking_positions)}"),
@@ -86,12 +114,37 @@ class Head:
 
     async def on_policy_run(self):
         self.logger.info(f"Running Head on-policy run, waken is {self._state.waken.is_set()}")
-        if self._state.waken.is_set() and self._state.tracking.is_set():
+        if not self._state.waken.is_set():
+            return
+
+        if self._tracking_event.is_set():
             self._head_tracker.enabled.set()
+        else:
+            if not self._breathing_event.is_set():
+                return
+            # 先取消旧任务（如果存在），避免多任务并发
+            if self._breathing_task and not self._breathing_task.done():
+                self._breathing_task.cancel()
+                try:
+                    await self._breathing_task
+                except asyncio.CancelledError:
+                    pass
+            self._breathing_task = asyncio.create_task(self._breathing())
 
     async def on_policy_pause(self):
         self.logger.info("Running Head on-policy pause")
         self._head_tracker.enabled.clear()
+
+        # 1. 边界检查：任务存在且未完成时才取消
+        if self._breathing_task and not self._breathing_task.done():
+            self._breathing_task.cancel()
+            try:
+                # 2. 捕获取消异常，避免程序崩溃
+                await self._breathing_task
+            except asyncio.CancelledError:
+                self.logger.info("Breathing task cancelled successfully")
+            finally:
+                self._breathing_task = None
 
     def as_channel(self) -> PyChannel:
         head = PyChannel(name="head", block=True)

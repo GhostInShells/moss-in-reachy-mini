@@ -51,7 +51,8 @@ class Antennas:
         self.logger = logger
 
         self._flapping_task: Optional[asyncio.Task] = None
-        self._state.flapping.set()
+        self._flapping_event = asyncio.Event()
+        self._flapping_event.set()
         self.idle_flapping_params: List[Dict] = [
             {"left": 30, "right": -30, "duration": 1.0},
             {"left": -10, "right": 10, "duration": 1.0},
@@ -101,9 +102,9 @@ class Antennas:
         Enable antenna move on idle state or not.
         """
         if enable:
-            self._state.flapping.set()
+            self._flapping_event.set()
         else:
-            self._state.flapping.clear()
+            self._flapping_event.clear()
 
     def _get_current_position(self):
         r_rad, l_rad = self.mini.get_present_antenna_joint_positions()
@@ -118,7 +119,7 @@ class Antennas:
             Text(text=f"Current antennas right degree:{r_degree}, left degree: {l_degree}")
         )
 
-        if self._state.flapping.is_set():
+        if self._flapping_event.is_set():
             msg.with_content(
                 Text(text=f"You are flapping antenna on idle with move {self.idle_flapping_params}")
             )
@@ -127,7 +128,7 @@ class Antennas:
 
     async def _flapping(self):
         try:  # 捕获取消异常，确保任务优雅退出
-            while self._state.waken.is_set() and self._state.flapping.is_set():
+            while self._state.waken.is_set() and self._flapping_event.is_set():
                 for params in self.idle_flapping_params:
                     await self.move(**params)
                     await asyncio.sleep(0.1)
