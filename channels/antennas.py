@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 import numpy as np
 from numpy import typing as npt
@@ -50,7 +50,8 @@ class Antennas:
         self._state = state
         self.logger = logger
 
-        self.is_idle = asyncio.Event()
+        self._flapping_task: Optional[asyncio.Task] = None
+        self._state.flapping.set()
         self.idle_flapping_params: List[Dict] = [
             {"left": 30, "right": -30, "duration": 1.0},
             {"left": -10, "right": 10, "duration": 1.0},
@@ -95,7 +96,7 @@ class Antennas:
 
         self.idle_flapping_params = json.loads(text__)
 
-    async def flapping_switch(self, enable: bool=True):
+    async def enable_flapping(self, enable: bool=True):
         """
         Enable antenna move on idle state or not.
         """
@@ -124,27 +125,52 @@ class Antennas:
 
         return [msg]
 
+    async def _flapping(self):
+        try:  # 捕获取消异常，确保任务优雅退出
+            while self._state.waken.is_set() and self._state.flapping.is_set():
+                for params in self.idle_flapping_params:
+                    await self.move(**params)
+                    await asyncio.sleep(0.1)
+
+        except asyncio.CancelledError:
+            self.logger.info("Flapping task was cancelled")
+            raise  # 重新抛出，让外层await能捕获
+
     async def on_policy_run(self):
+        self.logger.info("on_policy_run antennas")
         await self.reset(duration=1.0)
-        self.is_idle.set()
-        while self._state.waken.is_set() and self.is_idle.is_set() and self._state.flapping.is_set():
-            for params in self.idle_flapping_params:
-                await self.move(**params)
-                await asyncio.sleep(0.1)
+        # 先取消旧任务（如果存在），避免多任务并发
+        if self._flapping_task and not self._flapping_task.done():
+            self._flapping_task.cancel()
+            try:
+                await self._flapping_task
+            except asyncio.CancelledError:
+                pass
+        self._flapping_task = asyncio.create_task(self._flapping())
 
     async def on_policy_pause(self):
-        self.is_idle.clear()
+        self.logger.info("on_policy_pause antennas")
+        # 1. 边界检查：任务存在且未完成时才取消
+        if self._flapping_task and not self._flapping_task.done():
+            self._flapping_task.cancel()
+            try:
+                # 2. 捕获取消异常，避免程序崩溃
+                await self._flapping_task
+            except asyncio.CancelledError:
+                self.logger.info("Flapping task cancelled successfully")
+            finally:
+                self._flapping_task = None
         await self.reset(duration=0.5)
 
     def as_channel(self) -> PyChannel:
         antennas = PyChannel(name="antennas", description="This channel should only be used when the user explicitly and actively specifies an antenna-related command.", block=True)
 
         antennas.build.with_context_messages(self.context_messages)
-        # antennas.build.on_policy_run(self.on_policy_run)
-        # antennas.build.on_policy_pause(self.on_policy_pause)
+        antennas.build.on_policy_run(self.on_policy_run)
+        antennas.build.on_policy_pause(self.on_policy_pause)
         antennas.build.command()(self.move)
         antennas.build.command()(self.reset)
-        # antennas.build.command()(self.set_idle_flapping)
-        # antennas.build.command()(self.flapping_switch)
+        antennas.build.command()(self.set_idle_flapping)
+        antennas.build.command()(self.enable_flapping)
 
         return antennas

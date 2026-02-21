@@ -1,9 +1,12 @@
 import asyncio
+import logging
 from typing import Tuple, List
 
+import numpy as np
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
+from moves.head_move import HeadMove
 from vision.camera_worker import CameraWorker
 from vision.yolo.head_detector import HeadDetector
 from vision.yolo.model import Position
@@ -11,8 +14,9 @@ from vision.yolo.model import Position
 
 class HeadTracker:
 
-    def __init__(self, mini: ReachyMini):
+    def __init__(self, mini: ReachyMini, logger: logging.Logger):
         self._mini = mini
+        self.logger = logger
         self._camera_worker = CameraWorker(mini, HeadDetector())
 
         self.face_tracking_offsets: List[float] = [
@@ -52,6 +56,14 @@ class HeadTracker:
                 degrees=False,
                 mm=False,
             )
+
+            current_head_pose = self._mini.get_current_head_pose()
+
+            is_close = np.allclose(current_head_pose, new_pose, rtol=0.1, atol=0.1)
+            self.logger.debug(f"Current head pose is close to new head pose {is_close}. {np.abs(current_head_pose - new_pose)}")
+            if is_close:
+                continue
+
             self._mini.set_target(head=new_pose)
 
     async def start(self):
