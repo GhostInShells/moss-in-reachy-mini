@@ -173,7 +173,7 @@ class BoringState(BaseState):
         self.turn_to_asleep = turn_to_asleep
         self.back_to_waken = back_to_waken
 
-        self._time_to_sleep = 60 * 5 # 5分钟
+        self._time_to_sleep = 30 # 30秒
         self._emotion_prob = 0.03 # 目标：每秒有3%的概率触发函数
 
     async def on_enter(self):
