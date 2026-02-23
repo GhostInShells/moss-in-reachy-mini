@@ -107,6 +107,7 @@ class WakenState(BaseState):
     async def on_enter(self):
         self.mini.enable_motors()
         self.mini.wake_up()
+        self._proactive_prob = 0.03 # 重置概率
 
     async def on_exit(self):
         await self.cancel_idle_move()
@@ -122,7 +123,7 @@ class WakenState(BaseState):
             per_loop_prob = 1 - math.pow(1 - self._proactive_prob, 1 / loop_times_per_second)  # 每次循环的概率
             if random.random() < per_loop_prob:
                 self._proactive_input(random.choice(Proactive_Prompts))
-                self._proactive_prob -= 0.01  # 降低触发概率
+                self._proactive_prob -= 0.01
 
     async def start_idle_move(self):
         await super().start_idle_move()
@@ -133,7 +134,6 @@ class WakenState(BaseState):
         await super().cancel_idle_move()
         await self.head.on_policy_pause()
         await self.antennas.on_policy_pause()
-        self._proactive_prob = 0.03  # 重置触发概率
 
     def set_proactive_input(self, handle_input):
         self._proactive_input = handle_input
