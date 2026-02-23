@@ -8,15 +8,13 @@ from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
 from moves.head_move import HeadMove, BreathingMove
-from state import ReachyMiniState
 from vision.head_tracker import HeadTracker
 from vision.yolo.model import stringify_positions
 
 
 class Head:
-    def __init__(self, mini: ReachyMini, state: ReachyMiniState, logger: logging.Logger, container: IoCContainer):
+    def __init__(self, mini: ReachyMini, logger: logging.Logger, container: IoCContainer):
         self.mini = mini
-        self._state = state
         self.logger = logger
 
         self._head_tracker = HeadTracker(mini, logger)
@@ -84,7 +82,7 @@ class Head:
 
     async def _breathing(self):
         try:  # 捕获取消异常，确保任务优雅退出
-            if self._state.waken.is_set() and self._breathing_event.is_set():
+            if self._breathing_event.is_set():
                 _, current_antennas = self.mini.get_current_joint_positions()
                 current_head_pose = self.mini.get_current_head_pose()
                 breathing_move = BreathingMove(
@@ -113,9 +111,7 @@ class Head:
         return [msg]
 
     async def on_policy_run(self):
-        self.logger.info(f"Running Head on-policy run, waken is {self._state.waken.is_set()}")
-        if not self._state.waken.is_set():
-            return
+        self.logger.info(f"Running Head on-policy run")
 
         if self._tracking_event.is_set():
             self._head_tracker.enabled.set()

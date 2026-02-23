@@ -10,7 +10,6 @@ from reachy_mini import ReachyMini
 from reachy_mini.motion.move import Move
 from reachy_mini.utils.interpolation import time_trajectory
 
-from state import ReachyMiniState
 from ghoshell_moss import PyChannel, Message, Text
 
 
@@ -45,9 +44,8 @@ class AntennasMove(Move):
         return None, np.array([r_rad, l_rad]), None
 
 class Antennas:
-    def __init__(self, mini: ReachyMini, state: ReachyMiniState, logger: logging.Logger):
+    def __init__(self, mini: ReachyMini, logger: logging.Logger):
         self.mini = mini
-        self._state = state
         self.logger = logger
 
         self._flapping_task: Optional[asyncio.Task] = None
@@ -128,7 +126,7 @@ class Antennas:
 
     async def _flapping(self):
         try:  # 捕获取消异常，确保任务优雅退出
-            while self._state.waken.is_set() and self._flapping_event.is_set():
+            while self._flapping_event.is_set():
                 for params in self.idle_flapping_params:
                     await self.move(**params)
                     await asyncio.sleep(0.1)
@@ -139,7 +137,7 @@ class Antennas:
 
     async def on_policy_run(self):
         self.logger.info("on_policy_run antennas")
-        await self.reset(duration=1.0)
+        # await self.reset(duration=1.0)
         # 先取消旧任务（如果存在），避免多任务并发
         if self._flapping_task and not self._flapping_task.done():
             self._flapping_task.cancel()

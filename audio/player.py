@@ -20,7 +20,7 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
         mini: ReachyMini,
         *,
         logger: LoggerItf | None = None,
-        safety_delay: float = 0.1,
+        safety_delay: float = 0.2,
     ):
         """
         基于 PyAudio 的异步音频播放器实现
