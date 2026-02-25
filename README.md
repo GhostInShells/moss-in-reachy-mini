@@ -11,3 +11,8 @@ uv sync
 ```commandline
 cp .env.example .env
 ```
+
+## Run Reachy Mini
+```
+.venv/bin/python src/moss_in_reachy_mini/main.py
+```
