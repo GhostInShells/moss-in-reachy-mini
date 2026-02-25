@@ -27,3 +27,11 @@ includes = []
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=1.1.0",
+    "anyio>=4.10.0",
+]

@@ -4,15 +4,21 @@ import os
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import Container, get_container
-from ghoshell_moss import Speech
+from ghoshell_moss import Speech, MOSSShell, Message, Text
 from ghoshell_moss import new_shell
 from ghoshell_moss.core.shell.main_channel import create_main_channel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
-from ghoshell_moss_contrib.agent import ModelConf
+from ghoshell_moss_contrib.agent import ConsoleChat
 from reachy_mini import ReachyMini
 
-from agent import ReachyMiniAgent
+from framework.abcd.agent import AgentConfig, ModelConf
+from framework.abcd.agent_event import UserInputAgentEvent
+from framework.abcd.memory import Memory
+# from agent import ReachyMiniAgent
+from framework.agent.main_agent import MainAgent
+from framework.agent.storage_memory import StorageMemory, new_ws_storage_memory
+from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.moss import MossInReachyMini
 from utils import load_instructions
@@ -21,23 +27,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-async def run_agent(container, root_dir):
-    # hub channel
-    zmq_hub = ZMQChannelHub(
-        config=ZMQHubConfig(
-            name="hub",
-            description="可以启动指定的子通道并运行.",
-            # todo: 当前版本全部基于约定来做. 快速验证.
-            root_dir=root_dir,
-            proxies={
-                "slide": ZMQProxyConfig(
-                    script="slide_app.py",
-                    description="可以打开你的slide studio gui，通过这个通道你可以呈现并讲述一个slide主题",
-                ),
-            },
-        ),
-    )
-
+async def run_agent(container, zmq_hub):
     with ReachyMini() as _mini:
         async with MossInReachyMini(_mini, container) as moss:
             speech = get_speech(_mini, container, default_speaker="saturn_zh_female_keainvsheng_tob")
@@ -47,28 +37,32 @@ async def run_agent(container, root_dir):
                 moss.as_channel(),
                 # zmq_hub.as_channel()
             )
+            container.set(MOSSShell, shell)
             instructions = load_instructions(
                 container,
                 ["persona.md"],
                 "reachy_mini_instructions",
             )
-            agent = ReachyMiniAgent(
-                moss_in_reachy_mini=moss,
-                instruction=instructions,
-                # chat=ConsolePTTChat(logger=logger, mini=_mini),
-                shell=shell,
-                speech=speech,
-                model=ModelConf(
-                    kwargs={
-                        "thinking": {
-                            "type": "disabled",
-                        },
-                    },
-                ),
+            memory = new_ws_storage_memory(container)
+            container.set(Memory, memory)
+            agent = MainAgent.new(
                 container=container,
+                config=AgentConfig(
+                    id="reachy_mini",
+                    name="reachy_mini",
+                    description="",
+                    model=ModelConf(
+                        kwargs={
+                            "thinking": {
+                                "type": "disabled",
+                            },
+                        },
+                    ),
+                    instructions=instructions
+                ),
             )
 
-            await agent.run()
+            await run_agent_with_chat(agent=agent, chat=ConsoleChat())
 
 
 def get_speech(
@@ -112,7 +106,21 @@ def main():
     from ghoshell_moss_contrib.example_ws import workspace_container
 
     with workspace_container(ws_dir) as container:
-        asyncio.run(run_agent(container, root_dir))
+        zmq_hub = ZMQChannelHub(
+            config=ZMQHubConfig(
+                name="hub",
+                description="可以启动指定的子通道并运行.",
+                # todo: 当前版本全部基于约定来做. 快速验证.
+                root_dir=root_dir,
+                proxies={
+                    "slide": ZMQProxyConfig(
+                        script="slide_app.py",
+                        description="可以打开你的slide studio gui，通过这个通道你可以呈现并讲述一个slide主题",
+                    ),
+                },
+            ),
+        )
+        asyncio.run(run_agent(container, zmq_hub))
 
 if __name__ == "__main__":
     main()
