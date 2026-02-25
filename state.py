@@ -102,12 +102,18 @@ class WakenState(BaseState):
 
         self._time_to_boring = 60 * 5 # 5分钟
         self._proactive_input = None
-        self._proactive_prob = 0.03 # 每秒有3%的概率触发函数
+
+        # 主动交互概率相关配置
+        self._base_proactive_prob = 0.001     # 初始基础概率（空闲0秒时的概率）
+        self._min_proactive_prob = 0.0001     # 概率下限（避免0%触发）
+        self._max_proactive_prob = 0.03       # 概率上限（避免100%触发）
+        self._duration_weight = 0.0001        # 时长权重（每增加1秒，概率增加多少）
+        self._trigger_decay = 0.005           # 触发一次后，基础概率衰减值
 
     async def on_enter(self):
         self.mini.enable_motors()
         self.mini.wake_up()
-        self._proactive_prob = 0.03 # 重置概率
+        self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
 
     async def on_exit(self):
         await self.cancel_idle_move()
@@ -119,11 +125,23 @@ class WakenState(BaseState):
             raise QuitIdleMove
 
         if self._proactive_input:
-            loop_times_per_second = 1 / self._idle_move_elapsed  # 每秒循环的次数
-            per_loop_prob = 1 - math.pow(1 - self._proactive_prob, 1 / loop_times_per_second)  # 每次循环的概率
+            # 1. 计算每秒循环次数
+            loop_times_per_second = 1 / self._idle_move_elapsed
+            # 2. 核心：基于空闲时长计算动态基础概率
+            # 公式：动态基础概率 = 初始基础概率 + 空闲时长 * 时长权重
+            # 效果：空闲越久，基础概率越高；同时限制不超过最大值
+            dynamic_base_prob = self._base_proactive_prob + (self._idle_move_duration * self._duration_weight)
+            dynamic_base_prob = min(dynamic_base_prob, self._max_proactive_prob)  # 上限控制
+            dynamic_base_prob = max(dynamic_base_prob, self._duration_weight)  # 下限控制（避免概率为0）
+            # 3. 转换为每次循环的触发概率（原有公式保留，替换为动态基础概率）
+            per_loop_prob = 1 - math.pow(1 - dynamic_base_prob, 1 / loop_times_per_second)
+            # 4. 随机判断是否触发
             if random.random() < per_loop_prob:
                 self._proactive_input(random.choice(Proactive_Prompts))
-                self._proactive_prob -= 0.01
+                # 5. 触发后衰减基础概率（避免频繁触发）
+                self._base_proactive_prob -= self._trigger_decay
+                # 确保衰减后基础概率不低于最小值
+                self._base_proactive_prob = max(self._base_proactive_prob, self._min_proactive_prob)
 
     async def start_idle_move(self):
         await super().start_idle_move()
@@ -137,28 +155,6 @@ class WakenState(BaseState):
 
     def set_proactive_input(self, handle_input):
         self._proactive_input = handle_input
-
-
-class ListeningState(BaseState):
-    NAME = "listening"
-
-    def __init__(self, mini: ReachyMini, head, antennas, back_to_waken):
-        super().__init__()
-        self.mini = mini
-        self.head = head
-        self.antennas = antennas
-        self.back_to_waken = back_to_waken
-
-    async def on_enter(self):
-        # listening动作
-        pass
-
-    async def on_exit(self):
-        await self.head.reset()
-        await self.back_to_waken()
-
-    async def _run_idle_move(self):
-        pass
 
 
 class BoringState(BaseState):

@@ -21,8 +21,8 @@ class ReachyMiniAgent(SimpleAgent):
         try:
             if not inputs:
                 return
-            # 取消当前idle move
-            self.logger.info(f"Cancelling idle move in state {self.moss_in_reachy_mini.state.NAME} ")
+            # 取消当前 idle move
+            self.logger.info(f"Cancelling idle move in state {self.moss_in_reachy_mini.state.NAME}")
             await self.moss_in_reachy_mini.state.cancel_idle_move()
 
             while inputs is not None and not self._interrupt_requested:
@@ -33,8 +33,8 @@ class ReachyMiniAgent(SimpleAgent):
             self.logger.exception("Response loop failed")
             self.chat.print_exception(e)
         finally:
-            # 开始当前idle move
-            self.logger.info(f"Starting idle move in state {self.moss_in_reachy_mini.state.NAME} ")
+            # 开始当前 idle move
+            self.logger.info(f"Starting idle move in state {self.moss_in_reachy_mini.state.NAME}")
             await self.moss_in_reachy_mini.state.start_idle_move()
 
     async def run(self):

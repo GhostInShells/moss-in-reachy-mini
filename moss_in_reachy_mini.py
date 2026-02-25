@@ -15,7 +15,7 @@ from reachy_mini.reachy_mini import SLEEP_HEAD_POSE
 from channels.antennas import Antennas
 from channels.body import Body
 from channels.head import Head
-from state import AsleepState, BaseState, WakenState, ListeningState, BoringState
+from state import AsleepState, BaseState, WakenState, BoringState
 
 class StateLog:
     def __init__(self, from_state: BaseState, to_state: BaseState):
@@ -47,12 +47,6 @@ class MossInReachyMini:
                 head=self.head,
                 antennas=self.antennas,
                 turn_to_boring=partial(self._switch_state_to, BoringState.NAME),
-            ),
-            ListeningState.NAME: ListeningState(
-                mini,
-                head=self.head,
-                antennas=self.antennas,
-                back_to_waken=partial(self._switch_state_to, WakenState.NAME),
             ),
             BoringState.NAME: BoringState(
                 mini,
@@ -163,7 +157,7 @@ class MossInReachyMini:
         waken_chan.build.command(name="antennas_reset")(self.antennas.reset)
         waken_chan.build.command()(self.antennas.set_idle_flapping)
         waken_chan.build.command()(self.antennas.enable_flapping)
-        waken_chan.build.with_available()(lambda: self._state.NAME in [WakenState.NAME, ListeningState.NAME])
+        waken_chan.build.with_available()(lambda: self._state.NAME == WakenState.NAME)
 
         # boring state can see
         boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", block=True)
