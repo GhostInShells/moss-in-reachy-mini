@@ -13,17 +13,17 @@ from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import AgentConfig, ModelConf
+from framework.abcd.agent import AgentConfig, ModelConf, EventBus
 from framework.abcd.agent_event import UserInputAgentEvent
 from framework.abcd.memory import Memory
 from framework.agent.broadcaster import ChatBroadcasterProvider
+from framework.agent.eventbus import QueueEventBus
 # from agent import ReachyMiniAgent
 from framework.agent.main_agent import MainAgent
 from framework.agent.storage_memory import StorageMemory, new_ws_storage_memory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.moss import MossInReachyMini
-from utils import load_instructions
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -33,23 +33,23 @@ async def run_agent(container, zmq_hub):
     with ReachyMini() as _mini:
         async with MossInReachyMini(_mini, container) as moss:
             speech = get_speech(_mini, container, default_speaker="saturn_zh_female_keainvsheng_tob")
-
+            # Agent记忆
+            memory = new_ws_storage_memory(container)
+            container.set(Memory, memory)
+            # Shell
             shell = new_shell(container=container, speech=speech, main_channel=create_main_channel())
             shell.main_channel.import_channels(
                 moss.as_channel(),
+                memory.as_channel(),
                 # zmq_hub.as_channel()
             )
             container.set(MOSSShell, shell)
-            instructions = load_instructions(
-                container,
-                ["persona.md"],
-                "reachy_mini_instructions",
-            )
-            memory = new_ws_storage_memory(container)
-            container.set(Memory, memory)
+            # Agent输入
+            container.set(EventBus, QueueEventBus())
+            # Agent输出
             container.register(ChatBroadcasterProvider())
             chat = ConsoleChat()
-            container.set(BaseChat, )
+            container.set(BaseChat, chat)
             agent = MainAgent.new(
                 container=container,
                 config=AgentConfig(
@@ -63,7 +63,6 @@ async def run_agent(container, zmq_hub):
                             },
                         },
                     ),
-                    instructions=instructions
                 ),
             )
             await run_agent_with_chat(agent=agent, chat=chat)

@@ -60,7 +60,7 @@ class StorageMemory(Memory):
 
     # ==== Agent Memory Interface ====
     async def _save_current_session(self):
-        file_bytes = self._current_session.model_dump_json(ensure_ascii=False, exclude_none=True).encode()
+        file_bytes = self._current_session.model_dump_json(indent=4, ensure_ascii=False, exclude_none=True).encode()
         self.storage.put(self.session_file_name(), file_bytes)
 
     async def save_turn(self, inputs: List[Message], outputs: List[Message]):
@@ -157,21 +157,23 @@ class StorageMemory(Memory):
 
     async def refresh_personality(self, text__: str):
         """
-        基于markdown格式的字符串来更新自己的基础人格
+        当用户产生诉求，或者你觉得必要的时候需要更新你自己的基础人格
 
+        Markdown格式写入
         一级标题：基础人格
         二级标题：
-            身份设定：名字、角色、年龄感、职业 / 身份
-            性格特质：外向 / 内向、理性 / 感性、严谨 / 随性、幽默 / 严肃
-            说话风格：简洁 / 啰嗦、正式 / 口语、是否爱用表情、是否主动提问
-            价值观倾向：重视效率、重视情感、重视事实、重视关系
+            身份设定：名字、角色、年龄感、职业 / 身份等
+            性格特质：...
+            说话风格 ...
+            价值观倾向：重视效率、重视情感、重视事实、重视关系等
         """
         self.storage.put(self._meta_config.personality_md, text__.encode())
 
     async def refresh_behavior_preference(self, text__: str):
         """
-        基于markdown格式的字符串来更新自己的行为偏好
+        你可以自主要求来更新你自己的行为偏好
 
+        Markdown格式写入
         一级标题：行为偏好
         二级标题：
             对话启动偏好：主动 / 被动
@@ -183,8 +185,9 @@ class StorageMemory(Memory):
 
     async def refresh_mood_base(self, text__: str):
         """
-        基于markdown格式的字符串来更新自己的情绪基底
+        你可以自主要求来更新你自己的情绪基底
 
+        Markdown格式写入
         一级标题：情绪基底
         二级标题：
             基础情绪：平静、开心、温和、疲惫等
@@ -195,8 +198,9 @@ class StorageMemory(Memory):
 
     async def refresh_autobiographical_memory(self, text__: str):
         """
-        基于markdown格式的字符串来更新自己的自传记忆
+        当发生一些“经历”后，由用户要求或你觉得必要的时候更新你自己的自传记忆
 
+        Markdown格式写入
         一级标题：自传记忆
         二级标题：
             自己的 “经历”：重要事件、时间、地点、感受
@@ -207,8 +211,9 @@ class StorageMemory(Memory):
 
     async def refresh_summary_memory(self, text__: str):
         """
-        基于markdown格式的字符串来更新自己的交互历史摘要，需要和之前的交互历史摘要融合提炼，避免完全覆盖掉之前的摘要
+        更新你自己的交互历史摘要，需要和之前的交互历史摘要融合提炼，避免完全覆盖掉之前的摘要
 
+        Markdown格式写入
         一级标题：交互历史摘要
         二级标题：
             重要对话摘要（非原始聊天记录，允许上千token写入）
