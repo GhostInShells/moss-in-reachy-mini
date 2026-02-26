@@ -14,24 +14,12 @@ from ghoshell_container import IoCContainer
 from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
+from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.channels.antennas import Antennas
 from moss_in_reachy_mini.channels.body import Body
 from moss_in_reachy_mini.channels.head import Head
-from state import AsleepState, BaseState, WakenState, BoringState
+from state import AsleepState, WakenState, BoringState, StateManagerHook
 
-class StateLog:
-    def __init__(self, from_state: BaseState, to_state: BaseState):
-        self.from_state = from_state
-        self.to_state = to_state
-        self.now = int(time.time())
-
-    def to_message_content(self):
-        ago = int(time.time()) - self.now
-
-        if not self.from_state:
-            return f"Start state to {self.to_state.NAME} occurred {ago} seconds ago"
-
-        return f"Switch state from {self.from_state.NAME} to {self.to_state.NAME} occurred {ago} seconds ago"
 
 class MossInReachyMini:
     def __init__(self, mini: ReachyMini, container: IoCContainer=None):
@@ -43,49 +31,24 @@ class MossInReachyMini:
         self.head = Head(mini, self.logger, container)
         self.antennas = Antennas(mini, self.logger)
 
-        self._state_map = {
-            AsleepState.NAME: AsleepState(mini),
-            WakenState.NAME: WakenState(
-                mini,
-                head=self.head,
-                antennas=self.antennas,
-                turn_to_boring=partial(self._switch_state_to, BoringState.NAME),
-            ),
-            BoringState.NAME: BoringState(
-                mini,
-                body=self.body,
-                turn_to_asleep=partial(self._switch_state_to, AsleepState.NAME),
-                back_to_waken=partial(self._switch_state_to, WakenState.NAME),
-            )
-        }
-        self._state: Optional[BaseState] = None
-        self._state_log: List[StateLog] = []
+        self._state_manager = StateManagerHook(
+            mini=self.mini,
+            body=self.body,
+            head=self.head,
+            antennas=self.antennas,
+            logger=self.logger,
+        )
+
         self._bootstrapped = asyncio.Event()
 
-    @property
-    def state(self) -> BaseState:
-        return self._state
-
-    def set_proactive_input(self, handle_input):
-        self._state_map[WakenState.NAME].set_proactive_input(handle_input)
-
-    async def _switch_state_to(self, state_name: str):
-        if state_name not in self._state_map:
-            raise ValueError(f'Invalid state name: {state_name}')
-
-        if self._state:
-            await self._state.on_exit()
-
-        self.logger.info(f'Switching state from {self._state.NAME if self._state else "initial"} to {state_name}')
-        self._state_log.append(StateLog(self._state, self._state_map[state_name]))  # 记录状态切换
-        self._state = self._state_map[state_name]
-        await self._state.on_enter()
+    def hook(self) -> AgentHook:
+        return self._state_manager
 
     async def wake_up(self):
-        await self._switch_state_to(WakenState.NAME)
+        await self._state_manager.switch_to(WakenState.NAME)
 
     async def goto_sleep(self):
-        await self._switch_state_to(AsleepState.NAME)
+        await self._state_manager.switch_to(AsleepState.NAME)
 
     async def context_messages(self):
         msg = Message.new(role="user", name="__reachy_mini__")
@@ -95,13 +58,18 @@ class MossInReachyMini:
             Text(text="These two images shows your appearance and structure"),
             Base64Image.from_pil_image(appearance_img),
             Base64Image.from_pil_image(structure_img),
-            Text(text=f"Your current state is {self._state.NAME}"),
+            Text(text=f"Your current state is {self._state_manager.current().NAME}"),
         )
 
-        for state in self._state_log:
-            msg.with_content(Text(text=state.to_message_content()))
+        if self._state_manager.current().NAME == AsleepState.NAME:
+            msg.with_content(
+                Text(text="You must wake up first"),
+            )
 
-        self._state_log.clear()
+        contents = self._state_manager.to_contents()
+        self._state_manager.clear_state_log()
+
+        msg.with_content(*contents)
         return [msg]
 
     async def vision_context_messages(self):
@@ -140,7 +108,7 @@ class MossInReachyMini:
         # asleep state can see
         asleep_chan = PyChannel(name=AsleepState.NAME, description=f"current state is asleep", block=True)
         asleep_chan.build.command()(self.wake_up)
-        asleep_chan.build.with_available()(lambda: self._state.NAME == AsleepState.NAME)
+        asleep_chan.build.with_available()(lambda: self._state_manager.current().NAME == AsleepState.NAME)
         asleep_chan.build.with_context_messages(self.context_messages)
 
         # waken state can see
@@ -159,14 +127,14 @@ class MossInReachyMini:
         waken_chan.build.command(name="antennas_reset")(self.antennas.reset)
         waken_chan.build.command()(self.antennas.set_idle_flapping)
         waken_chan.build.command()(self.antennas.enable_flapping)
-        waken_chan.build.with_available()(lambda: self._state.NAME == WakenState.NAME)
+        waken_chan.build.with_available()(lambda: self._state_manager.current().NAME == WakenState.NAME)
 
         # boring state can see
         boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", block=True)
         boring_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         boring_chan.build.command()(self.goto_sleep)
         boring_chan.build.with_context_messages(self.vision_context_messages)
-        boring_chan.build.with_available()(lambda: self._state.NAME == BoringState.NAME)
+        boring_chan.build.with_available()(lambda: self._state_manager.current().NAME == BoringState.NAME)
 
         reachy_mini.import_channels(
             asleep_chan,
@@ -177,8 +145,8 @@ class MossInReachyMini:
         return reachy_mini
 
     async def bootstrap(self):
-        await self._switch_state_to(AsleepState.NAME)
         await self.head.bootstrap()
+        await self._state_manager.start()
         self._bootstrapped.set()
 
     async def __aenter__(self):
@@ -187,6 +155,7 @@ class MossInReachyMini:
 
     async def aclose(self):
         await self.head.aclose()
+        await self._state_manager.close()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.aclose()

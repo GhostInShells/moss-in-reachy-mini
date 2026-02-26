@@ -3,10 +3,14 @@ import asyncio
 import math
 import random
 import time
-from typing import Optional
+from functools import partial
+from typing import Optional, List
 
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_moss import Text, Message
 from reachy_mini import ReachyMini
 
+from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.channels.antennas import Antennas
 from moss_in_reachy_mini.channels.body import Body
 from moss_in_reachy_mini.channels.head import Head
@@ -16,7 +20,7 @@ class QuitIdleMove(Exception):
     pass
 
 
-class BaseState(abc.ABC):
+class MiniStateHook(AgentHook, abc.ABC):
     NAME = ""
 
     def __init__(self):
@@ -25,11 +29,11 @@ class BaseState(abc.ABC):
         self._idle_move_elapsed = 0.1
 
     @abc.abstractmethod
-    async def on_enter(self):
+    async def on_self_enter(self):
         pass
 
     @abc.abstractmethod
-    async def on_exit(self):
+    async def on_self_exit(self):
         pass
 
     @abc.abstractmethod
@@ -54,13 +58,10 @@ class BaseState(abc.ABC):
             self._idle_move_duration = 0
 
     async def start_idle_move(self):
-        await self._cancel_run_idle_move_task()
+        await self.cancel_idle_move()
         self._run_idle_move_task = asyncio.create_task(self.run_idle_move())
 
     async def cancel_idle_move(self):
-        await self._cancel_run_idle_move_task()
-
-    async def _cancel_run_idle_move_task(self):
         if self._run_idle_move_task is not None and not self._run_idle_move_task.done():
             self._run_idle_move_task.cancel()
             try:
@@ -68,8 +69,14 @@ class BaseState(abc.ABC):
             except asyncio.CancelledError:
                 pass
 
+    async def on_idle(self):
+        await self.start_idle_move()
 
-class AsleepState(BaseState):
+    async def on_responding(self):
+        await self.cancel_idle_move()
+
+
+class AsleepState(MiniStateHook):
 
     NAME = "asleep"
 
@@ -77,19 +84,19 @@ class AsleepState(BaseState):
         super().__init__()
         self.mini = mini
 
-    async def on_enter(self):
+    async def on_self_enter(self):
         self.mini.set_target_body_yaw(0.0)
         self.mini.goto_sleep()
         self.mini.disable_motors()
 
-    async def on_exit(self):
+    async def on_self_exit(self):
         pass
 
     async def _run_idle_move(self):
         pass
 
 
-class WakenState(BaseState):
+class WakenState(MiniStateHook):
 
     NAME = "waken"
 
@@ -110,12 +117,12 @@ class WakenState(BaseState):
         self._duration_weight = 0.0001        # 时长权重（每增加1秒，概率增加多少）
         self._trigger_decay = 0.005           # 触发一次后，基础概率衰减值
 
-    async def on_enter(self):
+    async def on_self_enter(self):
         self.mini.enable_motors()
         self.mini.wake_up()
         self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
 
-    async def on_exit(self):
+    async def on_self_exit(self):
         await self.cancel_idle_move()
         await self.head.reset()
 
@@ -157,7 +164,7 @@ class WakenState(BaseState):
         self._proactive_input = handle_input
 
 
-class BoringState(BaseState):
+class BoringState(MiniStateHook):
 
     NAME = "boring"
 
@@ -172,11 +179,11 @@ class BoringState(BaseState):
         self._time_to_sleep = 30 # 30秒
         self._emotion_prob = 0.03 # 目标：每秒有3%的概率触发函数
 
-    async def on_enter(self):
+    async def on_self_enter(self):
         # Boring只能靠自己来触发idle move
         await self.start_idle_move()
 
-    async def on_exit(self):
+    async def on_self_exit(self):
         pass
 
     async def _run_idle_move(self):
@@ -229,3 +236,73 @@ Proactive_Prompts = [
 - 禁止出现“必须”“赶紧”等强硬词汇。
 """
 ]
+
+
+class StateLog:
+    def __init__(self, from_state: MiniStateHook, to_state: MiniStateHook):
+        self.from_state = from_state
+        self.to_state = to_state
+        self.now = int(time.time())
+
+class StateManagerHook(AgentHook):
+    def __init__(self, mini: ReachyMini, body: Body, head: Head, antennas: Antennas, logger: LoggerItf):
+        self._state_map = {
+            AsleepState.NAME: AsleepState(mini),
+            WakenState.NAME: WakenState(
+                mini,
+                head=head,
+                antennas=antennas,
+                turn_to_boring=partial(self.switch_to, BoringState.NAME),
+            ),
+            BoringState.NAME: BoringState(
+                mini,
+                body=body,
+                turn_to_asleep=partial(self.switch_to, AsleepState.NAME),
+                back_to_waken=partial(self.switch_to, WakenState.NAME),
+            )
+        }
+        self._state: Optional[MiniStateHook] = None
+        self._state_log: List[StateLog] = []
+        self.logger = logger
+
+    async def switch_to(self, state_name: str):
+        if state_name not in self._state_map:
+            raise ValueError(f'Invalid state name: {state_name}')
+
+        if self._state:
+            await self._state.on_self_exit()
+
+        self.logger.info(f'Switching state from {self._state.NAME if self._state else "initial"} to {state_name}')
+        self._state_log.append(StateLog(self._state, self._state_map[state_name]))  # 记录状态切换
+        self._state = self._state_map[state_name]
+        await self._state.on_self_enter()
+
+    def current(self) -> MiniStateHook:
+        return self._state
+
+    async def on_idle(self):
+        await self._state.on_idle()
+
+    async def on_responding(self):
+        await self._state.on_responding()
+
+    def to_contents(self):
+        contents = []
+        now = int(time.time())
+        for state in self._state_log:
+            ago = now - state.now
+            if not state.from_state:
+                text = f"Start state to {state.to_state.NAME} occurred {ago} seconds ago"
+            else:
+                text = f"Switch state from {state.from_state.NAME} to {state.to_state.NAME} occurred {ago} seconds ago"
+            contents.append(Text(text=text))
+        return contents
+
+    def clear_state_log(self):
+        self._state_log.clear()
+
+    async def start(self):
+        await self.switch_to(AsleepState.NAME)
+
+    async def close(self):
+        await self.switch_to(AsleepState.NAME)

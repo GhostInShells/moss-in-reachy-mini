@@ -157,14 +157,15 @@ class StorageMemory(Memory):
 
     async def refresh_personality(self, text__: str):
         """
-        当用户产生诉求，或者你觉得必要的时候需要更新你自己的基础人格
+        当用户产生诉求或者你觉得必要的时候，基于现在的人格来完善并赋予你自己新的人格
 
         Markdown格式写入
         一级标题：基础人格
         二级标题：
             身份设定：名字、角色、年龄感、职业 / 身份等
             性格特质：...
-            说话风格 ...
+            说话风格：...
+            互动风格：...
             价值观倾向：重视效率、重视情感、重视事实、重视关系等
         """
         self.storage.put(self._meta_config.personality_md, text__.encode())

@@ -15,6 +15,7 @@ from framework.abcd.agent import (
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
     UserInputAgentEvent, ReactAgentEvent
+from framework.abcd.agent_hook import AgentHook
 from framework.abcd.memory import Memory
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.response import MOSShellResponse, CTMLResult
@@ -33,9 +34,11 @@ class BaseMainAgent(Agent, ABC):
             config: AgentConfig,
             shell: MOSSShell,
             memory: Memory,
+            hook: AgentHook,
     ):
         self.shell = shell
         self.memory = memory
+        self._hook = hook
 
         self.config = config
         self._id = config.id
@@ -67,6 +70,19 @@ class BaseMainAgent(Agent, ABC):
     @property
     def logger(self):
         return self._logger
+
+    # 异步方法替代 setter，明确标识异步操作
+    async def set_state(self, value: AgentStateName):
+        if self._state == value:
+            return
+
+        # 执行异步 hook
+        if value == AgentStateName.RESPONDING:
+            await self._hook.on_responding()
+        if value == AgentStateName.IDLE:
+            await self._hook.on_idle()
+
+        self._state = value
 
     async def make_prompts(self) -> List[Message]:
         """
@@ -114,11 +130,11 @@ class BaseMainAgent(Agent, ABC):
         if toggle:
             await self._interrupt()
             self._halt_event.set()
-            self._state = AgentStateName.HALT
+            await self.set_state(AgentStateName.HALT)
             await self._inform_system("agent is halting")
         else:
             self._halt_event.clear()
-            self._state = AgentStateName.IDLE
+            await self.set_state(AgentStateName.IDLE)
             await self._inform_system("agent recover")
         await self._broadcaster.broadcast(self._id, None)
         self._error_time = 0
@@ -138,7 +154,7 @@ class BaseMainAgent(Agent, ABC):
             return
         await asyncio.sleep(duration)
         self._idling_time += duration
-        self._state = AgentStateName.IDLE
+        await self.set_state(AgentStateName.IDLE)
 
     async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
         prompts = await self.make_prompts()
@@ -150,7 +166,7 @@ class BaseMainAgent(Agent, ABC):
                 return None
             return MOSShellResponse(
                 shell=self.shell,
-                response_id=user_input.event_id,
+                event=user_input,
                 inputs=[user_input.message],
                 model=self.config.model,
                 prompts=prompts,
@@ -160,7 +176,7 @@ class BaseMainAgent(Agent, ABC):
         if react := ReactAgentEvent.from_agent_event(event):
             return MOSShellResponse(
                 shell=self.shell,
-                response_id=react.event_id,
+                event=react,
                 inputs=react.messages,
                 model=self.config.model,
                 prompts=prompts,
@@ -173,7 +189,7 @@ class BaseMainAgent(Agent, ABC):
         return self._running_response is not None and self._running_response.response_id == response_id
 
     async def _handle_response(self, response: Response) -> None:
-        self._state = AgentStateName.RESPONDING
+        await self.set_state(AgentStateName.RESPONDING)
         try:
             async with response:
                 has_first = False
@@ -194,7 +210,7 @@ class BaseMainAgent(Agent, ABC):
             self._logger.error("handling response cancelled")
         finally:
             await self._finish_response(response)
-            self._state = AgentStateName.IDLE
+            await self.set_state(AgentStateName.IDLE)
             self._clear_running_response(response.response_id)
 
     async def _finish_response(self, response: Response) -> None:
@@ -356,9 +372,9 @@ class BaseMainAgent(Agent, ABC):
             raise RuntimeError('Agent is shutting down')
         if self._state == AgentStateName.BOOTSTRAP:
             raise RuntimeError('Agent is already bootstrapped')
-        self._state = AgentStateName.BOOTSTRAP
+        await self.set_state(AgentStateName.BOOTSTRAP)
         self._auto_shutdown = auto_shutdown
-        self._state = AgentStateName.IDLE
+        await self.set_state(AgentStateName.IDLE)
 
         await self.shell.start()
 
@@ -370,7 +386,7 @@ class BaseMainAgent(Agent, ABC):
     async def close(self) -> None:
         if self._state == AgentStateName.SHUTDOWN:
             return
-        self._state = AgentStateName.SHUTDOWN
+        await self.set_state(AgentStateName.SHUTDOWN)
         await self._interrupt()
         self._shutdown_event.set()
 

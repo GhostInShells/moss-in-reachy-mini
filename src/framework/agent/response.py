@@ -9,7 +9,7 @@ from ghoshell_moss.message.adapters.openai_adapter import parse_messages_to_para
 from pydantic import Field
 
 from framework.abcd.agent import Response, ModelConf
-from framework.abcd.agent_event import UserInputAgentEvent
+from framework.abcd.agent_event import UserInputAgentEvent, AgentEventModel
 
 
 class CTMLResult(ContentModel):
@@ -24,7 +24,7 @@ class MOSShellResponse(Response):
             self,
             shell: MOSSShell,
             *,
-            response_id: str,
+            event: AgentEventModel,
             inputs: List[Message],
             model: Optional[ModelConf] = None,
             prompts: List[Message] = None,
@@ -36,7 +36,8 @@ class MOSShellResponse(Response):
         self.inputs = inputs
 
         self._logger = logger or logging.getLogger()
-        self.response_id = response_id
+        self.event = event
+        self.response_id = event.event_id
 
         # buffered 一定是完整的尾包
         self._buffered: List[Message] = []  # 初始化空列表，避免None导致append报错

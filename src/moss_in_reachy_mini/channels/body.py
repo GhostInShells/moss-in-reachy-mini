@@ -53,7 +53,7 @@ class Body:
         emotion_docstrings = []
         for name, params in self._emotions.items():
             emotion_docstrings.append(f"name: {name} description: {params.get('description', '')}")
-        return f"Emotion can be chosen in \n{"\n".join(emotion_docstrings)}"
+        return f"Emotion can be only chosen in \n{"\n".join(emotion_docstrings)}\nDo not use unknown emotion name"
 
     def as_commands(self) -> List[Command]:
         return [

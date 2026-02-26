@@ -14,16 +14,15 @@ from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import AgentConfig, ModelConf, EventBus
-from framework.abcd.agent_event import UserInputAgentEvent
 from framework.abcd.memory import Memory
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
-# from agent import ReachyMiniAgent
 from framework.agent.main_agent import MainAgent
 from framework.agent.storage_memory import StorageMemory, new_ws_storage_memory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.moss import MossInReachyMini
+from moss_in_reachy_mini.utils import load_instructions
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -50,7 +49,13 @@ async def run_agent(container, zmq_hub):
             container.register(ChatBroadcasterProvider())
             chat = ConsoleChat()
             container.set(BaseChat, chat)
-            agent = MainAgent.new(
+
+            instructions = load_instructions(
+                container,
+                files=["ctml_enrich.md"],
+                storage_name="reachy_mini_instructions",
+            )
+            agent = MainAgent(
                 container=container,
                 config=AgentConfig(
                     id="reachy_mini",
@@ -63,7 +68,11 @@ async def run_agent(container, zmq_hub):
                             },
                         },
                     ),
+                    instructions=instructions,
                 ),
+                shell=shell,
+                memory=memory,
+                hook=moss.hook(),
             )
             await run_agent_with_chat(agent=agent, chat=chat)
 
