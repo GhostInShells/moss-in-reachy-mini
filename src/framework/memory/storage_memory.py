@@ -16,11 +16,9 @@ class Session(BaseModel):
     messages: List[Message] = Field(...)
 
 
-class Turn(BaseModel):
+class TurnAddition(Addition):
     turn_id: str = Field(default="", description="turn id")  # 用来关联同一轮对话的input和output
 
-
-class TurnAddition(Addition, Turn):
     @classmethod
     def keyword(cls) -> str:
         return "session_turn"
@@ -54,6 +52,10 @@ class StorageMemory(Memory):
 
         # lifecycle
         self._started = asyncio.Event()
+
+    @property
+    def meta_config(self) -> MetaConfig:
+        return self._meta_config
 
     def session_file_name(self) -> str:
         return f"thread_{self._meta_config.current_session_id}.json"
@@ -224,9 +226,9 @@ class StorageMemory(Memory):
         self.storage.put(self._meta_config.summary_memory_md, text__.encode())
 
     async def read_md(self, md: str) -> str:
-        if not self.storage.exists(self._meta_config.summary_memory_md):
+        if not self.storage.exists(md):
             return ""
-        res = self.storage.get(self._meta_config.summary_memory_md)
+        res = self.storage.get(md)
         return res.decode()
 
     async def context_messages(self):
