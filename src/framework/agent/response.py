@@ -24,7 +24,8 @@ class MOSShellResponse(Response):
             self,
             shell: MOSSShell,
             *,
-            event: UserInputAgentEvent,
+            response_id: str,
+            inputs: List[Message],
             model: Optional[ModelConf] = None,
             prompts: List[Message] = None,
             logger: Optional[LoggerItf] = None,
@@ -32,10 +33,10 @@ class MOSShellResponse(Response):
         self.shell = shell
         self.model = model
         self.prompts = prompts
-        self.event = event
+        self.inputs = inputs
 
         self._logger = logger or logging.getLogger()
-        self.response_id = event.event_id
+        self.response_id = response_id
 
         # buffered 一定是完整的尾包
         self._buffered: List[Message] = []  # 初始化空列表，避免None导致append报错
@@ -169,7 +170,7 @@ class MOSShellResponse(Response):
         self._interrupted_done.set()
 
     def inputted(self) -> List[Message]:
-        return [self.event.message]
+        return self.inputs
 
     def buffered(self) -> List[Message]:
         """获取缓存的消息列表"""

@@ -41,9 +41,11 @@ class ChatBroadcaster(Broadcaster):
         if message.role == "assistant" and message.is_done():
             self._chat.finalize_ai_response()
 
-        # 打断完成
-        if message.role == "system" and len(message.contents) == 1 and InterruptedContent.from_content(message.contents[0]):
-            self._chat.finalize_ai_response()
+        if message.role == "system":
+            for content in message.contents:
+                # 打断完成
+                if InterruptedContent.from_content(content):
+                    self._chat.finalize_ai_response()
 
     def bootstrap(self) -> None:
         pass

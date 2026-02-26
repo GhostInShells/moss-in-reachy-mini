@@ -14,10 +14,10 @@ from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf, AgentId
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
-    UserInputAgentEvent
+    UserInputAgentEvent, ReactAgentEvent
 from framework.abcd.memory import Memory
 from framework.agent.eventbus import QueueEventBus
-from framework.agent.response import MOSShellResponse
+from framework.agent.response import MOSShellResponse, CTMLResult
 from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
 
 
@@ -141,18 +141,27 @@ class BaseMainAgent(Agent, ABC):
         self._state = AgentStateName.IDLE
 
     async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
+        prompts = await self.make_prompts()
         if user_input := UserInputAgentEvent.from_agent_event(event):
             now = time.time()
             # 不处理过期事件.
             if user_input.is_overdue(now):
                 self._logger.info(f"agent receive event overdue: {event}")
                 return None
-
-            prompts = await self.make_prompts()
-
             return MOSShellResponse(
                 shell=self.shell,
-                event=user_input,
+                response_id=user_input.event_id,
+                inputs=[user_input.message],
+                model=self.config.model,
+                prompts=prompts,
+                logger=self.logger,
+            )
+
+        if react := ReactAgentEvent.from_agent_event(event):
+            return MOSShellResponse(
+                shell=self.shell,
+                response_id=react.event_id,
+                inputs=react.messages,
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,
@@ -194,6 +203,17 @@ class BaseMainAgent(Agent, ABC):
         # 判断 outputs 不为空, 就再次保存.
         if inputs or outputs:
              await self.memory.save_turn(inputs, outputs)
+
+        # 如果response output里有拿到ctml执行的返回值，直接触发ReactEvent给Agent继续处理
+        if len(outputs) > 0 and outputs[-1].is_completed():
+            ctml_results: List[CTMLResult] = []
+            for content in outputs[-1].contents:
+                if result := CTMLResult.from_content(content):
+                    ctml_results.append(result)
+            if ctml_results:
+                await self.eventbus().put(ReactAgentEvent(
+                    messages=[Message.new(role="assistant").with_content(*ctml_results)]
+                ).to_agent_event())
 
     def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:

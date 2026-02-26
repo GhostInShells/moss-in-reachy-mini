@@ -15,7 +15,7 @@ from framework.abcd.agent_event import AgentEventModel, AgentEvent
 class Response(ABC):
     thread_id: str
     response_id: str
-    event: AgentEventModel
+    inputs: List[Message]
     interrupted: bool  # 被打断了
     """输入的消息体, 用于处理保存逻辑"""
 
