@@ -7,7 +7,7 @@ from ghoshell_container import Container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Message, TextDelta
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
-from framework.abcd.agent import Broadcaster, AgentId
+from framework.abcd.agent import Broadcaster
 from framework.agent.utils import InterruptedContent
 
 
@@ -30,8 +30,6 @@ class ChatBroadcaster(Broadcaster):
         self._chat = chat
 
     async def broadcast(self, agent_id: str, message: Union[Message, None]) -> None:
-        message.with_additions(AgentId(agent_id=agent_id))
-
         if message.role == "assistant" and message.seq == "head":
             self._chat.start_ai_response()
         if message.role == "assistant" and message.seq == "delta":
