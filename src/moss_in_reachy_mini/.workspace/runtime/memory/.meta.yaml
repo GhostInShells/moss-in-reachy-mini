@@ -1,0 +1,9 @@
+# from class: framework.agent.storage_memory:MetaConfig
+autobiographical_memory_md: .autobiographical_memory.md
+behavior_preference_md: .behavior_preference.md
+current_session_id: ee00846d-0ff0-466d-9c51-06f6cd94802f
+max_tokens: -1
+mood_base_md: .mood_base.md
+personality_md: .personality.md
+summary_memory_md: .summary_memory.md
+turn_rounds: 10
