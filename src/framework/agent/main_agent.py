@@ -11,7 +11,7 @@ from ghoshell_container import Container
 from ghoshell_moss import Message, Text, MOSSShell
 
 from framework.abcd.agent import (
-    Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf, AgentId
+    Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
     UserInputAgentEvent, ReactAgentEvent
@@ -34,7 +34,7 @@ class BaseMainAgent(Agent, ABC):
             config: AgentConfig,
             shell: MOSSShell,
             memory: Memory,
-            hook: AgentHook,
+            hook: AgentHook=None,
     ):
         self.shell = shell
         self.memory = memory
@@ -76,13 +76,16 @@ class BaseMainAgent(Agent, ABC):
         if self._state == value:
             return
 
+        self._state = value
+
+        if not self._hook:
+            return
         # 执行异步 hook
         if value == AgentStateName.RESPONDING:
             await self._hook.on_responding()
         if value == AgentStateName.IDLE:
             await self._hook.on_idle()
 
-        self._state = value
 
     async def make_prompts(self) -> List[Message]:
         """
@@ -453,7 +456,8 @@ async def main(container: Container) -> None:
 
 if __name__ == '__main__':
     from ghoshell_moss import new_shell
-    from framework.agent.storage_memory import StorageMemory
+    from framework.memory.storage_memory import StorageMemory
+    from framework.memory.storage_memory_server import StorageMemoryAPIServer
     from framework.agent.broadcaster import ChatBroadcasterProvider
     from ghoshell_moss_contrib.agent.chat.base import BaseChat
     from ghoshell_moss_contrib.agent import ConsoleChat
@@ -472,4 +476,11 @@ if __name__ == '__main__':
     _container.set(EventBus, QueueEventBus())
     _container.register(ChatBroadcasterProvider())
     _container.set(BaseChat, ConsoleChat())
-    asyncio.run(main(container=_container))
+
+    async def starter():
+        await asyncio.gather(
+            StorageMemoryAPIServer(_memory).run(),
+            main(container=_container)
+        )
+
+    asyncio.run(starter())
