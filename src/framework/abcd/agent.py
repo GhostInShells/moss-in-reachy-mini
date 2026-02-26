@@ -282,11 +282,3 @@ class Agent(ABC):
         """
         pass
 
-
-class AgentId(Addition, BaseModel):
-
-    agent_id: str = Field(description="agent id")
-
-    @classmethod
-    def keyword(cls) -> str:
-        return "agent_id"

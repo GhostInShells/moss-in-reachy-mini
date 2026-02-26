@@ -4,7 +4,7 @@ from typing import List, Optional, AsyncIterator, AsyncIterable
 
 import litellm
 from ghoshell_common.contracts import LoggerItf
-from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel
+from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel, Addition
 from ghoshell_moss.message.adapters.openai_adapter import parse_messages_to_params
 from pydantic import Field
 
@@ -17,6 +17,15 @@ class CTMLResult(ContentModel):
 
     ctml: str = Field(description="ctml")
     result: str = Field(description="ctml result. ")
+
+class AgentEventAddition(Addition):
+
+    event_id: str = Field(description="event id")
+    event_type: str = Field(description="event type")
+
+    @classmethod
+    def keyword(cls) -> str:
+        return "agent_event"
 
 
 class MOSShellResponse(Response):
@@ -37,6 +46,10 @@ class MOSShellResponse(Response):
 
         self._logger = logger or logging.getLogger()
         self.event = event
+        self._event_addition = AgentEventAddition(
+            event_id=event.event_id,
+            event_type=event.event_type,
+        )
         self.response_id = event.event_id
 
         # buffered 一定是完整的尾包
@@ -88,6 +101,8 @@ class MOSShellResponse(Response):
                     # 生成首包
                     head_msg = Message(
                         meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
+                    ).with_additions(
+                        self._event_addition,
                     ).as_head()
                     self._buffered.append(head_msg)
                     yield head_msg
@@ -109,6 +124,8 @@ class MOSShellResponse(Response):
                                 reasoning = True
                             reasoning_msg = Message(
                                 meta=MessageMeta(stage=MessageStage.REASONING.value, role="assistant")
+                            ).with_additions(
+                                self._event_addition,
                             ).as_delta(TextDelta(content=delta.reasoning_content))
                             self._buffered.append(reasoning_msg)
                             yield reasoning_msg
@@ -123,6 +140,8 @@ class MOSShellResponse(Response):
                         # 生成间包
                         delta_msg = Message(
                             meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
+                        ).with_additions(
+                            self._event_addition,
                         ).as_delta(TextDelta(content=content))
                         self._buffered.append(delta_msg)
                         yield delta_msg
@@ -141,6 +160,8 @@ class MOSShellResponse(Response):
                         ).with_content(
                             Text(text=interpreter.executed_tokens()),
                             *result_contents
+                        ).with_additions(
+                            self._event_addition,
                         ).as_completed()
                         self._buffered.append(completed_msg)
                         yield completed_msg
@@ -186,7 +207,13 @@ class MOSShellResponse(Response):
             self._interrupted.set()
             self.interrupted = True
             await self.shell.clear()  # 清空shell
-            interrupt_msg = Message.new(role="system").with_content(Text(text="[Interrupt] User input"))
+            interrupt_msg = Message.new(
+                role="system"
+            ).with_additions(
+                AgentEventAddition(event_id=self.event.event_id)
+            ).with_content(
+                Text(text="[Interrupt] User input")
+            )
             self._buffered.append(interrupt_msg)
             self._logger.info(f"MOSShellResponse {self.response_id} interrupted")
         finally:

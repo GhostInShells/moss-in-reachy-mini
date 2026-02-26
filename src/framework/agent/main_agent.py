@@ -231,6 +231,7 @@ class BaseMainAgent(Agent, ABC):
                     ctml_results.append(result)
             if ctml_results:
                 await self.eventbus().put(ReactAgentEvent(
+                    event_id=response.response_id,  # 保持同一个会话
                     messages=[Message.new(role="assistant").with_content(*ctml_results)]
                 ).to_agent_event())
 

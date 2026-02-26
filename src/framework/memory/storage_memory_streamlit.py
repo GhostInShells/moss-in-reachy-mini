@@ -1,6 +1,7 @@
 # 独立的Streamlit UI
 from datetime import datetime
 import re
+from typing import Dict, List
 
 import streamlit as st
 import aiohttp
@@ -8,6 +9,7 @@ import asyncio
 
 from ghoshell_moss import Message, Text
 
+from framework.agent.response import AgentEventAddition
 from framework.memory.storage_memory import TurnAddition
 
 # API基础配置
@@ -180,9 +182,9 @@ class StorageMemoryUI:
     # 在MemoryEditorUI类中替换_render_session_history方法
     def _render_session_history(self):
         """会话历史展示（类聊天软件界面，严格区分用户/AI消息）"""
-        st.subheader("📜 对话历史（仅展示AI可见的轮次数据）")
+        st.subheader("📜 对话历史（按轮次分组）")
         with st.container(border=True):
-            # 获取会话历史
+            # 获取会话历史（这里假设你已经实现了session_history的API接口，若未实现可参考之前的逻辑调整）
             res = run_async(async_api_call("GET", f"{API_BASE_URL}/session_history"))
             if res["code"] != 0:
                 st.error(f"获取会话历史失败：{res['msg']}")
@@ -198,8 +200,7 @@ class StorageMemoryUI:
             for msg_dict in history:
                 try:
                     msg = Message(**msg_dict)
-                    # 提取对话轮次ID（从additional中获取session_turn）
-
+                    # 提取对话轮次ID
                     turn = TurnAddition.read(msg)
                     turn_id = turn.turn_id if turn else None
 
@@ -212,7 +213,6 @@ class StorageMemoryUI:
                     continue
 
             # ========== 2. 按对话时间排序轮次 ==========
-            # 每个轮次取最早的消息时间作为排序依据
             sorted_turns = sorted(
                 turn_groups.values(),
                 key=lambda msgs: min(
@@ -234,58 +234,102 @@ class StorageMemoryUI:
                 with st.expander(f"🔄 第 {turn_idx} 轮对话 · {turn_time}", expanded=True):
                     # 遍历当前轮次的所有消息
                     for msg in turn_msgs:
-                        # 处理消息文本（转换AI动作标签为友好格式）
+                        # 1. 提取AgentEventAddition信息
+                        event_info = AgentEventAddition.read(msg)
+                        if event_info:
+                            event_color_map = {
+                                "user_trigger": "#d4edda",
+                                "agent_action": "#fff3cd",
+                                "system_event": "#cce5ff",
+                                "memory_update": "#f8d7da"
+                            }
+                            bg_color = event_color_map.get(event_info.event_type, "#e9ecef")
+
+                            # 改为单行HTML字符串，完全消除换行/缩进导致的渲染异常
+                            event_html = (
+                                f'<div style="font-size:0.65em; text-align:right; opacity:0.8; margin-top:2px; white-space:nowrap;">'
+                                f'<span style="background-color:{bg_color}; padding:1px 4px; border-radius:3px;">事件：{event_info.event_type}</span>'
+                                f'<span style="color:#666; margin-left:4px;">ID:{event_info.event_id}</span>'
+                                f'</div>'
+                            )
+                        else:
+                            event_html = ""  # 没有事件信息时赋值为空字符串，避免插入空内容
+
+                        # 2. 处理消息文本：高亮整个动作块（标签+内部文本统一样式，完全保留原始内容）
                         text_contents = []
                         if msg.contents:
                             for content in msg.contents:
                                 text_content = Text.from_content(content)
                                 if text_content:
-                                    # 替换AI动作标签（如<reachy_mini.asleep:wake_up/>）
+                                    formatted_text = text_content.text
+
+                                    # ========== 1. 高亮完整成对动作块（如 <action>向左转90度</action>） ==========
+                                    # 匹配规则：支持带路径的标签名（如 <reachy.move:turn>），允许内部文本换行
                                     formatted_text = re.sub(
-                                        r'<.*?\.(.*?):(.*?)\/>',
-                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.8em;">[动作：\2]</span>',
-                                        text_content.text
+                                        r'<([\w]+\.[\w:]+)>(.*?)</\1>',  # 强制要求标签名包含.（如reachy.move:turn）
+                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529; display:inline-block;">'
+                                        r'&lt;\1&gt;\2&lt;/\1&gt;'
+                                        r'</span>',
+                                        formatted_text,
+                                        flags=re.DOTALL
                                     )
+
+                                    # ========== 2. 高亮自闭合动作标签（如 <reachy_mini.asleep:wake_up/>） ==========
+                                    formatted_text = re.sub(
+                                        r'<([\w\.:]+)/>',
+                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529;">'
+                                        r'&lt;\1/&gt;'
+                                        r'</span>',
+                                        formatted_text
+                                    )
+
                                     text_contents.append(formatted_text)
                         full_text = "".join(text_contents)
 
-                        # ========== 区分用户/AI消息，用聊天气泡展示 ==========
+                        # 3. 渲染用户消息
                         if msg.role == "user":
-                            # 用户消息：蓝色气泡右对齐
+                            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime(
+                                "%H:%M") if hasattr(msg.meta, "created_at") else ""
                             st.markdown(f"""
                             <div style="display: flex; justify-content: flex-end; margin: 8px 0;">
                                 <div style="background-color: #007bff; color: white; padding: 10px 14px; border-radius: 18px 18px 4px 18px; max-width: 75%;">
                                     <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
                                     <div style="font-size: 0.7em; text-align: right; opacity: 0.8; margin-top: 4px;">
-                                        {datetime.fromtimestamp(msg.meta.created_at).strftime("%H:%M") if hasattr(msg.meta, "created_at") else ""}
+                                        {time_text}
                                     </div>
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
+
+                        # 4. 渲染AI消息
                         elif msg.role == "assistant":
-                            # AI回复：灰色气泡左对齐，带AI标识
+                            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime(
+                                "%H:%M") if hasattr(msg.meta, "created_at") else ""
                             st.markdown(f"""
                             <div style="display: flex; justify-content: flex-start; margin: 8px 0;">
                                 <div style="background-color: #f8f9fa; color: #333; padding: 10px 14px; border-radius: 18px 18px 18px 4px; max-width: 75%;">
                                     <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
                                     <div style="font-size: 0.7em; text-align: right; opacity: 0.6; margin-top: 4px;">
-                                        {datetime.fromtimestamp(msg.meta.created_at).strftime("%H:%M") if hasattr(msg.meta, "created_at") else ""}
+                                        {time_text}
                                         <span style="margin-left: 8px; color: #007bff;">🤖</span>
                                     </div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        else:
-                            # 其他角色（如system）：中性样式
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: center; margin: 8px 0;">
-                                <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
-                                    <strong>[{msg.role.upper()}]</strong> {full_text}
+                                    {event_html}
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
 
-                    # 调试选项：查看当前轮次的原始数据
+                        # 5. 渲染其他角色消息
+                        else:
+                            st.markdown(f"""
+                            <div style="display: flex; justify-content: center; margin: 8px 0;">
+                                <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
+                                    <strong>[{msg.role.upper()}]</strong> {full_text}
+                                    {event_html}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                    # 调试选项
                     if st.checkbox(f"查看第 {turn_idx} 轮原始数据", key=f"turn_debug_{turn_idx}"):
                         st.json([msg.dump() for msg in turn_msgs])
 
