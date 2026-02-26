@@ -16,6 +16,7 @@ class Response(ABC):
     thread_id: str
     response_id: str
     event: AgentEventModel
+    interrupted: bool  # 被打断了
     """输入的消息体, 用于处理保存逻辑"""
 
 
@@ -39,6 +40,10 @@ class Response(ABC):
 
     @abstractmethod
     def stream_messages(self) -> AsyncIterable[Message]:
+        pass
+
+    @abstractmethod
+    def inputted(self) -> List[Message]:
         pass
 
     @abstractmethod

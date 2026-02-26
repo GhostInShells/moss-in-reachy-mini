@@ -75,7 +75,7 @@ class MOSShellResponse(Response):
                     context = interpreter.context_messages()
                     if context:
                         messages.extend(parse_messages_to_params(context))
-                    messages.extend(parse_messages_to_params([self.event.message]))
+                    messages.extend(parse_messages_to_params(self.inputted()))
 
                     # 设置流式参数
                     params.update({
@@ -131,7 +131,7 @@ class MOSShellResponse(Response):
                         results = await interpreter.results()
                         result_contents = [
                             CTMLResult(ctml=_ctml, result=_result)
-                            for _ctml, _result in results
+                            for _ctml, _result in results.items()
                         ]
 
                         completed_msg = Message(
@@ -168,6 +168,9 @@ class MOSShellResponse(Response):
         # 确保中断完成事件被设置
         self._interrupted_done.set()
 
+    def inputted(self) -> List[Message]:
+        return [self.event.message]
+
     def buffered(self) -> List[Message]:
         """获取缓存的消息列表"""
         return self._buffered.copy()  # 返回副本，避免外部修改
@@ -179,6 +182,7 @@ class MOSShellResponse(Response):
             return
         try:
             self._interrupted.set()
+            self.interrupted = True
             await self.shell.clear()  # 清空shell
             interrupt_msg = Message.new(role="system").with_content(Text(text="[Interrupt] User input"))
             self._buffered.append(interrupt_msg)

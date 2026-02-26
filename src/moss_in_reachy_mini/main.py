@@ -10,11 +10,13 @@ from ghoshell_moss.core.shell.main_channel import create_main_channel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent import ConsoleChat
+from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_event import UserInputAgentEvent
 from framework.abcd.memory import Memory
+from framework.agent.broadcaster import ChatBroadcasterProvider
 # from agent import ReachyMiniAgent
 from framework.agent.main_agent import MainAgent
 from framework.agent.storage_memory import StorageMemory, new_ws_storage_memory
@@ -45,6 +47,9 @@ async def run_agent(container, zmq_hub):
             )
             memory = new_ws_storage_memory(container)
             container.set(Memory, memory)
+            container.register(ChatBroadcasterProvider())
+            chat = ConsoleChat()
+            container.set(BaseChat, )
             agent = MainAgent.new(
                 container=container,
                 config=AgentConfig(
@@ -61,8 +66,7 @@ async def run_agent(container, zmq_hub):
                     instructions=instructions
                 ),
             )
-
-            await run_agent_with_chat(agent=agent, chat=ConsoleChat())
+            await run_agent_with_chat(agent=agent, chat=chat)
 
 
 def get_speech(

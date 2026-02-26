@@ -78,9 +78,6 @@ class UserInputAgentEvent(AgentEventModel):
 
     message: Message = Field(description="input message")
 
-    def to_open_ai_message(self):
-        pass
-
 
 class InterruptAgentEvent(AgentEventModel):
     event_type = "interrupt"

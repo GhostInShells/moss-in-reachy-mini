@@ -11,13 +11,11 @@ async def test_storage_memory():
     # MemoryStorage是基于内存设计的Storage抽象的具体实现 Memory = 内存
     memory = StorageMemory(storage=MemoryStorage(dir_=""))
 
-    session_id = "mock-session-id"
-    history = await memory.get_session_history(session_id)
+    history = await memory.get_session_history()
     assert len(history) == 0
 
     # 验证第一次存取数据逻辑
     await memory.save_turn(
-        session_id,
         inputs=[
             Message.new(role="user").with_content(Text(text="hello"))
         ],
@@ -25,12 +23,11 @@ async def test_storage_memory():
             Message.new(role="assistant").with_content(Text(text="world"))
         ]
     )
-    history = await memory.get_session_history(session_id)
+    history = await memory.get_session_history()
     assert len(history) == 2
 
     # 验证后续存取数据逻辑
     await memory.save_turn(
-        session_id,
         inputs=[
             Message.new(role="user").with_content(Text(text="hello2"))
         ],
@@ -38,7 +35,7 @@ async def test_storage_memory():
             Message.new(role="assistant").with_content(Text(text="world2"))
         ]
     )
-    history = await memory.get_session_history(session_id)
+    history = await memory.get_session_history()
     assert len(history) == 4
 
     # 验证summary逻辑
@@ -51,7 +48,8 @@ async def test_storage_memory():
     # 限制只拿最新的一轮。
     await memory.set_limitation(turn_rounds=1)
     messages = await memory.context_messages()
-    assert len(messages) == 3
+    assert len(messages) == 4
     assert Text.from_content(messages[0].contents[0]).text == "hello2"
     assert Text.from_content(messages[1].contents[0]).text == "world2"
     assert Text.from_content(messages[2].contents[0]).text == "hello3"
+    assert messages[3].name == "__memory_settings__"

@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -71,10 +72,13 @@ class BaseMainAgent(Agent, ABC):
         """
         语法糖, 用来快速定义 prompt 对象.
         """
-        instructions = [Message.new(role="system").with_content(Text(text=self.config.instructions))]
-        history = await self.memory.get_session_history()
-        # env_info = self.get_env_info()
-        return instructions + history
+        system_prompt = Message.new(role="system").with_content(
+            # instructions
+            Text(text=self.config.instructions),
+            # env datetime
+            Text(text=f"Current datetime: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",),
+        )
+        return [system_prompt]
 
     @abstractmethod
     def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
@@ -180,8 +184,16 @@ class BaseMainAgent(Agent, ABC):
         except asyncio.CancelledError:
             self._logger.error("handling response cancelled")
         finally:
+            await self._finish_response(response)
             self._state = AgentStateName.IDLE
             self._clear_running_response(response.response_id)
+
+    async def _finish_response(self, response: Response) -> None:
+        inputs = response.inputted()
+        outputs = response.buffered()
+        # 判断 outputs 不为空, 就再次保存.
+        if inputs or outputs:
+             await self.memory.save_turn(inputs, outputs)
 
     def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
@@ -402,6 +414,7 @@ async def main(container: Container) -> None:
     chat = container.force_fetch(BaseChat)
     await run_agent_with_chat(agent, chat)
 
+
 if __name__ == '__main__':
     from ghoshell_moss import new_shell
     from framework.agent.storage_memory import StorageMemory
@@ -413,8 +426,13 @@ if __name__ == '__main__':
     _container.set(LoggerItf, logging.getLogger())
     logging.basicConfig(level=logging.INFO)
 
-    _container.set(MOSSShell, new_shell(container=_container, speech=MockSpeech(typing_sleep=0.1)))
-    _container.set(Memory, StorageMemory(MemoryStorage(dir_="")))
+    _memory = StorageMemory(MemoryStorage(dir_=""))
+    _container.set(Memory, _memory)
+    _shell = new_shell(container=_container, speech=MockSpeech(typing_sleep=0.1))
+    _shell.main_channel.import_channels(
+        _memory.as_channel()
+    )
+    _container.set(MOSSShell, _shell)
     _container.set(EventBus, QueueEventBus())
     _container.register(ChatBroadcasterProvider())
     _container.set(BaseChat, ConsoleChat())
