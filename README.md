@@ -13,6 +13,4 @@ cp .env.example .env
 ```
 
 ## Run Reachy Mini
-```
-.venv/bin/python src/moss_in_reachy_mini/main.py
-```
+[Reachy Mini README](./src/moss_in_reachy_mini/README.md)
