@@ -1,35 +1,11 @@
-# 独立的Streamlit UI
 from datetime import datetime
 import re
-from typing import Dict, List
-
+import html
 import streamlit as st
-import aiohttp
 import asyncio
-
 from ghoshell_moss import Message, Text
-
 from framework.agent.response import AgentEventAddition
-from framework.memory.storage_memory import TurnAddition
-
-# API基础配置
-API_BASE_URL = "http://127.0.0.1:8088/memory"
-
-
-# ========== 异步API调用封装 ==========
-async def async_api_call(method, url, **kwargs):
-    """异步调用API"""
-    async with aiohttp.ClientSession() as session:
-        try:
-            if method == "GET":
-                async with session.get(url, **kwargs) as resp:
-                    return await resp.json()
-            elif method == "POST":
-                async with session.post(url, **kwargs) as resp:
-                    return await resp.json()
-        except Exception as e:
-            st.error(f"API调用失败：{str(e)}")
-            return {"code": 1, "msg": str(e)}
+from framework.memory.storage_memory import TurnAddition, StorageMemory
 
 
 def run_async(coro):
@@ -44,17 +20,19 @@ def run_async(coro):
 
 # ========== Streamlit UI类 ==========
 class StorageMemoryUI:
-    def __init__(self):
+    def __init__(self, storage_memory: StorageMemory):
+        self.storage_memory = storage_memory
+
         # 初始化页面配置
         st.set_page_config(
             page_title="Agent记忆编辑器",
             page_icon="🧠",
             layout="wide"
         )
-        # 自动刷新配置
         st.sidebar.divider()
         if st.sidebar.button("🔄 手动刷新所有数据"):
             st.rerun()
+
 
     def render(self):
         st.title("🧠 Agent Memory")
@@ -76,31 +54,26 @@ class StorageMemoryUI:
                 self._render_session_history()
 
     def _render_session_management(self):
-        """会话管理"""
+        """会话管理：直接操作StorageMemory实例"""
         st.subheader("会话管理")
         with st.container(border=True):
-            # 获取当前会话信息
-            session_info = run_async(async_api_call("GET", f"{API_BASE_URL}/session_info"))
+            # 直接从StorageMemory获取会话ID
+            st.text(f"当前会话ID：\n{self.storage_memory.meta_config.current_session_id}")
 
-            if session_info["code"] == 0:
-                st.text(f"当前会话ID：\n{session_info['session_id']}")
-
-            # 新建会话按钮
+            # 新建会话按钮：直接调用StorageMemory方法
             if st.button("📝 新建会话", type="primary"):
                 with st.spinner("正在创建新会话..."):
-                    res = run_async(async_api_call("POST", f"{API_BASE_URL}/new_session"))
-                    if res["code"] == 0:
-                        st.success(f"新会话创建成功！ID：{res['session_id']}")
-                        st.rerun()
+                    run_async(self.storage_memory.new_session())
+                    st.success(f"新会话创建成功！ID：{self.storage_memory.meta_config.current_session_id}")
+                    st.rerun()
 
     def _render_memory_limitation(self):
-        """记忆限制配置"""
+        """记忆限制配置：直接读写StorageMemory的meta_config"""
         st.subheader("记忆限制配置")
         with st.container(border=True):
-            # 获取当前配置
-            session_info = run_async(async_api_call("GET", f"{API_BASE_URL}/session_info"))
-            current_turns = session_info.get("turn_rounds", 10) if session_info["code"] == 0 else 10
-            current_tokens = session_info.get("max_tokens", -1) if session_info["code"] == 0 else -1
+            # 直接从StorageMemory获取当前配置
+            current_turns = self.storage_memory.meta_config.turn_rounds
+            current_tokens = self.storage_memory.meta_config.max_tokens
 
             # 输入新配置
             new_turns = st.number_input(
@@ -116,44 +89,43 @@ class StorageMemoryUI:
                 help="-1=无限制，0=不允许访问历史内容"
             )
 
-            # 保存配置
+            # 保存配置：直接调用StorageMemory方法
             if st.button("💾 保存配置"):
                 with st.spinner("正在保存配置..."):
-                    res = run_async(async_api_call(
-                        "POST",
-                        f"{API_BASE_URL}/set_limitation",
-                        json={"turn_rounds": new_turns, "max_tokens": new_tokens}
-                    ))
-                    if res["code"] == 0:
-                        st.success(res["msg"])
+                    run_async(self.storage_memory.set_limitation(new_turns, new_tokens))
+                    st.success("记忆限制配置已保存")
 
     def _render_memory_editors(self):
-        """记忆模块编辑"""
+        """记忆模块编辑：直接读写StorageMemory的MD文件"""
         st.subheader("记忆内容编辑")
-        # 记忆模块映射
+        # 记忆模块映射（对应StorageMemory的方法和配置）
         memory_modules = {
-            "人格设定": "personality",
-            "行为偏好": "behavior_preference",
-            "情绪基底": "mood_base",
-            "自传记忆": "autobiographical",
-            "摘要记忆": "summary"
+            "人格设定": ("personality", self.storage_memory.refresh_personality,
+                         self.storage_memory.meta_config.personality_md),
+            "行为偏好": ("behavior_preference", self.storage_memory.refresh_behavior_preference,
+                         self.storage_memory.meta_config.behavior_preference_md),
+            "情绪基底": ("mood_base", self.storage_memory.refresh_mood_base,
+                         self.storage_memory.meta_config.mood_base_md),
+            "自传记忆": ("autobiographical", self.storage_memory.refresh_autobiographical_memory,
+                         self.storage_memory.meta_config.autobiographical_memory_md),
+            "摘要记忆": ("summary", self.storage_memory.refresh_summary_memory,
+                         self.storage_memory.meta_config.summary_memory_md)
         }
 
         # Tabs布局
         tabs = st.tabs(list(memory_modules.keys()))
-        for idx, (module_name, module_key) in enumerate(memory_modules.items()):
+        for idx, (module_name, (_, refresh_method, md_path)) in enumerate(memory_modules.items()):
             with tabs[idx]:
-                self._render_single_editor(module_name, module_key)
+                self._render_single_editor(module_name, refresh_method, md_path)
 
-    def _render_single_editor(self, module_name: str, module_key: str):
-        """单个记忆模块编辑"""
+    def _render_single_editor(self, module_name: str, refresh_method, md_path: str):
+        """单个记忆模块编辑：直接读写StorageMemory的MD文件"""
         edit_col, preview_col = st.columns(2)
 
         with edit_col:
             st.subheader(f"{module_name} - 编辑")
-            # 读取当前内容
-            res = run_async(async_api_call("GET", f"{API_BASE_URL}/read/{module_key}"))
-            current_content = res.get("content", "") if res["code"] == 0 else ""
+            # 直接读取MD文件内容
+            current_content = run_async(self.storage_memory.read_md(md_path))
 
             # 编辑框
             new_content = st.text_area(
@@ -161,56 +133,37 @@ class StorageMemoryUI:
                 value=current_content,
                 height=400,
                 placeholder=f"请输入{module_name}内容（Markdown格式）...",
-                key=f"editor_{module_key}"
+                key=f"editor_{module_name}"
             )
 
-            # 保存按钮
-            if st.button(f"💾 保存{module_name}", key=f"save_{module_key}"):
+            # 保存按钮：直接调用StorageMemory的refresh方法
+            if st.button(f"💾 保存{module_name}", key=f"save_{module_name}"):
                 with st.spinner(f"正在保存{module_name}..."):
-                    res = run_async(async_api_call(
-                        "POST",
-                        f"{API_BASE_URL}/refresh/{module_key}",
-                        json={"content": new_content}
-                    ))
-                    if res["code"] == 0:
-                        st.success(f"{module_name}保存成功！")
+                    run_async(refresh_method(new_content))
+                    st.success(f"{module_name}已保存！")
 
         with preview_col:
             st.subheader(f"{module_name} - 预览")
             st.markdown(new_content if new_content else f"> 暂无{module_name}内容")
 
-    # 在MemoryEditorUI类中替换_render_session_history方法
     def _render_session_history(self):
-        """会话历史展示（类聊天软件界面，严格区分用户/AI消息）"""
+        """会话历史展示：直接从StorageMemory获取会话历史"""
         st.subheader("📜 对话历史（按轮次分组）")
         with st.container(border=True):
-            # 获取会话历史（这里假设你已经实现了session_history的API接口，若未实现可参考之前的逻辑调整）
-            res = run_async(async_api_call("GET", f"{API_BASE_URL}/session_history"))
-            if res["code"] != 0:
-                st.error(f"获取会话历史失败：{res['msg']}")
-                return
-
-            history = res["history"]
-            if not history:
+            # 直接从StorageMemory获取会话历史
+            history_msgs = run_async(self.storage_memory.get_session_history())
+            if not history_msgs:
                 st.info("当前会话暂无对话记录")
                 return
 
-            # ========== 1. 按对话轮次分组（基于session_turn的turn_id） ==========
+            # ========== 1. 按对话轮次分组（基于TurnAddition的turn_id） ==========
             turn_groups = {}
-            for msg_dict in history:
-                try:
-                    msg = Message(**msg_dict)
-                    # 提取对话轮次ID
-                    turn = TurnAddition.read(msg)
-                    turn_id = turn.turn_id if turn else None
-
-                    # 按轮次分组消息
-                    if turn_id not in turn_groups:
-                        turn_groups[turn_id] = []
-                    turn_groups[turn_id].append(msg)
-                except Exception as e:
-                    st.warning(f"解析消息失败：{str(e)}")
-                    continue
+            for msg in history_msgs:
+                turn = TurnAddition.read(msg)
+                turn_id = turn.turn_id if turn else "unknown_turn"
+                if turn_id not in turn_groups:
+                    turn_groups[turn_id] = []
+                turn_groups[turn_id].append(msg)
 
             # ========== 2. 按对话时间排序轮次 ==========
             sorted_turns = sorted(
@@ -232,10 +185,10 @@ class StorageMemoryUI:
 
                 # 轮次标题
                 with st.expander(f"🔄 第 {turn_idx} 轮对话 · {turn_time}", expanded=True):
-                    # 遍历当前轮次的所有消息
                     for msg in turn_msgs:
                         # 1. 提取AgentEventAddition信息
                         event_info = AgentEventAddition.read(msg)
+                        event_html = ""
                         if event_info:
                             event_color_map = {
                                 "user_trigger": "#d4edda",
@@ -245,95 +198,75 @@ class StorageMemoryUI:
                             }
                             bg_color = event_color_map.get(event_info.event_type, "#e9ecef")
 
-                            # 改为单行HTML字符串，完全消除换行/缩进导致的渲染异常
+                            # 单行HTML避免渲染异常
                             event_html = (
                                 f'<div style="font-size:0.65em; text-align:right; opacity:0.8; margin-top:2px; white-space:nowrap;">'
                                 f'<span style="background-color:{bg_color}; padding:1px 4px; border-radius:3px;">事件：{event_info.event_type}</span>'
                                 f'<span style="color:#666; margin-left:4px;">ID:{event_info.event_id}</span>'
                                 f'</div>'
                             )
-                        else:
-                            event_html = ""  # 没有事件信息时赋值为空字符串，避免插入空内容
 
-                        # 2. 处理消息文本：高亮整个动作块（标签+内部文本统一样式，完全保留原始内容）
+                        # 2. 处理消息文本：高亮动作标签 + 转义HTML
                         text_contents = []
                         if msg.contents:
                             for content in msg.contents:
                                 text_content = Text.from_content(content)
                                 if text_content:
-                                    formatted_text = text_content.text
-
-                                    # ========== 1. 高亮完整成对动作块（如 <action>向左转90度</action>） ==========
-                                    # 匹配规则：支持带路径的标签名（如 <reachy.move:turn>），允许内部文本换行
+                                    # 先转义所有HTML，避免原始HTML被解析
+                                    escaped_text = html.escape(text_content.text)
+                                    # 高亮自闭合动作标签
                                     formatted_text = re.sub(
-                                        r'<([\w]+\.[\w:]+)>(.*?)</\1>',  # 强制要求标签名包含.（如reachy.move:turn）
-                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529; display:inline-block;">'
-                                        r'&lt;\1&gt;\2&lt;/\1&gt;'
-                                        r'</span>',
-                                        formatted_text,
-                                        flags=re.DOTALL
+                                        r'&lt;([\w\.:]+)/&gt;',
+                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529;">&lt;\1/&gt;</span>',
+                                        escaped_text
                                     )
-
-                                    # ========== 2. 高亮自闭合动作标签（如 <reachy_mini.asleep:wake_up/>） ==========
+                                    # 高亮成对动作标签
                                     formatted_text = re.sub(
-                                        r'<([\w\.:]+)/>',
-                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529;">'
-                                        r'&lt;\1/&gt;'
-                                        r'</span>',
+                                        r'&lt;([\w]+\.[\w:]+)&gt;(.*?)&lt;/\1&gt;',
+                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529; display:inline-block;">&lt;\1&gt;\2&lt;/\1&gt;</span>',
                                         formatted_text
                                     )
-
                                     text_contents.append(formatted_text)
                         full_text = "".join(text_contents)
 
-                        # 3. 渲染用户消息
-                        if msg.role == "user":
-                            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime(
-                                "%H:%M") if hasattr(msg.meta, "created_at") else ""
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: flex-end; margin: 8px 0;">
-                                <div style="background-color: #007bff; color: white; padding: 10px 14px; border-radius: 18px 18px 4px 18px; max-width: 75%;">
-                                    <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
-                                    <div style="font-size: 0.7em; text-align: right; opacity: 0.8; margin-top: 4px;">
-                                        {time_text}
-                                    </div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+                        # 3. 渲染消息气泡
+                        self._render_message_bubble(msg, full_text, event_html)
 
-                        # 4. 渲染AI消息
-                        elif msg.role == "assistant":
-                            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime(
-                                "%H:%M") if hasattr(msg.meta, "created_at") else ""
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: flex-start; margin: 8px 0;">
-                                <div style="background-color: #f8f9fa; color: #333; padding: 10px 14px; border-radius: 18px 18px 18px 4px; max-width: 75%;">
-                                    <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
-                                    <div style="font-size: 0.7em; text-align: right; opacity: 0.6; margin-top: 4px;">
-                                        {time_text}
-                                        <span style="margin-left: 8px; color: #007bff;">🤖</span>
-                                    </div>
-                                    {event_html}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+    def _render_message_bubble(self, msg: Message, full_text: str, event_html: str):
+        """统一渲染聊天气泡（用户/AI/系统消息）"""
+        if msg.role == "user":
+            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime("%H:%M") if hasattr(msg.meta,
+                                                                                                 "created_at") else ""
+            st.markdown(f"""
+            <div style="display: flex; justify-content: flex-end; margin: 8px 0;">
+                <div style="background-color: #007bff; color: white; padding: 10px 14px; border-radius: 18px 18px 4px 18px; max-width: 75%;">
+                    <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
+                    <div style="font-size: 0.7em; text-align: right; opacity: 0.8; margin-top: 4px;">{time_text}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-                        # 5. 渲染其他角色消息
-                        else:
-                            st.markdown(f"""
-                            <div style="display: flex; justify-content: center; margin: 8px 0;">
-                                <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
-                                    <strong>[{msg.role.upper()}]</strong> {full_text}
-                                    {event_html}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
+        elif msg.role == "assistant":
+            time_text = datetime.fromtimestamp(msg.meta.created_at).strftime("%H:%M") if hasattr(msg.meta,
+                                                                                                 "created_at") else ""
+            st.markdown(f"""
+            <div style="display: flex; justify-content: flex-start; margin: 8px 0;">
+                <div style="background-color: #f8f9fa; color: #333; padding: 10px 14px; border-radius: 18px 18px 18px 4px; max-width: 75%;">
+                    <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
+                    <div style="font-size: 0.7em; text-align: right; opacity: 0.6; margin-top: 4px;">
+                        {time_text} <span style="margin-left: 8px; color: #007bff;">🤖</span>
+                    </div>
+                    {event_html}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
-                    # 调试选项
-                    if st.checkbox(f"查看第 {turn_idx} 轮原始数据", key=f"turn_debug_{turn_idx}"):
-                        st.json([msg.dump() for msg in turn_msgs])
-
-# ========== 启动UI ==========
-if __name__ == "__main__":
-    ui = StorageMemoryUI()
-    ui.render()
+        else:
+            st.markdown(f"""
+            <div style="display: flex; justify-content: center; margin: 8px 0;">
+                <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
+                    <strong>[{msg.role.upper()}]</strong> {full_text}
+                    {event_html}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
