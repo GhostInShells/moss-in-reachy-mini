@@ -5,6 +5,9 @@ from moss_in_reachy_mini.vision.yolo.head_detector import HeadDetector
 
 
 def draw_tracks(frame: np.ndarray, detections: Detections) -> np.ndarray:
+    if not frame.flags.writeable:
+        frame = frame.copy()
+
     """在图像上绘制边界框和跟踪ID。"""
     if len(detections) == 0:
         return frame

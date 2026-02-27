@@ -76,7 +76,6 @@ class HeadTracker:
         self._run_task = asyncio.create_task(self.run())
 
     async def stop(self):
-        self._camera_worker.set_head_tracking_enabled(False)
         self.enabled.clear()
         self._quit.set()
         

@@ -121,6 +121,7 @@ class WakenState(MiniStateHook):
         self.mini.enable_motors()
         self.mini.wake_up()
         self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
+        await self.head.start_tracking_face()
 
     async def on_self_exit(self):
         await self.cancel_idle_move()
@@ -302,7 +303,7 @@ class StateManagerHook(AgentHook):
         self._state_log.clear()
 
     async def start(self):
-        await self.switch_to(AsleepState.NAME)
+        await self.switch_to(WakenState.NAME)
 
     async def close(self):
         await self.switch_to(AsleepState.NAME)

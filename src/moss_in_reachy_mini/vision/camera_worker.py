@@ -11,12 +11,15 @@ import logging
 import threading
 from typing import List, Tuple
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from reachy_mini import ReachyMini
 from reachy_mini.utils.interpolation import linear_pose_interpolation
+
+from moss_in_reachy_mini.vision.yolo.drawer import draw_tracks
 from moss_in_reachy_mini.vision.yolo.head_detector import HeadDetector
 from moss_in_reachy_mini.vision.yolo.model import Position, get_position_by_track_id
 
@@ -26,7 +29,7 @@ logger = logging.getLogger(__name__)
 class CameraWorker:
     """Thread-safe camera worker with frame buffering and face tracking."""
 
-    def __init__(self, reachy_mini: ReachyMini, head_detector: HeadDetector = None) -> None:
+    def __init__(self, reachy_mini: ReachyMini, head_detector: HeadDetector) -> None:
         """Initialize."""
         self.reachy_mini = reachy_mini
         self.head_detector = head_detector
@@ -38,7 +41,6 @@ class CameraWorker:
         self._thread: threading.Thread | None = None
 
         # Face tracking state
-        self.is_head_tracking_enabled = True
         self.face_tracking_offsets: List[float] = [
             0.0,
             0.0,
@@ -63,9 +65,6 @@ class CameraWorker:
         self.face_lost_delay = 2.0  # seconds to wait before starting interpolation
         self.interpolation_duration = 1.0  # seconds to interpolate back to neutral
 
-        # Track state changes
-        self.previous_head_tracking_state = self.is_head_tracking_enabled
-
     def get_latest_frame(self) -> NDArray[np.uint8] | None:
         """Get the latest frame (thread-safe)."""
         with self.frame_lock:
@@ -80,11 +79,6 @@ class CameraWorker:
         """Get current face tracking data offsets and positions (thread-safe)."""
         with self.face_tracking_lock:
             return self.face_tracking_offsets.copy(), self.face_positons.copy(), self.current_track_id
-
-    def set_head_tracking_enabled(self, enabled: bool) -> None:
-        """Enable/disable head tracking."""
-        self.is_head_tracking_enabled = enabled
-        logger.info(f"Head tracking {'enabled' if enabled else 'disabled'}")
 
     def set_tracking_id(self, tracking_id: int) -> None:
         with self.face_tracking_lock:
@@ -114,7 +108,6 @@ class CameraWorker:
 
         # Initialize head tracker if available
         neutral_pose = np.eye(4)  # Neutral pose (identity matrix)
-        self.previous_head_tracking_state = self.is_head_tracking_enabled
 
         while not self._stop_event.is_set():
             try:
@@ -124,86 +117,71 @@ class CameraWorker:
                 frame = self.reachy_mini.media.get_frame()
 
                 if frame is not None:
-                    # Thread-safe frame storage
-                    with self.frame_lock:
-                        self.latest_frame = frame  # .copy()
-
-                    # Check if face tracking was just disabled
-                    if self.previous_head_tracking_state and not self.is_head_tracking_enabled:
-                        # Face tracking was just disabled - start interpolation to neutral
-                        self.last_face_detected_time = current_time  # Trigger the face-lost logic
-                        self.interpolation_start_time = None  # Will be set by the face-lost interpolation
-                        self.interpolation_start_pose = None
-
-                    # Update tracking state
-                    self.previous_head_tracking_state = self.is_head_tracking_enabled
-
                     # Handle face tracking if enabled and head tracker available
-                    if self.is_head_tracking_enabled and self.head_detector is not None:
-                        _, self.face_positons = self.head_detector.get_head_positions(frame)
-                        if len(self.face_positons) > 0:
-                            position = get_position_by_track_id(positions=self.face_positons, track_id=self.current_track_id)
-                            if not position:
-                                position = self.face_positons[0]
-                                self.current_track_id = position.track_id
+                    detections, self.face_positons = self.head_detector.get_head_positions(frame)
+                    if len(self.face_positons) > 0:
+                        position = get_position_by_track_id(positions=self.face_positons, track_id=self.current_track_id)
+                        if not position:
+                            position = self.face_positons[0]
+                            self.current_track_id = position.track_id
 
-                            # Face detected - immediately switch to tracking
-                            self.last_face_detected_time = current_time
-                            self.interpolation_start_time = None  # Stop any interpolation
+                        # Face detected - immediately switch to tracking
+                        self.last_face_detected_time = current_time
+                        self.interpolation_start_time = None  # Stop any interpolation
 
-                            # Convert normalized coordinates to pixel coordinates
-                            h, w, _ = frame.shape
-                            eye_center_norm = (position.center + 1) / 2
-                            eye_center_pixels = [
-                                eye_center_norm[0] * w,
-                                eye_center_norm[1] * h,
-                            ]
+                        # Convert normalized coordinates to pixel coordinates
+                        h, w, _ = frame.shape
+                        eye_center_norm = (position.center + 1) / 2
+                        eye_center_pixels = [
+                            eye_center_norm[0] * w,
+                            eye_center_norm[1] * h,
+                        ]
 
-                            # Get the head pose needed to look at the target, but don't perform movement
-                            target_pose = self.reachy_mini.look_at_image(
-                                eye_center_pixels[0],
-                                eye_center_pixels[1],
-                                duration=0.0,
-                                perform_movement=False,
-                            )
+                        # Get the head pose needed to look at the target, but don't perform movement
+                        target_pose = self.reachy_mini.look_at_image(
+                            eye_center_pixels[0],
+                            eye_center_pixels[1],
+                            duration=0.0,
+                            perform_movement=False,
+                        )
 
-                            # Extract translation and rotation from the target pose directly
-                            translation = target_pose[:3, 3]
-                            rotation = R.from_matrix(target_pose[:3, :3]).as_euler("xyz", degrees=False)
+                        # Extract translation and rotation from the target pose directly
+                        translation = target_pose[:3, 3]
+                        rotation = R.from_matrix(target_pose[:3, :3]).as_euler("xyz", degrees=False)
 
-                            # Scale down translation and rotation because smaller FOV
-                            translation *= 0.6
-                            rotation *= 0.6
+                        # Scale down translation and rotation because smaller FOV
+                        translation *= 0.6
+                        rotation *= 0.6
 
-                            # Apply smoothing to prevent jerky movements
-                            with self.face_tracking_lock:
-                                current_offsets = self.face_tracking_offsets
-                                smoothed_offsets = []
-                                
-                                # Combine translation and rotation for smoothing
-                                target_values = list(translation) + list(rotation)
-                                
-                                for i, target in enumerate(target_values):
-                                    # Exponential smoothing
-                                    smoothed = current_offsets[i] * (1 - self.smoothing_alpha) + target * self.smoothing_alpha
-                                    
-                                    # Velocity limiting to prevent sudden jumps
-                                    max_change = self.max_movement_per_frame
-                                    if abs(smoothed - current_offsets[i]) > max_change:
-                                        if smoothed > current_offsets[i]:
-                                            smoothed = current_offsets[i] + max_change
-                                        else:
-                                            smoothed = current_offsets[i] - max_change
-                                    
-                                    smoothed_offsets.append(smoothed)
-                                
-                                self.face_tracking_offsets = smoothed_offsets
+                        # Apply smoothing to prevent jerky movements
+                        with self.face_tracking_lock:
+                            current_offsets = self.face_tracking_offsets
+                            smoothed_offsets = []
 
-                        # No face detected while tracking enabled - set face lost timestamp
-                        elif self.last_face_detected_time is None or self.last_face_detected_time == current_time:
-                            # Only update if we haven't already set a face lost time
-                            # (current_time check prevents overriding the disable-triggered timestamp)
-                            pass
+                            # Combine translation and rotation for smoothing
+                            target_values = list(translation) + list(rotation)
+
+                            for i, target in enumerate(target_values):
+                                # Exponential smoothing
+                                smoothed = current_offsets[i] * (1 - self.smoothing_alpha) + target * self.smoothing_alpha
+
+                                # Velocity limiting to prevent sudden jumps
+                                max_change = self.max_movement_per_frame
+                                if abs(smoothed - current_offsets[i]) > max_change:
+                                    if smoothed > current_offsets[i]:
+                                        smoothed = current_offsets[i] + max_change
+                                    else:
+                                        smoothed = current_offsets[i] - max_change
+
+                                smoothed_offsets.append(smoothed)
+
+                            self.face_tracking_offsets = smoothed_offsets
+
+                    # No face detected while tracking enabled - set face lost timestamp
+                    elif self.last_face_detected_time is None or self.last_face_detected_time == current_time:
+                        # Only update if we haven't already set a face lost time
+                        # (current_time check prevents overriding the disable-triggered timestamp)
+                        pass
 
                     # Handle smooth interpolation (works for both face-lost and tracking-disabled cases)
                     if self.last_face_detected_time is not None:
@@ -258,6 +236,13 @@ class CameraWorker:
                                 self.interpolation_start_time = None
                                 self.interpolation_start_pose = None
                         # else: Keep current offsets (within 2s delay period)
+
+                    # Thread-safe frame storage
+                    with self.frame_lock:
+                        # 颜色校正
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        frame = draw_tracks(frame, detections)
+                        self.latest_frame = frame  # .copy()
 
                 # Small sleep to prevent excessive CPU usage (same as main_works.py)
                 time.sleep(0.04)
