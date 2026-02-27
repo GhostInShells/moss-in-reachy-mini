@@ -20,7 +20,6 @@ from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.memory.storage_memory import new_ws_storage_memory
 from framework.agent.utils import run_agent_with_chat
-from framework.memory.storage_memory_server import StorageMemoryAPIServer
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.moss import MossInReachyMini
 from moss_in_reachy_mini.utils import load_instructions
@@ -75,10 +74,7 @@ async def run_agent(container, zmq_hub):
                 memory=memory,
                 hook=moss.hook(),
             )
-            await asyncio.gather(
-                StorageMemoryAPIServer(memory).run(),
-                run_agent_with_chat(agent, chat),
-            )
+            await run_agent_with_chat(agent, chat)
 
 
 def get_speech(

@@ -25,6 +25,5 @@ python src/moss_in_reachy_mini/main.py
 ```
 再启动UI进程
 ```commandline
-
-streamlit run src/framework/memory/storage_memory_streamlit.py
+source src/moss_in_reachy_mini/start_memory_ui.sh
 ```

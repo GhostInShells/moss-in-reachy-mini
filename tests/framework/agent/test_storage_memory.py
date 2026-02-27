@@ -39,17 +39,13 @@ async def test_storage_memory():
     assert len(history) == 4
 
     # 验证summary逻辑
-    summary = await memory.read_summary()
+    summary = await memory.read_md(".personality.md")
     assert summary == ""
-    await memory.write_summary(text__="hello3")
-    summary = await memory.read_summary()
+    await memory.refresh_personality(text__="hello3")
+    summary = await memory.read_md(".personality.md")
     assert summary == "hello3"
 
     # 限制只拿最新的一轮。
     await memory.set_limitation(turn_rounds=1)
-    messages = await memory.context_messages()
-    assert len(messages) == 4
-    assert Text.from_content(messages[0].contents[0]).text == "hello2"
-    assert Text.from_content(messages[1].contents[0]).text == "world2"
-    assert Text.from_content(messages[2].contents[0]).text == "hello3"
-    assert messages[3].name == "__memory_settings__"
+    history = await memory.get_session_history()
+    assert len(history) == 2

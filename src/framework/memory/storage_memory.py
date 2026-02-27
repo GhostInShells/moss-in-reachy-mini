@@ -1,11 +1,9 @@
 import asyncio
-import json
-import time
 import uuid
-from typing import List, Optional
+from typing import List
 
 from ghoshell_common.contracts import Storage, Workspace, YamlConfig, WorkspaceConfigs, FileStorage
-from ghoshell_container import Container, IoCContainer
+from ghoshell_container import Container
 from ghoshell_moss import Message, Text, Addition, PyChannel
 from pydantic import BaseModel, Field
 
@@ -48,8 +46,6 @@ class StorageMemory(Memory):
         self._configs = WorkspaceConfigs(storage)
         self._meta_config = self._configs.get_or_create(MetaConfig())
 
-        self._current_session: Optional[Session] = None
-
         # lifecycle
         self._started = asyncio.Event()
 
@@ -61,17 +57,19 @@ class StorageMemory(Memory):
         return f"thread_{self._meta_config.current_session_id}.json"
 
     # ==== Agent Memory Interface ====
-    async def _save_current_session(self):
-        file_bytes = self._current_session.model_dump_json(indent=4, ensure_ascii=False, exclude_none=True).encode()
+    async def _get_session(self) -> Session:
+        if not self._has_current_session():
+            await self.new_session()
+        file_data = self.storage.get(self.session_file_name())
+        session = Session.model_validate_json(file_data)
+        return session
+
+    async def _save_session(self, session: Session):
+        file_bytes = session.model_dump_json(indent=4, ensure_ascii=False, exclude_none=True).encode()
         self.storage.put(self.session_file_name(), file_bytes)
 
     async def save_turn(self, inputs: List[Message], outputs: List[Message]):
-        if not self._has_current_session():
-            await self.new_session()
-
-        if self.storage.exists(self.session_file_name()):
-            file_data = self.storage.get(self.session_file_name())
-            self._current_session = Session.model_validate_json(file_data)
+        session = await self._get_session()
 
         saved_outputs = [o for o in outputs if o.is_completed()]  # 只保存完整的消息包
 
@@ -79,15 +77,15 @@ class StorageMemory(Memory):
         for msg in inputs + saved_outputs:
             msg.with_additions(TurnAddition(turn_id=turn_id))
 
-        self._current_session.messages.extend(inputs + saved_outputs)
-        await self._save_current_session()
+        session.messages.extend(inputs + saved_outputs)
+        await self._save_session(session)
 
     async def get_session_history(self) -> List[Message]:
         if not self._started.is_set():
             await self.start()
 
-        session_history = self._current_session.model_copy(deep=True)
-        session_history.messages.reverse()  # 倒转顺序方便处理
+        session_history = await self._get_session()
+        session_history.messages.reverse()
 
         res = []
         current_turn = ""
@@ -117,9 +115,6 @@ class StorageMemory(Memory):
     async def start(self):
         if not self._has_current_session():
             await self.new_session()
-        else:
-            file_data = self.storage.get(self.session_file_name())
-            self._current_session = Session.model_validate_json(file_data)
         self._started.set()
 
     async def close(self):
@@ -129,8 +124,8 @@ class StorageMemory(Memory):
     async def new_session(self):
         self._meta_config.current_session_id = str(uuid.uuid4())
         self._configs.save(self._meta_config)
-        self._current_session = Session(messages=[])
-        await self._save_current_session()
+        new_session = Session(messages=[])
+        await self._save_session(new_session)
 
     async def set_limitation(self, turn_rounds: int=10, max_tokens: int=-1) -> str:
         """Configures conversation context visibility boundaries for the agent.
