@@ -3,6 +3,8 @@ import logging
 from typing import List
 
 import numpy as np
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import Provider, Container, IoCContainer, INSTANCE
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
@@ -13,10 +15,11 @@ from moss_in_reachy_mini.vision.yolo.model import Position
 
 class HeadTracker:
 
-    def __init__(self, mini: ReachyMini, logger: logging.Logger):
+    def __init__(self, mini: ReachyMini, camera_worker: CameraWorker, container: IoCContainer=None):
         self._mini = mini
-        self.logger = logger
-        self._camera_worker = CameraWorker(mini, HeadDetector())
+        self._container = Container(parent=container)
+        self.logger = self._container.get(LoggerItf) or logging.getLogger("HeadTracker")
+        self._camera_worker = camera_worker
 
         self.face_tracking_offsets: List[float] = [
             0.0,
@@ -29,7 +32,6 @@ class HeadTracker:
         self.face_tracking_positions: List[Position] = []
         self.current_tracking_id = -1
         self._run_task = None
-        self._move_task = None
 
         self.enabled = asyncio.Event()
         self._quit = asyncio.Event()
@@ -78,14 +80,16 @@ class HeadTracker:
     async def stop(self):
         self.enabled.clear()
         self._quit.set()
-        
-        # Cancel any ongoing tasks
-        if self._move_task and not self._move_task.done():
-            self._move_task.cancel()
-            try:
-                await self._move_task
-            except asyncio.CancelledError:
-                pass
-        
+
         if self._run_task:
             await self._run_task
+
+
+class HeadTrackerProvider(Provider[HeadTracker]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        camera_worker = con.force_fetch(CameraWorker)
+        return HeadTracker(mini, camera_worker, con)

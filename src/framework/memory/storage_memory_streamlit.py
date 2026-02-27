@@ -266,7 +266,6 @@ class StorageMemoryUI:
             <div style="display: flex; justify-content: center; margin: 8px 0;">
                 <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
                     <strong>[{msg.role.upper()}]</strong> {full_text}
-                    {event_html}
                 </div>
             </div>
             """, unsafe_allow_html=True)

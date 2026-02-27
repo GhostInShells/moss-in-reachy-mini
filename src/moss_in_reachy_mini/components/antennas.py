@@ -4,6 +4,8 @@ import logging
 from typing import List, Dict, Optional
 
 import numpy as np
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import Provider, IoCContainer, INSTANCE, Container
 from numpy import typing as npt
 
 from reachy_mini import ReachyMini
@@ -44,9 +46,10 @@ class AntennasMove(Move):
         return None, np.array([r_rad, l_rad]), None
 
 class Antennas:
-    def __init__(self, mini: ReachyMini, logger: logging.Logger):
+    def __init__(self, mini: ReachyMini, container: IoCContainer=None):
         self.mini = mini
-        self.logger = logger
+        self._container = Container(parent=container)
+        self.logger = self._container.get(LoggerItf) or logging.getLogger("Antennas")
 
         self._flapping_task: Optional[asyncio.Task] = None
         self._flapping_event = asyncio.Event()
@@ -173,3 +176,11 @@ class Antennas:
         antennas.build.command()(self.enable_flapping)
 
         return antennas
+
+class AntennasProvider(Provider[Antennas]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        return Antennas(mini, con)

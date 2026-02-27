@@ -2,8 +2,8 @@ import asyncio
 import logging
 import os
 
-from ghoshell_common.contracts import LoggerItf
-from ghoshell_container import Container, get_container
+from ghoshell_common.contracts import LoggerItf, Workspace
+from ghoshell_container import Container, get_container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Speech, MOSSShell
 from ghoshell_moss import new_shell
 from ghoshell_moss.core.shell.main_channel import create_main_channel
@@ -13,67 +13,110 @@ from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import AgentConfig, ModelConf, EventBus
+from framework.abcd.agent import AgentConfig, ModelConf, EventBus, Agent
 from framework.abcd.memory import Memory
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
-from framework.memory.storage_memory import new_ws_storage_memory
+from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
-from moss_in_reachy_mini.moss import MossInReachyMini
+from moss_in_reachy_mini.components.antennas import AntennasProvider
+from moss_in_reachy_mini.components.body import BodyProvider
+from moss_in_reachy_mini.components.head import HeadProvider
+from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
+from moss_in_reachy_mini.components.vision import VisionProvider
+from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
+from moss_in_reachy_mini.vision.camera_worker import CameraWorkerProvider
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+class ShellProvider(Provider[MOSSShell]):
+
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        moss = con.force_fetch(MossInReachyMini)
+        memory = con.force_fetch(StorageMemory)
+        speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
+        shell = new_shell(container=con, speech=speech, main_channel=create_main_channel())
+        shell.main_channel.import_channels(
+            moss.as_channel(),
+            memory.as_channel(),
+            # zmq_hub.as_channel()
+        )
+        return shell
+
+class AgentProvider(Provider[Agent]):
+    def __init__(self, config: AgentConfig):
+        self._config = config
+
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        shell = con.force_fetch(MOSSShell)
+        memory = con.force_fetch(Memory)
+        moss = con.force_fetch(MossInReachyMini)
+        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook=moss.hook())
+
+def providers(container: IoCContainer):
+    # Mini
+    container.set(ReachyMini, ReachyMini())
+    # Agent输入
+    container.set(EventBus, QueueEventBus())
+    # Agent输出
+    container.register(ChatBroadcasterProvider())
+    container.set(BaseChat, ConsoleChat())
+    # dependency registry
+    container.register(BodyProvider())
+    container.register(HeadProvider())
+    container.register(AntennasProvider())
+    container.register(VisionProvider())
+    container.register(HeadTrackerProvider())
+    container.register(CameraWorkerProvider())
+    # Agent记忆
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage("memory")
+    memory = StorageMemory(storage)
+    container.set(StorageMemory, memory)
+    container.set(Memory, memory)
+    container.register(ShellProvider())  # Shell
+    # Agent
+    instructions = load_instructions(
+        container,
+        files=["ctml_enrich.md"],
+        storage_name="reachy_mini_instructions",
+    )
+    container.register(AgentProvider(AgentConfig(
+        id="reachy_mini",
+        name="reachy_mini",
+        description="",
+        model=ModelConf(
+            kwargs={
+                "thinking": {
+                    "type": "disabled",
+                },
+            },
+        ),
+        instructions=instructions,
+    )))
+    # Moss
+    container.register(MossInReachyMiniProvider())
+
 
 async def run_agent(container, zmq_hub):
-    with ReachyMini() as _mini:
-        async with MossInReachyMini(_mini, container) as moss:
-            speech = get_speech(_mini, container, default_speaker="saturn_zh_female_keainvsheng_tob")
-            # Agent记忆
-            memory = new_ws_storage_memory(container)
-            container.set(Memory, memory)
-            # Shell
-            shell = new_shell(container=container, speech=speech, main_channel=create_main_channel())
-            shell.main_channel.import_channels(
-                moss.as_channel(),
-                memory.as_channel(),
-                # zmq_hub.as_channel()
-            )
-            container.set(MOSSShell, shell)
-            # Agent输入
-            container.set(EventBus, QueueEventBus())
-            # Agent输出
-            container.register(ChatBroadcasterProvider())
-            chat = ConsoleChat()
-            container.set(BaseChat, chat)
-
-            instructions = load_instructions(
-                container,
-                files=["ctml_enrich.md"],
-                storage_name="reachy_mini_instructions",
-            )
-            agent = MainAgent(
-                container=container,
-                config=AgentConfig(
-                    id="reachy_mini",
-                    name="reachy_mini",
-                    description="",
-                    model=ModelConf(
-                        kwargs={
-                            "thinking": {
-                                "type": "disabled",
-                            },
-                        },
-                    ),
-                    instructions=instructions,
-                ),
-                shell=shell,
-                memory=memory,
-                hook=moss.hook(),
-            )
+    providers(container)
+    _mini = container.force_fetch(ReachyMini)
+    with _mini:
+        moss = container.force_fetch(MossInReachyMini)
+        async with moss:
+            agent = container.make(Agent)
+            chat = container.force_fetch(BaseChat)
             await run_agent_with_chat(agent, chat)
 
 

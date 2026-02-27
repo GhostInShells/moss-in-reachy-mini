@@ -13,6 +13,7 @@ from typing import List, Tuple
 
 import cv2
 import numpy as np
+from ghoshell_container import Provider, IoCContainer, INSTANCE
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
@@ -252,3 +253,13 @@ class CameraWorker:
                 time.sleep(0.1)  # Longer sleep on error
 
         logger.debug("Camera worker thread exited")
+
+
+class CameraWorkerProvider(Provider[CameraWorker]):
+
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        return CameraWorker(reachy_mini=mini, head_detector=HeadDetector())
