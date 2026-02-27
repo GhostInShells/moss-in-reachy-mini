@@ -1,8 +1,8 @@
 # ReachyMini
 ## 启动
 ```commandline
-uv venv
 source .venv/bin/activate
+uv sync --all-extras
 python src/moss_in_reachy_mini/main.py
 ```
 
@@ -20,17 +20,6 @@ python src/moss_in_reachy_mini/main.py
 - `thread_xxxxxx.json`是当前会话的所有上下文（不可人为修改），可以在对话中要求创建新的会话；当前不支持切换会话，后续可以提供一个UI页面来做更fancy的呈现。
 
 ### 启动UI页面
-进入正确的虚拟环境并保证依赖安装到最新
-```commandline
-uv venv
-source .venv/bin/activate
-uv sync --all-extras
-```
-先启动reachy mini
-```commandline
-python src/moss_in_reachy_mini/main.py
-```
-再启动UI进程
 ```commandline
 source src/moss_in_reachy_mini/start_memory_ui.sh
 ```
