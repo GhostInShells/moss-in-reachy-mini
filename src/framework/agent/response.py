@@ -210,7 +210,7 @@ class MOSShellResponse(Response):
             interrupt_msg = Message.new(
                 role="system"
             ).with_additions(
-                AgentEventAddition(event_id=self.event.event_id)
+                AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type),
             ).with_content(
                 Text(text="[Interrupt] User input")
             )

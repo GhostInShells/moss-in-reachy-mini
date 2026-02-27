@@ -2,22 +2,23 @@ import asyncio
 import logging
 from typing import Optional
 
-from ghoshell_container import IoCContainer
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import Container, IoCContainer, Provider, INSTANCE
 from ghoshell_moss import PyChannel, Message, Text
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
 from moss_in_reachy_mini.moves.head_move import HeadMove, BreathingMove
-from moss_in_reachy_mini.vision.head_tracker import HeadTracker
-from moss_in_reachy_mini.vision.yolo.model import stringify_positions
+from moss_in_reachy_mini.components.head_tracker import HeadTracker
 
 
 class Head:
-    def __init__(self, mini: ReachyMini, logger: logging.Logger, container: IoCContainer):
+    def __init__(self, mini: ReachyMini, head_tracker: HeadTracker, container: IoCContainer=None):
         self.mini = mini
-        self.logger = logger
+        self._container = Container(parent=container)
+        self.logger = self._container.get(LoggerItf) or logging.getLogger("Head")
 
-        self._head_tracker = HeadTracker(mini, logger)
+        self._head_tracker = head_tracker
         self._tracking_event = asyncio.Event()
 
         self._breathing_task: Optional[asyncio.Task] = None
@@ -67,10 +68,12 @@ class Head:
         Keep gazing at the user.
         """
         self._tracking_event.set()
+        self._head_tracker.enabled.set()
         self._head_tracker.set_tracking_id(tracking_id)
 
     async def stop_tracking_face(self):
         self._tracking_event.clear()
+        self._head_tracker.enabled.clear()
         self._head_tracker.set_tracking_id(-1)
 
     async def start_breathing(self):
@@ -97,10 +100,9 @@ class Head:
 
     async def context_messages(self):
         msg = Message.new(role="user", name="__reachy_mini_head__")
-        if self._tracking_event.is_set() and self._head_tracker.face_tracking_positions:
+        if self._tracking_event.is_set():
             msg.with_content(
                 Text(text=f"You are keep looking user with head tracking"),
-                Text(text=f"Head tracking information is {stringify_positions(self._head_tracker.face_tracking_positions)}"),
                 Text(text=f"Current tracking id is {self._head_tracker.current_tracking_id}")
             )
 
@@ -162,3 +164,13 @@ class Head:
 
     async def aclose(self):
         await self._head_tracker.stop()
+
+
+class HeadProvider(Provider[Head]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        head_tracker = con.force_fetch(HeadTracker)
+        return Head(mini, head_tracker, con)

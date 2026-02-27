@@ -1,6 +1,6 @@
 from typing import List
 
-from ghoshell_container import IoCContainer
+from ghoshell_container import IoCContainer, Provider, INSTANCE
 from ghoshell_moss import Command, PyCommand
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMove
@@ -8,6 +8,7 @@ from reachy_mini.utils import create_head_pose
 from reachy_mini_dances_library import DanceMove
 from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
+from moss_in_reachy_mini.components.head_tracker import HeadTracker
 from moss_in_reachy_mini.moves.head_move import HeadMove
 from moss_in_reachy_mini.utils import load_emotions
 
@@ -68,3 +69,11 @@ class Body:
                 doc=self.emotion_docstring(),
             )
         ]
+
+class BodyProvider(Provider[Body]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        return Body(mini, con)

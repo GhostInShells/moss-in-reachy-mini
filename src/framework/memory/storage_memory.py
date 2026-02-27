@@ -2,8 +2,7 @@ import asyncio
 import uuid
 from typing import List
 
-from ghoshell_common.contracts import Storage, Workspace, YamlConfig, WorkspaceConfigs, FileStorage
-from ghoshell_container import Container
+from ghoshell_common.contracts import Storage, YamlConfig, WorkspaceConfigs, FileStorage
 from ghoshell_moss import Message, Text, Addition, PyChannel
 from pydantic import BaseModel, Field
 
@@ -263,7 +262,3 @@ class StorageMemory(Memory):
         return memory
 
 
-def new_ws_storage_memory(container: Container=None) -> StorageMemory:
-    ws = container.force_fetch(Workspace)
-    storage = ws.runtime().sub_storage("memory")
-    return StorageMemory(storage)

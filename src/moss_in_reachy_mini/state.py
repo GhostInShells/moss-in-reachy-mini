@@ -7,13 +7,15 @@ from functools import partial
 from typing import Optional, List
 
 from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Text, Message
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
-from moss_in_reachy_mini.channels.antennas import Antennas
-from moss_in_reachy_mini.channels.body import Body
-from moss_in_reachy_mini.channels.head import Head
+from moss_in_reachy_mini.components.antennas import Antennas
+from moss_in_reachy_mini.components.body import Body
+from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.vision import Vision
 
 
 class QuitIdleMove(Exception):
@@ -121,10 +123,13 @@ class WakenState(MiniStateHook):
         self.mini.enable_motors()
         self.mini.wake_up()
         self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
+        await asyncio.sleep(1.0)  # wake up没有同步运行，等待一下
+        await self.head.start_tracking_face()
 
     async def on_self_exit(self):
         await self.cancel_idle_move()
         await self.head.reset()
+        await self.head.stop_tracking_face()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:
@@ -245,7 +250,15 @@ class StateLog:
         self.now = int(time.time())
 
 class StateManagerHook(AgentHook):
-    def __init__(self, mini: ReachyMini, body: Body, head: Head, antennas: Antennas, logger: LoggerItf):
+    def __init__(
+            self,
+            mini: ReachyMini,
+            body: Body,
+            head: Head,
+            antennas: Antennas,
+            vision: Vision,
+            logger: LoggerItf
+    ):
         self._state_map = {
             AsleepState.NAME: AsleepState(mini),
             WakenState.NAME: WakenState(

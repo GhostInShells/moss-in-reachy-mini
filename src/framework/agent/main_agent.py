@@ -7,20 +7,19 @@ from typing import Union, Optional, Self, List
 
 from ghoshell_common.contracts.logger import LoggerItf
 from ghoshell_common.contracts.storage import MemoryStorage
-from ghoshell_container import Container
-from ghoshell_moss import Message, Text, MOSSShell
+from ghoshell_container import Container, Provider, IoCContainer, INSTANCE
+from ghoshell_moss import Message, Text, MOSSShell, Base64Image
 
 from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent
 from framework.abcd.agent_hook import AgentHook
 from framework.abcd.memory import Memory
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.response import MOSShellResponse, CTMLResult
 from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
-
 
 
 class BaseMainAgent(Agent, ABC):
@@ -30,7 +29,7 @@ class BaseMainAgent(Agent, ABC):
 
     def __init__(
             self,
-            container: Container,
+            container: IoCContainer,
             config: AgentConfig,
             shell: MOSSShell,
             memory: Memory,
@@ -181,6 +180,20 @@ class BaseMainAgent(Agent, ABC):
                 shell=self.shell,
                 event=react,
                 inputs=react.messages,
+                model=self.config.model,
+                prompts=prompts,
+                logger=self.logger,
+            )
+
+        if vision := VisionAgentEvent.from_agent_event(event):
+            inputs = [Message.new(role="assistant").with_content(
+                Text(text=vision.content),
+                *vision.images,
+            )]
+            return MOSShellResponse(
+                shell=self.shell,
+                event=vision,
+                inputs=inputs,
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,
@@ -432,6 +445,20 @@ class MainAgent(BaseMainAgent):
         shell = container.force_fetch(MOSSShell)
         memory = container.force_fetch(Memory)
         return cls(container=container, config=config, shell=shell, memory=memory)
+
+
+class AgentProvider(Provider[Agent]):
+    def __init__(self, config: AgentConfig, hook: AgentHook=None):
+        self._config = config
+        self._hook = hook
+
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        shell = con.force_fetch(MOSSShell)
+        memory = con.force_fetch(Memory)
+        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook=self._hook)
 
 
 async def main(container: Container) -> None:

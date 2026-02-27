@@ -1,41 +1,45 @@
 import asyncio
 import io
 import logging
-import os.path
-import pathlib
-import time
-from functools import partial
-from typing import Optional, List
-
-import cv2
 from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import IoCContainer
+from ghoshell_container import IoCContainer, Provider, INSTANCE
 from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
-from moss_in_reachy_mini.channels.antennas import Antennas
-from moss_in_reachy_mini.channels.body import Body
-from moss_in_reachy_mini.channels.head import Head
+from moss_in_reachy_mini.components.antennas import Antennas
+from moss_in_reachy_mini.components.body import Body
+from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.vision import Vision
 from state import AsleepState, WakenState, BoringState, StateManagerHook
 
 
 class MossInReachyMini:
-    def __init__(self, mini: ReachyMini, container: IoCContainer=None):
+    def __init__(
+            self,
+            mini: ReachyMini,
+            body: Body,
+            head: Head,
+            antennas: Antennas,
+            vision: Vision,
+            container: IoCContainer = None,
+    ):
         self.mini = mini
         self.logger = container.get(LoggerItf) or logging.getLogger(__name__)
         self._ws = container.force_fetch(Workspace)
 
-        self.body = Body(mini, container)
-        self.head = Head(mini, self.logger, container)
-        self.antennas = Antennas(mini, self.logger)
+        self.body = body
+        self.head = head
+        self.antennas = antennas
+        self.vision = vision
 
         self._state_manager = StateManagerHook(
             mini=self.mini,
             body=self.body,
             head=self.head,
             antennas=self.antennas,
+            vision=self.vision,
             logger=self.logger,
         )
 
@@ -73,25 +77,9 @@ class MossInReachyMini:
         return [msg]
 
     async def vision_context_messages(self):
-        msg = Message.new(role="user", name="__reachy_mini_vision__")
-        # mini vision
-        frame = self.mini.media.get_frame()
-        if frame is not None:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # convert to RGB
-            img_pil = Image.fromarray(frame_rgb)
-            # img_pil.save("temp.png")
-            msg.with_content(
-                Text(text="This image is what you see")
-            ).with_content(
-                Base64Image.from_pil_image(img_pil)
-            )
-        else:
-            msg.with_content(
-                Text(text="No vision available")
-            )
-
         base_msg = await self.context_messages()
-        return base_msg + [msg]
+        msg = await self.vision.context_messages()
+        return base_msg + msg
 
     async def integrated_context_messages(self):
         vision_with_base_msg = await self.vision_context_messages()
@@ -127,13 +115,15 @@ class MossInReachyMini:
         waken_chan.build.command(name="antennas_reset")(self.antennas.reset)
         waken_chan.build.command()(self.antennas.set_idle_flapping)
         waken_chan.build.command()(self.antennas.enable_flapping)
+        waken_chan.build.command()(self.vision.look)
         waken_chan.build.with_available()(lambda: self._state_manager.current().NAME == WakenState.NAME)
 
         # boring state can see
         boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", block=True)
         boring_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         boring_chan.build.command()(self.goto_sleep)
-        boring_chan.build.with_context_messages(self.vision_context_messages)
+        boring_chan.build.command()(self.vision.look)
+        boring_chan.build.with_context_messages(self.context_messages)
         boring_chan.build.with_available()(lambda: self._state_manager.current().NAME == BoringState.NAME)
 
         reachy_mini.import_channels(
@@ -159,3 +149,17 @@ class MossInReachyMini:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self.aclose()
+
+
+class MossInReachyMiniProvider(Provider[MossInReachyMini]):
+
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> INSTANCE:
+        mini = con.force_fetch(ReachyMini)
+        body = con.force_fetch(Body)
+        head = con.force_fetch(Head)
+        vision = con.force_fetch(Vision)
+        antennas = con.force_fetch(Antennas)
+        return MossInReachyMini(mini, body, head, antennas, vision, container=con)
