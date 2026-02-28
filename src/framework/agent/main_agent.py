@@ -488,6 +488,7 @@ if __name__ == '__main__':
     from framework.agent.broadcaster import ChatBroadcasterProvider
     from ghoshell_moss_contrib.agent.chat.base import BaseChat
     from ghoshell_moss_contrib.agent import ConsoleChat
+    from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
     from ghoshell_moss.speech import MockSpeech
     _container = Container()
     _container.set(LoggerItf, logging.getLogger())
@@ -501,6 +502,6 @@ if __name__ == '__main__':
     )
     _container.set(MOSSShell, _shell)
     _container.set(EventBus, QueueEventBus())
+    _container.set(BaseChat, ConsoleChat(logger=_container.get(LoggerItf)))
     _container.register(ChatBroadcasterProvider())
-    _container.set(BaseChat, ConsoleChat())
     asyncio.run(main(container=_container))

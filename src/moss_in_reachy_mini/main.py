@@ -26,6 +26,7 @@ from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
+from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.vision.camera_worker import CameraWorkerProvider
@@ -71,7 +72,7 @@ def providers(container: IoCContainer):
     container.set(EventBus, QueueEventBus())
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsoleChat())
+    container.set(BaseChat, ConsolePTTChat())
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())

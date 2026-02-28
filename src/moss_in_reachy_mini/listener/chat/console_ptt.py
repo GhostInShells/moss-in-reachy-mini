@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import traceback
@@ -37,7 +38,7 @@ class ConsolePTTChat(BaseChat):
 
         # 工作模式
         self.debug = debug
-        self.logger = logger
+        self.logger = logger or logging.getLogger("ConsolePTTChat")
 
         # Listener相关属性
         self.listener_service: Optional[ListenerService] = None
@@ -47,7 +48,6 @@ class ConsolePTTChat(BaseChat):
         # 打印启动信息
         self._print_startup_info()
 
-        self._setup_enter_to_talk_mode(mini)
         self.ai_response_done = asyncio.Event()
 
     def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
@@ -174,7 +174,7 @@ class ConsolePTTChat(BaseChat):
             self.add_user_message(text)
 
         # 调用输入处理回调
-        if self.on_input_callback:
+        if text and self.on_input_callback:
             self.on_input_callback(text)
 
     def _print_startup_info(self):
@@ -281,6 +281,7 @@ class ConsolePTTChat(BaseChat):
     async def run(self):
         """运行聊天界面主循环"""
         try:
+            self._setup_enter_to_talk_mode()
             await self._run_enter_to_talk_mode()
         finally:
             # 清理资源

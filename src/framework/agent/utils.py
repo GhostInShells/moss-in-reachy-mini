@@ -26,14 +26,17 @@ def clear_queue(queue: asyncio.Queue) -> None:
             break
 
 async def run_agent_with_chat(agent: Agent, chat: BaseChat) -> None:
+    loop = asyncio.get_running_loop()
+
     def _callback(user_input):
-        asyncio.create_task(agent.eventbus().put(UserInputAgentEvent(
+        asyncio.run_coroutine_threadsafe(agent.eventbus().put(UserInputAgentEvent(
             message=Message.new(role="user").with_content(Text(text=user_input)),
-        ).to_agent_event()))
+        ).to_agent_event()), loop)
 
     def _interrupt():
-        asyncio.create_task(
-            agent.eventbus().put(InterruptAgentEvent().to_agent_event())
+        asyncio.run_coroutine_threadsafe(
+            agent.eventbus().put(InterruptAgentEvent().to_agent_event()),
+            loop
         )
 
     chat.set_input_callback(_callback)
