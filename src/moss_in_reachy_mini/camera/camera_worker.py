@@ -13,16 +13,19 @@ from typing import List, Tuple
 
 import cv2
 import numpy as np
+from ghoshell_common.contracts import Workspace
 from ghoshell_container import Provider, IoCContainer, INSTANCE
 from numpy.typing import NDArray
 from scipy.spatial.transform import Rotation as R
 
 from reachy_mini import ReachyMini
 from reachy_mini.utils.interpolation import linear_pose_interpolation
+from supervision import ByteTrack
 
-from moss_in_reachy_mini.vision.yolo.drawer import draw_tracks
-from moss_in_reachy_mini.vision.yolo.head_detector import HeadDetector
-from moss_in_reachy_mini.vision.yolo.model import Position, get_position_by_track_id
+from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
+from moss_in_reachy_mini.camera.yolo.drawer import draw_tracks
+from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
+from moss_in_reachy_mini.camera.yolo.model import Position, get_position_by_track_id
 
 logger = logging.getLogger(__name__)
 
@@ -262,4 +265,12 @@ class CameraWorkerProvider(Provider[CameraWorker]):
 
     def factory(self, con: IoCContainer) -> INSTANCE:
         mini = con.force_fetch(ReachyMini)
-        return CameraWorker(reachy_mini=mini, head_detector=HeadDetector())
+
+        ws = con.force_fetch(Workspace)
+        face_recognizer_storage = ws.configs().sub_storage("face_recognizer")
+
+        head_detector = HeadDetector(
+            face_recognizer=FaceRecognizer(known_faces_storage=face_recognizer_storage),
+            bytetrack=ByteTrack()
+        )
+        return CameraWorker(reachy_mini=mini, head_detector=head_detector)
