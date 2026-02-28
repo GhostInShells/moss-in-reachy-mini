@@ -15,7 +15,7 @@ from framework.abcd.agent import (
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
     UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent
-from framework.abcd.agent_hook import AgentHook
+from framework.abcd.agent_hook import AgentHook, AgentHookState
 from framework.abcd.memory import Memory
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.response import MOSShellResponse, CTMLResult
@@ -33,11 +33,11 @@ class BaseMainAgent(Agent, ABC):
             config: AgentConfig,
             shell: MOSSShell,
             memory: Memory,
-            hook: AgentHook=None,
+            hook_state: AgentHookState=None,
     ):
         self.shell = shell
         self.memory = memory
-        self._hook = hook
+        self.hook_state = hook_state
 
         self.config = config
         self._id = config.id
@@ -77,14 +77,13 @@ class BaseMainAgent(Agent, ABC):
 
         self._state = value
 
-        if not self._hook:
+        if not self.hook_state:
             return
         # 执行异步 hook
         if value == AgentStateName.RESPONDING:
-            await self._hook.on_responding()
+            await self.hook_state.get_hook().on_responding()
         if value == AgentStateName.IDLE:
-            await self._hook.on_idle()
-
+            await self.hook_state.get_hook().on_idle()
 
     async def make_prompts(self) -> List[Message]:
         """
@@ -448,9 +447,9 @@ class MainAgent(BaseMainAgent):
 
 
 class AgentProvider(Provider[Agent]):
-    def __init__(self, config: AgentConfig, hook: AgentHook=None):
+    def __init__(self, config: AgentConfig, hook_state: AgentHookState=None):
         self._config = config
-        self._hook = hook
+        self._hook_state = hook_state
 
     def singleton(self) -> bool:
         return True
@@ -458,7 +457,7 @@ class AgentProvider(Provider[Agent]):
     def factory(self, con: IoCContainer) -> INSTANCE:
         shell = con.force_fetch(MOSSShell)
         memory = con.force_fetch(Memory)
-        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook=self._hook)
+        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=self._hook_state)
 
 
 async def main(container: Container) -> None:

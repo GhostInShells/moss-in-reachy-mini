@@ -63,7 +63,7 @@ class AgentProvider(Provider[Agent]):
         shell = con.force_fetch(MOSSShell)
         memory = con.force_fetch(Memory)
         moss = con.force_fetch(MossInReachyMini)
-        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook=moss.hook())
+        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=moss)
 
 def providers(container: IoCContainer):
     # Mini

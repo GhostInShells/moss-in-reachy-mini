@@ -3,19 +3,14 @@ import asyncio
 import math
 import random
 import time
-from functools import partial
-from typing import Optional, List
+from typing import Optional
 
-from ghoshell_common.contracts import LoggerItf
-from ghoshell_container import Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Text, Message
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
-from moss_in_reachy_mini.components.vision import Vision
 
 
 class QuitIdleMove(Exception):
@@ -242,80 +237,3 @@ Proactive_Prompts = [
 """
 ]
 
-
-class StateLog:
-    def __init__(self, from_state: MiniStateHook, to_state: MiniStateHook):
-        self.from_state = from_state
-        self.to_state = to_state
-        self.now = int(time.time())
-
-class StateManagerHook(AgentHook):
-    def __init__(
-            self,
-            mini: ReachyMini,
-            body: Body,
-            head: Head,
-            antennas: Antennas,
-            vision: Vision,
-            logger: LoggerItf
-    ):
-        self._state_map = {
-            AsleepState.NAME: AsleepState(mini),
-            WakenState.NAME: WakenState(
-                mini,
-                head=head,
-                antennas=antennas,
-                turn_to_boring=partial(self.switch_to, BoringState.NAME),
-            ),
-            BoringState.NAME: BoringState(
-                mini,
-                body=body,
-                turn_to_asleep=partial(self.switch_to, AsleepState.NAME),
-                back_to_waken=partial(self.switch_to, WakenState.NAME),
-            )
-        }
-        self._state: Optional[MiniStateHook] = None
-        self._state_log: List[StateLog] = []
-        self.logger = logger
-
-    async def switch_to(self, state_name: str):
-        if state_name not in self._state_map:
-            raise ValueError(f'Invalid state name: {state_name}')
-
-        if self._state:
-            await self._state.on_self_exit()
-
-        self.logger.info(f'Switching state from {self._state.NAME if self._state else "initial"} to {state_name}')
-        self._state_log.append(StateLog(self._state, self._state_map[state_name]))  # 记录状态切换
-        self._state = self._state_map[state_name]
-        await self._state.on_self_enter()
-
-    def current(self) -> MiniStateHook:
-        return self._state
-
-    async def on_idle(self):
-        await self._state.on_idle()
-
-    async def on_responding(self):
-        await self._state.on_responding()
-
-    def to_contents(self):
-        contents = []
-        now = int(time.time())
-        for state in self._state_log:
-            ago = now - state.now
-            if not state.from_state:
-                text = f"Start state to {state.to_state.NAME} occurred {ago} seconds ago"
-            else:
-                text = f"Switch state from {state.from_state.NAME} to {state.to_state.NAME} occurred {ago} seconds ago"
-            contents.append(Text(text=text))
-        return contents
-
-    def clear_state_log(self):
-        self._state_log.clear()
-
-    async def start(self):
-        await self.switch_to(AsleepState.NAME)
-
-    async def close(self):
-        await self.switch_to(AsleepState.NAME)
