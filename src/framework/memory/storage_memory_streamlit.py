@@ -188,7 +188,7 @@ class StorageMemoryUI:
                     for msg in turn_msgs:
                         # 1. 提取AgentEventAddition信息
                         event_info = AgentEventAddition.read(msg)
-                        event_html = ""
+                        event_html = "<span></span>"
                         if event_info:
                             event_color_map = {
                                 "user_trigger": "#d4edda",
@@ -216,14 +216,14 @@ class StorageMemoryUI:
                                     escaped_text = html.escape(text_content.text)
                                     # 高亮自闭合动作标签
                                     formatted_text = re.sub(
-                                        r'&lt;([\w\.:]+)/&gt;',
+                                        r'&lt;(.*)/&gt;',
                                         r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529;">&lt;\1/&gt;</span>',
                                         escaped_text
                                     )
                                     # 高亮成对动作标签
                                     formatted_text = re.sub(
-                                        r'&lt;([\w]+\.[\w:]+)&gt;(.*?)&lt;/\1&gt;',
-                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529; display:inline-block;">&lt;\1&gt;\2&lt;/\1&gt;</span>',
+                                        r'&lt;(.*)&gt;(.*?)&lt;(.*)gt;',
+                                        r'<span style="background-color:#ffc107; padding:2px 6px; border-radius:4px; font-size:0.9em; color:#212529; display:inline-block;">&lt;\1&gt;\2&lt;/\3&gt;</span>',
                                         formatted_text
                                     )
                                     text_contents.append(formatted_text)
@@ -242,6 +242,7 @@ class StorageMemoryUI:
                 <div style="background-color: #007bff; color: white; padding: 10px 14px; border-radius: 18px 18px 4px 18px; max-width: 75%;">
                     <div style="font-size: 0.9em; white-space: pre-wrap;">{full_text}</div>
                     <div style="font-size: 0.7em; text-align: right; opacity: 0.8; margin-top: 4px;">{time_text}</div>
+                    {event_html}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -266,6 +267,7 @@ class StorageMemoryUI:
             <div style="display: flex; justify-content: center; margin: 8px 0;">
                 <div style="background-color: #e9ecef; color: #666; padding: 8px 12px; border-radius: 8px; max-width: 75%; font-size: 0.9em;">
                     <strong>[{msg.role.upper()}]</strong> {full_text}
+                    {event_html}
                 </div>
             </div>
             """, unsafe_allow_html=True)
