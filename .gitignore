@@ -12,3 +12,5 @@ wheels/
 .env
 .idea
 .DS_Store
+temp.png
+temp.json

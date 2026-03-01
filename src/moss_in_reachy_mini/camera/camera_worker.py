@@ -23,7 +23,7 @@ from reachy_mini.utils.interpolation import linear_pose_interpolation
 from supervision import ByteTrack
 
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
-from moss_in_reachy_mini.camera.yolo.drawer import draw_tracks
+from moss_in_reachy_mini.camera.yolo.drawer import draw_tracks, draw_detections
 from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
 from moss_in_reachy_mini.camera.yolo.model import Position, get_position_by_track_id
 
@@ -245,7 +245,7 @@ class CameraWorker:
                     with self.frame_lock:
                         # 颜色校正
                         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        frame = draw_tracks(frame, detections)
+                        frame = draw_detections(frame, positions=self.face_positons)
                         self.latest_frame = frame  # .copy()
 
                 # Small sleep to prevent excessive CPU usage (same as main_works.py)

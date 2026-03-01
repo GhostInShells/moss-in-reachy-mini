@@ -105,6 +105,12 @@ class Head:
                 Text(text=f"You are keep looking user with head tracking"),
                 Text(text=f"Current tracking id is {self._head_tracker.current_tracking_id}")
             )
+            for pos in self._head_tracker.face_tracking_positions:
+                if not pos.is_recognized:
+                    continue
+                msg.with_content(
+                    Text(text=f"当前视觉里的人脸 track_id={pos.track_id} name={pos.name}")
+                )
 
         msg.with_content(
             Text(text=f"Current head pose is {self.mini.get_current_head_pose()}")

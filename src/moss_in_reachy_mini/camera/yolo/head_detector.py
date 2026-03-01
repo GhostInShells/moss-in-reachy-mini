@@ -1,4 +1,5 @@
 import logging
+import traceback
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 
@@ -165,7 +166,7 @@ class HeadDetector:
             for i in range(len(detections)):
                 bbox = detections.xyxy[i]
                 track_id = -1
-                if detections.tracker_id:
+                if detections.tracker_id is not None:
                     track_id = detections.tracker_id[i]
                 confidence = detections.confidence[i] if detections.confidence is not None else 1.0
 
@@ -188,7 +189,7 @@ class HeadDetector:
                 positions.append(position)
 
             # 清理不再存在的track_id的缓存
-            if detections.tracker_id:
+            if detections.tracker_id is not None:
                 current_ids = set(detections.tracker_id)
                 self.track_id_to_name = {k: v for k, v in self.track_id_to_name.items() if k in current_ids}
                 self.track_id_to_embedding = {k: v for k, v in self.track_id_to_embedding.items() if k in current_ids}
@@ -199,4 +200,5 @@ class HeadDetector:
 
         except Exception as e:
             logger.error(f"Error in head position tracking: {e}")
+            traceback.print_exc()
             return Detections.empty(), []

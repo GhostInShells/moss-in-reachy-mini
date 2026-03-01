@@ -1,16 +1,11 @@
 import asyncio
-import json
 import logging
-import time
 from typing import List
 
-import numpy as np
 from PIL import Image
-from ghoshell_common.contracts import Storage, Workspace, LoggerItf, FileStorage
+from ghoshell_common.contracts import Storage, Workspace, LoggerItf
 from ghoshell_container import Provider, IoCContainer, INSTANCE, Container
 from ghoshell_moss import Message, Base64Image, Text
-from numpy.typing import NDArray
-from reachy_mini import ReachyMini
 
 from framework.abcd.agent import Agent
 from framework.abcd.agent_event import VisionAgentEvent
@@ -19,8 +14,7 @@ from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 
 class Vision:
 
-    def __init__(self, mini: ReachyMini, camera_worker: CameraWorker, storage: Storage, container: IoCContainer=None):
-        self.mini = mini
+    def __init__(self, camera_worker: CameraWorker, storage: Storage, container: IoCContainer=None):
         self.camera_worker = camera_worker
         self.face_recognizer = camera_worker.head_detector.face_recognizer
         self.vision_storage = storage
@@ -75,11 +69,13 @@ class Vision:
         frame = self.camera_worker.get_latest_frame()
         if frame is not None:
             img_pil = Image.fromarray(frame)
+            img_pil.save("temp.png")
             msg.with_content(
                 Text(text="This image is what you see")
             ).with_content(
                 Base64Image.from_pil_image(img_pil)
             )
+
         else:
             msg.with_content(
                 Text(text="No vision available")
@@ -93,8 +89,7 @@ class VisionProvider(Provider[Vision]):
         return True
 
     def factory(self, con: IoCContainer) -> INSTANCE:
-        mini = con.force_fetch(ReachyMini)
         camera_worker = con.force_fetch(CameraWorker)
         ws = con.force_fetch(Workspace)
         vision_storage = ws.runtime().sub_storage("vision")
-        return Vision(mini, camera_worker, vision_storage, container=con)
+        return Vision(camera_worker, vision_storage, container=con)

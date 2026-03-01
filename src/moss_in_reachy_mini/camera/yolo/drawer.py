@@ -52,7 +52,7 @@ def draw_detections(frame: np.ndarray, positions: List[Position]) -> np.ndarray:
                 f"Name: {position.name}",
                 (x1, y1 - 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.8,
                 (0, 255, 0),
                 2
             )
