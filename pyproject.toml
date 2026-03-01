@@ -15,6 +15,8 @@ dependencies = [
     "supervision>=0.27.0.post1",
     "reachy-mini-dances-library==0.2.1",
     "streamlit>=1.54.0",
+    "insightface==0.7.3",
+    "onnxruntime==1.24.2",
 ]
 
 [tool.setuptools]

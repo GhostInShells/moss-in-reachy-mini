@@ -23,3 +23,28 @@ python src/moss_in_reachy_mini/main.py
 ```commandline
 source src/moss_in_reachy_mini/start_memory_ui.sh
 ```
+
+## 视觉
+
+### 人脸识别
+#### 手动录入人脸
+在`src/moss_in_reachy_mini/.workspace/runtime/vision/faces`目录下创建文件夹，文件夹名字为人名，且只能用英文。
+
+文件夹下导入图片，支持 .jpg .png .jpeg格式图片
+
+示例
+```
+- .workspace/runtime/vision/faces
+    - wangshiqi
+        - img_1.jpg
+        - img_2.png
+        _ img_3.jpeg
+    - xxx
+        - xxx_1.jpg
+```
+
+运行生成人脸向量
+```commandline
+python scripts/train_face.py
+```
+

@@ -45,9 +45,6 @@ class ConsolePTTChat(BaseChat):
         self._quit_event = threading.Event()
         self._input_thread: Optional[threading.Thread] = None
 
-        # 打印启动信息
-        self._print_startup_info()
-
         self.ai_response_done = asyncio.Event()
 
     def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
@@ -164,7 +161,7 @@ class ConsolePTTChat(BaseChat):
             else:
                 # 按下按键效果 - 开始录音
                 self.console.print("[green]开始录音...[/green]")
-                self.handle_voice_input("")
+                # self.handle_voice_input("")
                 self.listener_service.set_state(ListenerStateName.pdt_listening.value)
 
     def handle_voice_input(self, text: str):
@@ -281,6 +278,8 @@ class ConsolePTTChat(BaseChat):
     async def run(self):
         """运行聊天界面主循环"""
         try:
+            # 打印启动信息
+            self._print_startup_info()
             self._setup_enter_to_talk_mode()
             await self._run_enter_to_talk_mode()
         finally:

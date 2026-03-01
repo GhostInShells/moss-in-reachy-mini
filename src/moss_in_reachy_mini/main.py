@@ -29,7 +29,7 @@ from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
-from moss_in_reachy_mini.vision.camera_worker import CameraWorkerProvider
+from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

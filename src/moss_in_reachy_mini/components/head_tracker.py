@@ -8,9 +8,9 @@ from ghoshell_container import Provider, Container, IoCContainer, INSTANCE
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
-from moss_in_reachy_mini.vision.camera_worker import CameraWorker
-from moss_in_reachy_mini.vision.yolo.head_detector import HeadDetector
-from moss_in_reachy_mini.vision.yolo.model import Position
+from moss_in_reachy_mini.camera.camera_worker import CameraWorker
+from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
+from moss_in_reachy_mini.camera.yolo.model import Position
 
 
 class HeadTracker:
