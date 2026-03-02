@@ -51,7 +51,7 @@ class Vision:
         frames: List[Base64Image] = []
         for i in range(total_frames):
             frame = self.camera_worker.get_latest_frame()
-            frames.append(Base64Image.from_pil_image(Image.fromarray(frame)))
+            frames.append(frame.to_base64_image())
             if total_frames == 1:  # 只有一帧,无需等待
                 break
             await asyncio.sleep(interval)
@@ -68,12 +68,10 @@ class Vision:
         msg = Message.new(role="system", name="__reachy_mini_vision__")
         frame = self.camera_worker.get_latest_frame()
         if frame is not None:
-            img_pil = Image.fromarray(frame)
-            img_pil.save("temp.png")
             msg.with_content(
                 Text(text="This image is what you see")
             ).with_content(
-                Base64Image.from_pil_image(img_pil)
+                frame.to_base64_image()
             )
 
         else:

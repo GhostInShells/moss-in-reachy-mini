@@ -63,18 +63,18 @@ class Head:
             duration=duration,
         ))
 
-    async def start_tracking_face(self, tracking_id: int=-1):
+    async def start_tracking_face(self, name: str):
         """
         Keep gazing at the user.
         """
         self._tracking_event.set()
         self._head_tracker.enabled.set()
-        self._head_tracker.set_tracking_id(tracking_id)
+        self._head_tracker.set_target_track_name(name)
 
     async def stop_tracking_face(self):
         self._tracking_event.clear()
         self._head_tracker.enabled.clear()
-        self._head_tracker.set_tracking_id(-1)
+        self._head_tracker.set_target_track_name("")
 
     async def start_breathing(self):
         self._breathing_event.set()

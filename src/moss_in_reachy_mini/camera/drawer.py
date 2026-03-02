@@ -26,17 +26,17 @@ def draw_detections(frame: np.ndarray, positions: List[Position]) -> np.ndarray:
         if position.name:
             cv2.putText(
                 frame,
-                f"Name: {position.name}",
+                f"name: {position.name}",
                 (x1, y1 - 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                1.0,
                 (0, 255, 0),
                 2
             )
         else:
             cv2.putText(
                 frame,
-                "Unknown",
+                "unknown",
                 (x1, y1 - 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
