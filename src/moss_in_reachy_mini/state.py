@@ -8,7 +8,7 @@ from typing import Optional
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import IoCContainer
-from ghoshell_moss import Text, Message
+from ghoshell_moss import Text, Message, PyChannel
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import EventBus
@@ -17,6 +17,7 @@ from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.vision import Vision
 
 
 class QuitIdleMove(Exception):
@@ -79,6 +80,22 @@ class MiniStateHook(AgentHook, abc.ABC):
         await self.cancel_idle_move()
 
 
+class InitialState(MiniStateHook):
+    NAME = "initial"
+
+    def __init__(self):
+        super().__init__()
+
+    async def on_self_enter(self):
+        pass
+
+    async def on_self_exit(self):
+        pass
+
+    async def _run_idle_move(self):
+        pass
+
+
 class AsleepState(MiniStateHook):
 
     NAME = "asleep"
@@ -98,16 +115,28 @@ class AsleepState(MiniStateHook):
     async def _run_idle_move(self):
         pass
 
+    async def context_messages(self):
+        msg = Message.new(role="system").with_content(
+            Text(text="你现在处于asleep状态，你必须得先切换到waken状态才能继续和用户进行交互"),
+        )
+        return [msg]
+
+    def as_channel(self):
+        chan = PyChannel(name=AsleepState.NAME, description=f"current state is asleep", block=True)
+        chan.build.with_context_messages(self.context_messages)
+        return chan
 
 class WakenState(MiniStateHook):
 
     NAME = "waken"
 
-    def __init__(self, mini: ReachyMini, head: Head, antennas: Antennas, switch_to, container: IoCContainer):
+    def __init__(self, mini: ReachyMini, body: Body, head: Head, antennas: Antennas, vision: Vision, switch_to, container: IoCContainer):
         super().__init__()
         self.mini = mini
+        self.body = body
         self.head = head
         self.antennas = antennas
+        self.vision = vision
         self.switch_to = switch_to
         self.container = container
         self.logger = container.get(LoggerItf) or logging.getLogger("WakenState")
@@ -182,16 +211,43 @@ class WakenState(MiniStateHook):
         await self.head.on_policy_pause()
         await self.antennas.on_policy_pause()
 
+    async def context_messages(self):
+        msg = Message.new(role="system").with_content(
+            Text(text="你现在处于Waken状态"),
+        )
+        vision_message = await self.vision.context_messages()
+        head_msg = await self.head.context_messages()
+        antenna_msg = await self.antennas.context_messages()
+        return [msg] + vision_message + head_msg + antenna_msg
+
+    def as_channel(self):
+        waken_chan = PyChannel(name=WakenState.NAME, description=f"current state is waken", block=True)
+        waken_chan.build.command(doc=self.body.dance_docstring)(self.body.dance)
+        waken_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
+        waken_chan.build.command(name="head_move")(self.head.move)
+        waken_chan.build.command(name="head_reset")(self.head.reset)
+        waken_chan.build.command()(self.head.start_tracking_face)
+        waken_chan.build.command()(self.head.stop_tracking_face)
+        waken_chan.build.command()(self.head.start_breathing)
+        waken_chan.build.command()(self.head.stop_breathing)
+        waken_chan.build.command(name="antennas_move")(self.antennas.move)
+        waken_chan.build.command(name="antennas_reset")(self.antennas.reset)
+        waken_chan.build.command()(self.antennas.set_idle_flapping)
+        waken_chan.build.command()(self.antennas.enable_flapping)
+        waken_chan.build.command()(self.vision.look)
+        waken_chan.build.with_context_messages(self.context_messages)
+        return waken_chan
 
 
 class BoringState(MiniStateHook):
 
     NAME = "boring"
 
-    def __init__(self, mini: ReachyMini, body: Body, switch_to, container: IoCContainer):
+    def __init__(self, mini: ReachyMini, body: Body, vision: Vision, switch_to, container: IoCContainer):
         super().__init__()
         self.mini = mini
         self.body = body
+        self.vision = vision
 
         self.switch_to = switch_to
         self.container = container
@@ -224,6 +280,19 @@ class BoringState(MiniStateHook):
         await self.switch_to(WakenState.NAME)  # cancel_idle_move由Agent触发
         self._emotion_prob = 0.03  # 重置触发概率
 
+    async def context_messages(self):
+        msg = Message.new(role="system").with_content(
+            Text(text="你现在处于Boring状态"),
+        )
+        vision_message = await self.vision.context_messages()
+        return [msg] + vision_message
+
+    def as_channel(self):
+        boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", block=True)
+        boring_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
+        boring_chan.build.command()(self.vision.look)
+        boring_chan.build.with_context_messages(self.context_messages)
+        return boring_chan
 
 Proactive_Prompts = [
 """
