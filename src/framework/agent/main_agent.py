@@ -185,7 +185,7 @@ class BaseMainAgent(Agent, ABC):
             )
 
         if vision := VisionAgentEvent.from_agent_event(event):
-            inputs = [Message.new(role="assistant").with_content(
+            inputs = [Message.new(role="system").with_content(
                 Text(text=vision.content),
                 *vision.images,
             )]

@@ -16,7 +16,7 @@ class Vision:
 
     def __init__(self, camera_worker: CameraWorker, storage: Storage, container: IoCContainer=None):
         self.camera_worker = camera_worker
-        self.face_recognizer = camera_worker.head_detector.face_recognizer
+        self.face_recognizer = camera_worker.face_recognizer
         self.vision_storage = storage
         self._container = Container(parent=container)
         self.logger = self._container.get(LoggerItf) or logging.getLogger("Vision")

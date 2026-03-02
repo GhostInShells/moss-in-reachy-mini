@@ -19,30 +19,29 @@ def draw_detections(frame: np.ndarray, positions: List[Position]) -> np.ndarray:
         # 绘制边界框
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
         # 绘制ID标签
-        label = f"ID: {position.track_id}"
-        cv2.putText(frame, label, (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        # label = f"ID: {position.track_id}"
+        # cv2.putText(frame, label, (x1, y1 - 10),
+        #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         # 绘制识别结果
         if position.name:
             cv2.putText(
                 frame,
-                f"name: {position.name}",
-                (x1, y1 - 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.0,
-                (0, 255, 0),
-                2
-            )
-        else:
-            cv2.putText(
-                frame,
-                "unknown",
-                (x1, y1 - 30),
+                position.name,
+                (x1+10, y1 + 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (0, 0, 255),
-                2
+                (0, 255, 0),
             )
+        # else:
+        #     cv2.putText(
+        #         frame,
+        #         "unknown",
+        #         (x1, y1 - 30),
+        #         cv2.FONT_HERSHEY_SIMPLEX,
+        #         0.6,
+        #         (0, 0, 255),
+        #         2
+        #     )
 
     return frame
 

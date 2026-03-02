@@ -65,13 +65,21 @@ class Head:
 
     async def start_tracking_face(self, name: str):
         """
-        Keep gazing at the user.
+        启动人脸追踪，会在空闲时间一直看着指定name的用户。
+
+        Args:
+            name: 根据你的视觉输入信息，选择你能看到的name填写入参，不能用中文，不能使用你当前视觉里没有的name
         """
+        if name == "unknown":
+            return "unknown表示当前用户未识别，不能作为追踪目标"
         self._tracking_event.set()
         self._head_tracker.enabled.set()
         self._head_tracker.set_target_track_name(name)
 
     async def stop_tracking_face(self):
+        """
+        停止人脸追踪
+        """
         self._tracking_event.clear()
         self._head_tracker.enabled.clear()
         self._head_tracker.set_target_track_name("")
@@ -103,9 +111,12 @@ class Head:
         if self._tracking_event.is_set():
             msg.with_content(
                 Text(text=f"You are keep looking user with head tracking"),
-                Text(text=f"Current tracking id is {self._head_tracker.current_tracking_id}")
             )
-            for pos in self._head_tracker.face_tracking_positions:
+            if self._head_tracker.latest_frame.track_name:
+                msg.with_content(
+                    Text(text=f"Current tracking {self._head_tracker.latest_frame.track_name}")
+                )
+            for pos in self._head_tracker.latest_frame.face_positons:
                 if not pos.is_recognized:
                     continue
                 msg.with_content(

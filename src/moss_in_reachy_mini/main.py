@@ -32,7 +32,7 @@ from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 class ShellProvider(Provider[MOSSShell]):
 

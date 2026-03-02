@@ -23,7 +23,7 @@ class HeadTracker:
 
         self.latest_frame: CameraFrame | None = None
         self.track_lost_start_at = 0
-        self.track_lost_threshold = 3  # 3秒
+        self.track_lost_threshold = 10
         self._run_task = None
 
         self.enabled = asyncio.Event()
@@ -33,6 +33,8 @@ class HeadTracker:
         self.min_movement_threshold = 0.05  # Minimum movement to trigger head move
 
     def set_target_track_name(self, track_name: str):
+        if not track_name.isalpha() or track_name == "unknown":
+            return
         self._camera_worker.set_target_track_name(track_name)
 
     async def run(self):
@@ -46,17 +48,23 @@ class HeadTracker:
             self.latest_frame = self._camera_worker.get_latest_frame()
             # 有追踪的目标且已经丢失
             if self.latest_frame.track_name and self.latest_frame.track_lost:
-                self.track_lost_start_at = time.time()
+                if self.track_lost_start_at == 0:
+                    self.track_lost_start_at = time.time()
                 # 人脸追踪丢失目标，给脑子发一个event
                 if time.time() - self.track_lost_start_at > self.track_lost_threshold:
+                    # 主动关闭人脸跟随，等待大脑决策是否重新开启
+                    self.enabled.clear()
+                    self.set_target_track_name("")
+                    # 重置时间
+                    self.track_lost_start_at = 0
                     eventbus = self._container.get(EventBus)
                     if eventbus:
                         await eventbus.put(VisionAgentEvent(
-                            content=f"人脸跟随的目标{self.latest_frame.track_name}已丢失超过{self.track_lost_threshold}秒，请重新根据下面你看到的画面进行下一步决策",
-                            images=[self.latest_frame.to_base64_image()],
+                            content=f"人脸跟随的目标{self.latest_frame.track_name}已丢失超过{self.track_lost_threshold}秒，请重新根据你的最新视觉进行下一步决策",
+                            # images=[self.latest_frame.to_base64_image()],
                             priority=-1,
                             issuer="HeadTracker",
-                        ).to_bytes())
+                        ).to_agent_event())
                 continue
 
             self.track_lost_start_at = 0
