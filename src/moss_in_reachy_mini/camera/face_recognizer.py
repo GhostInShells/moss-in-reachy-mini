@@ -17,16 +17,13 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleTracker:
-    def __init__(self, iou_threshold=0.3, max_lost_frames=50):
-        # 扩展track结构：key=track_id, value={bbox, last_frame, is_active}
-        self.tracks = {}
+    def __init__(self, iou_threshold=0.3):
+        self.tracks = {}  # key: track_id, value: bbox
         self.next_id = 1
         self.iou_threshold = iou_threshold
-        self.max_lost_frames = max_lost_frames  # 最大丢失帧数（可根据帧率调整，如30帧=1秒）
-        self.current_frame = 0  # 记录当前帧号
 
     def iou(self, a, b):
-        # 保持原IoU计算逻辑不变
+        # 计算IoU
         x1 = max(a[0], b[0])
         y1 = max(a[1], b[1])
         x2 = min(a[2], b[2])
@@ -39,107 +36,36 @@ class SimpleTracker:
         return intersection / (area_a + area_b - intersection + 1e-6)
 
     def update(self, detections):
-        self.current_frame += 1  # 帧号自增
-        active_tracks = {}  # 本次匹配上的track
-        inactive_tracks = {}  # 暂存的丢失track
+        if not self.tracks:
+            for det in detections:
+                self.tracks[self.next_id] = det
+                self.next_id += 1
+            return list(self.tracks.keys())
 
-        # 第一步：分离活跃/暂存track（清理超时track）
-        for track_id, track_info in self.tracks.items():
-            # 计算丢失帧数
-            lost_frames = self.current_frame - track_info["last_frame"]
-            if lost_frames <= self.max_lost_frames:
-                if track_info["is_active"]:
-                    active_tracks[track_id] = track_info["bbox"]
-                else:
-                    inactive_tracks[track_id] = track_info["bbox"]
-            # 超过超时时间，彻底删除（不加入任何字典）
+        # 匈牙利匹配
+        track_ids = list(self.tracks.keys())
+        track_boxes = list(self.tracks.values())
+        cost = np.zeros((len(track_boxes), len(detections)))
+        for i, t_box in enumerate(track_boxes):
+            for j, d_box in enumerate(detections):
+                cost[i, j] = 1 - self.iou(t_box, d_box)
 
-        # 第二步：先匹配活跃track（原逻辑）
-        track_ids = list(active_tracks.keys())
-        track_boxes = list(active_tracks.values())
-        matched_det_indices = set()  # 已匹配的检测框索引
+        row_ind, col_ind = linear_sum_assignment(cost)
         new_tracks = {}
 
-        if track_boxes and detections:
-            # 计算代价矩阵（1-IoU）
-            cost = np.zeros((len(track_boxes), len(detections)))
-            for i, t_box in enumerate(track_boxes):
-                for j, d_box in enumerate(detections):
-                    cost[i, j] = 1 - self.iou(t_box, d_box)
+        for r, c in zip(row_ind, col_ind):
+            if cost[r, c] < 1 - self.iou_threshold:
+                new_tracks[track_ids[r]] = detections[c]
 
-            # 匈牙利算法匹配
-            row_ind, col_ind = linear_sum_assignment(cost)
-            for r, c in zip(row_ind, col_ind):
-                if cost[r, c] < 1 - self.iou_threshold:
-                    track_id = track_ids[r]
-                    new_tracks[track_id] = {
-                        "bbox": detections[c],
-                        "last_frame": self.current_frame,
-                        "is_active": True
-                    }
-                    matched_det_indices.add(c)
-
-        # 第三步：匹配暂存的丢失track（复用ID）
-        if inactive_tracks and detections:
-            inactive_ids = list(inactive_tracks.keys())
-            inactive_boxes = list(inactive_tracks.values())
-            # 只匹配未被活跃track占用的检测框
-            remaining_dets = [d for i, d in enumerate(detections) if i not in matched_det_indices]
-            remaining_det_indices = [i for i in range(len(detections)) if i not in matched_det_indices]
-
-            if remaining_dets:
-                cost = np.zeros((len(inactive_boxes), len(remaining_dets)))
-                for i, t_box in enumerate(inactive_boxes):
-                    for j, d_box in enumerate(remaining_dets):
-                        cost[i, j] = 1 - self.iou(t_box, d_box)
-
-                row_ind, col_ind = linear_sum_assignment(cost)
-                for r, c in zip(row_ind, col_ind):
-                    if cost[r, c] < 1 - self.iou_threshold:
-                        track_id = inactive_ids[r]
-                        det_idx = remaining_det_indices[c]
-                        new_tracks[track_id] = {
-                            "bbox": remaining_dets[c],
-                            "last_frame": self.current_frame,
-                            "is_active": True
-                        }
-                        matched_det_indices.add(det_idx)
-
-        # 第四步：新增目标（分配新ID）
+        # 新增目标
+        used_cols = set(col_ind)
         for i, det in enumerate(detections):
-            if i not in matched_det_indices:
-                new_tracks[self.next_id] = {
-                    "bbox": det,
-                    "last_frame": self.current_frame,
-                    "is_active": True
-                }
+            if i not in used_cols:
+                new_tracks[self.next_id] = det
                 self.next_id += 1
 
-        # 第五步：保留未匹配但未超时的track（标记为非活跃）
-        for track_id, track_info in self.tracks.items():
-            if track_id not in new_tracks:
-                lost_frames = self.current_frame - track_info["last_frame"]
-                if lost_frames <= self.max_lost_frames:
-                    new_tracks[track_id] = {
-                        "bbox": track_info["bbox"],  # 保留最后一次的bbox
-                        "last_frame": track_info["last_frame"],
-                        "is_active": False  # 标记为非活跃
-                    }
-
-        # 更新tracks
         self.tracks = new_tracks
-        # 返回当前活跃的track ID（仅返回匹配上的）
-        return [tid for tid, info in self.tracks.items() if info["is_active"]]
-
-    # 新增：获取指定track_id的bbox（方便业务使用）
-    def get_track_bbox(self, track_id):
-        return self.tracks.get(track_id, {}).get("bbox")
-
-    # 新增：重置tracker（可选）
-    def reset(self):
-        self.tracks = {}
-        self.next_id = 1
-        self.current_frame = 0
+        return list(self.tracks.keys())
 
 class FaceRecognizer:
     """人脸识别器，使用InsightFace进行人脸识别"""
@@ -200,12 +126,9 @@ class FaceRecognizer:
         start = time.time()
         faces = self.app.get(img)
         self.logger.debug(f"Model cost {time.time() - start} seconds")
-        det_boxes = [face.bbox for face in faces]
-        track_ids = self.tracker.update(det_boxes)
-
         positions: List[Position] = []
         for i, face in enumerate(faces):
-            tid = track_ids[i] if i < len(track_ids) else -1
+            tid = -1
 
             # 计算中心坐标
             center_x = (face.bbox[0] + face.bbox[2]) / 2.0
@@ -215,7 +138,7 @@ class FaceRecognizer:
             center = np.array([norm_x, norm_y], dtype=np.float32)
 
             # 识别人脸
-            name, embedding = self._recognize_with_img(img, face.bbox, tid)
+            name, embedding = self._recognize_with_img(img, face)
 
             # 创建Position对象
             position = Position(
@@ -234,61 +157,35 @@ class FaceRecognizer:
     def _recognize_with_img(
             self,
             img: NDArray[np.uint8],
-            bbox: NDArray[np.float32],
-            track_id: int
+            face: Any,
     ) -> Tuple[Optional[str], Optional[NDArray[np.float32]]]:
         """
         识别人脸
 
         Args:
             img: 原始图像
-            bbox: 边界框
-            track_id: 跟踪ID
+            face: face
 
         Returns:
             (名字, 特征向量)
         """
         try:
-            # 如果已经识别过，直接返回缓存
-            if track_id in self.track_id_to_name:
-                return self.track_id_to_name[track_id], self.track_id_to_embedding.get(track_id)
-
-            # 避免频繁识别未识别的人脸
-            if track_id in self.unrecognized_counter:
-                self.unrecognized_counter[track_id] += 1
-                if self.unrecognized_counter[track_id] < 5:  # 每5帧识别一次
-                    return None, None
-                self.unrecognized_counter[track_id] = 0
 
             # 裁剪人脸区域
-            face_img = self.crop_face_from_bbox(img, bbox)
+            face_img = self.crop_face_from_bbox(img, face.bbox)
             if face_img is None:
                 return None, None
 
             # 提取特征
-            embedding = self.extract_embedding(face_img)
-            if embedding is None:
-                return None, None
+            embedding = face.normed_embedding.astype(np.float32)
 
             # 识别
             name, score = self.recognize(embedding)
 
-            if name:
-                # 识别成功，更新缓存
-                self.track_id_to_name[track_id] = name
-                self.track_id_to_embedding[track_id] = embedding
-                if track_id in self.unrecognized_counter:
-                    del self.unrecognized_counter[track_id]
-                logger.debug(f"Track {track_id} recognized as '{name}' (score: {score:.3f})")
-            else:
-                # 未识别，更新计数器
-                self.unrecognized_counter[track_id] = self.unrecognized_counter.get(track_id, 0) + 1
-                logger.debug(f"Track {track_id} not recognized (score: {score:.3f})")
-
             return name, embedding
 
         except Exception as e:
-            logger.error(f"Error recognizing face for track {track_id}: {e}")
+            logger.error(f"Error recognizing face error: {e}")
             return None, None
 
     def extract_embedding(self, face_img: NDArray[np.uint8]) -> Optional[NDArray[np.float32]]:
@@ -385,6 +282,8 @@ class FaceRecognizer:
         for name, known_face in self.known_faces.items():
             # 计算余弦相似度
             similarity = self.cosine_similarity(embedding, known_face.embedding)
+
+            self.logger.debug(f"recognize {name} with similarity {similarity:.3f}")
 
             if similarity > best_score and similarity >= self.recognition_threshold:
                 best_score = similarity
