@@ -7,7 +7,7 @@ from typing import Optional, List
 
 from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import IoCContainer, Provider, INSTANCE
+from ghoshell_container import IoCContainer, Provider, INSTANCE, Container
 from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
@@ -38,6 +38,7 @@ class MossInReachyMini:
         self.mini = mini
         self.logger = container.get(LoggerItf) or logging.getLogger(__name__)
         self._ws = container.force_fetch(Workspace)
+        self._container = Container(parent=container)
 
         self.body = body
         self.head = head
@@ -51,13 +52,14 @@ class MossInReachyMini:
                 mini,
                 head=head,
                 antennas=antennas,
-                turn_to_boring=partial(self.switch_to, BoringState.NAME),
+                switch_to=self.switch_to,
+                container=self._container,
             ),
             BoringState.NAME: BoringState(
                 mini,
                 body=body,
-                turn_to_asleep=partial(self.switch_to, AsleepState.NAME),
-                back_to_waken=partial(self.switch_to, WakenState.NAME),
+                switch_to=self.switch_to,
+                container=self._container,
             )
         }
         self._state: Optional[MiniStateHook] = None

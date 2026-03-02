@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 import numpy as np
+from PIL import Image
+from ghoshell_moss import Base64Image
 from numpy.typing import NDArray
 
 
@@ -49,8 +51,51 @@ class KnownFace:
             sample_count=data.get('sample_count', 0)
         )
 
-def get_position_by_track_id(positions: List[Position], track_id: int) -> Position | None:
+
+@dataclass
+class CameraFrame:
+    face_tracking_offsets: List[float]
+    face_positons: List[Position]
+    track_name: str
+    track_lost: bool
+    image: NDArray[np.uint8] | None
+
+    def copy(self) -> 'CameraFrame':
+        return CameraFrame(
+            face_tracking_offsets=self.face_tracking_offsets.copy(),
+            face_positons=self.face_positons.copy(),
+            track_name=self.track_name,
+            image=self.image.copy(),
+            track_lost=self.track_lost,
+        )
+
+    @classmethod
+    def new(cls):
+        return CameraFrame(
+            face_tracking_offsets=[
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+            ],  # x, y, z, roll, pitch, yaw
+            face_positons=[],
+            track_name="",
+            track_lost=True,
+            image=None,
+        )
+
+    def to_base64_image(self) -> Base64Image:
+        img_pil = Image.fromarray(self.image)
+        img_pil.save("temp.png")
+        return Base64Image.from_pil_image(img_pil)
+
+
+def get_position_by_track_name(positions: List[Position], track_name: str) -> Position | None:
+    if not track_name:
+        return None
     for p in positions:
-        if p.track_id == track_id:
+        if p.name == track_name:
             return p
     return None

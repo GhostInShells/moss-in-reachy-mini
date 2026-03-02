@@ -1,12 +1,18 @@
 import abc
 import asyncio
+import logging
 import math
 import random
 import time
 from typing import Optional
 
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import IoCContainer
+from ghoshell_moss import Text, Message
 from reachy_mini import ReachyMini
 
+from framework.abcd.agent import EventBus
+from framework.abcd.agent_event import ReactAgentEvent
 from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
@@ -97,15 +103,18 @@ class WakenState(MiniStateHook):
 
     NAME = "waken"
 
-    def __init__(self, mini: ReachyMini, head: Head, antennas: Antennas, turn_to_boring):
+    def __init__(self, mini: ReachyMini, head: Head, antennas: Antennas, switch_to, container: IoCContainer):
         super().__init__()
         self.mini = mini
         self.head = head
         self.antennas = antennas
-        self.turn_to_boring = turn_to_boring
+        self.switch_to = switch_to
+        self.container = container
+        self.logger = container.get(LoggerItf) or logging.getLogger("WakenState")
+
+        self._eventbus: Optional[EventBus] = container.get(EventBus)
 
         self._time_to_boring = 60 * 5 # 5分钟
-        self._proactive_input = None
 
         # 主动交互概率相关配置
         self._base_proactive_prob = 0.001     # 初始基础概率（空闲0秒时的概率）
@@ -118,20 +127,26 @@ class WakenState(MiniStateHook):
         self.mini.enable_motors()
         self.mini.wake_up()
         self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
-        await asyncio.sleep(1.0)  # wake up没有同步运行，等待一下
-        await self.head.start_tracking_face()
+        if self._eventbus:
+            await self._eventbus.put(ReactAgentEvent(
+                messages=[
+                    Message.new(role="system").with_content(
+                        Text(text="你现在进入Waken状态了，可以选择你眼前的人进行人脸跟随")
+                    )
+                ],
+                priority=-1,
+            ).to_agent_event())
 
     async def on_self_exit(self):
-        await self.cancel_idle_move()
-        await self.head.reset()
         await self.head.stop_tracking_face()
+        await self.head.reset()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:
-            await self.turn_to_boring()
+            await self.switch_to(BoringState.NAME)
             raise QuitIdleMove
 
-        if self._proactive_input:
+        if self._eventbus:
             # 1. 计算每秒循环次数
             loop_times_per_second = 1 / self._idle_move_elapsed
             # 2. 核心：基于空闲时长计算动态基础概率
@@ -144,7 +159,14 @@ class WakenState(MiniStateHook):
             per_loop_prob = 1 - math.pow(1 - dynamic_base_prob, 1 / loop_times_per_second)
             # 4. 随机判断是否触发
             if random.random() < per_loop_prob:
-                self._proactive_input(random.choice(Proactive_Prompts))
+                await self._eventbus.put(ReactAgentEvent(
+                    messages=[
+                        Message.new(role="system").with_content(
+                            Text(text=random.choice(Proactive_Prompts))
+                        )
+                    ],
+                    priority=-1,
+                ).to_agent_event())
                 # 5. 触发后衰减基础概率（避免频繁触发）
                 self._base_proactive_prob -= self._trigger_decay
                 # 确保衰减后基础概率不低于最小值
@@ -160,21 +182,20 @@ class WakenState(MiniStateHook):
         await self.head.on_policy_pause()
         await self.antennas.on_policy_pause()
 
-    def set_proactive_input(self, handle_input):
-        self._proactive_input = handle_input
 
 
 class BoringState(MiniStateHook):
 
     NAME = "boring"
 
-    def __init__(self, mini: ReachyMini, body: Body, turn_to_asleep, back_to_waken):
+    def __init__(self, mini: ReachyMini, body: Body, switch_to, container: IoCContainer):
         super().__init__()
         self.mini = mini
         self.body = body
 
-        self.turn_to_asleep = turn_to_asleep
-        self.back_to_waken = back_to_waken
+        self.switch_to = switch_to
+        self.container = container
+        self.logger = container.get(LoggerItf) or logging.getLogger("BoringState")
 
         self._time_to_sleep = 30 # 30秒
         self._emotion_prob = 0.03 # 目标：每秒有3%的概率触发函数
@@ -188,7 +209,7 @@ class BoringState(MiniStateHook):
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_sleep:
-            await self.turn_to_asleep()
+            await self.switch_to(AsleepState.NAME)
             raise QuitIdleMove
 
         loop_times_per_second = 1 / self._idle_move_elapsed  # 每秒循环的次数
@@ -200,7 +221,7 @@ class BoringState(MiniStateHook):
 
     async def cancel_idle_move(self):
         await super().cancel_idle_move()
-        await self.back_to_waken()  # cancel_idle_move由Agent触发
+        await self.switch_to(WakenState.NAME)  # cancel_idle_move由Agent触发
         self._emotion_prob = 0.03  # 重置触发概率
 
 

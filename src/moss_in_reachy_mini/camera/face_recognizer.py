@@ -1,17 +1,71 @@
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Tuple, Any
 
 import cv2
 import numpy as np
-from ghoshell_common.contracts import Storage
+from ghoshell_common.contracts import Storage, LoggerItf
+from ghoshell_container import IoCContainer, Container
 from insightface.app import FaceAnalysis
 from numpy.typing import NDArray
+from scipy.optimize import linear_sum_assignment
 
-from moss_in_reachy_mini.camera.yolo.model import KnownFace
+from moss_in_reachy_mini.camera.model import KnownFace, Position
 
 logger = logging.getLogger(__name__)
 
+
+class SimpleTracker:
+    def __init__(self, iou_threshold=0.3):
+        self.tracks = {}  # key: track_id, value: bbox
+        self.next_id = 1
+        self.iou_threshold = iou_threshold
+
+    def iou(self, a, b):
+        # 计算IoU
+        x1 = max(a[0], b[0])
+        y1 = max(a[1], b[1])
+        x2 = min(a[2], b[2])
+        y2 = min(a[3], b[3])
+        w = max(0, x2 - x1)
+        h = max(0, y2 - y1)
+        intersection = w * h
+        area_a = (a[2]-a[0])*(a[3]-a[1])
+        area_b = (b[2]-b[0])*(b[3]-b[1])
+        return intersection / (area_a + area_b - intersection + 1e-6)
+
+    def update(self, detections):
+        if not self.tracks:
+            for det in detections:
+                self.tracks[self.next_id] = det
+                self.next_id += 1
+            return list(self.tracks.keys())
+
+        # 匈牙利匹配
+        track_ids = list(self.tracks.keys())
+        track_boxes = list(self.tracks.values())
+        cost = np.zeros((len(track_boxes), len(detections)))
+        for i, t_box in enumerate(track_boxes):
+            for j, d_box in enumerate(detections):
+                cost[i, j] = 1 - self.iou(t_box, d_box)
+
+        row_ind, col_ind = linear_sum_assignment(cost)
+        new_tracks = {}
+
+        for r, c in zip(row_ind, col_ind):
+            if cost[r, c] < 1 - self.iou_threshold:
+                new_tracks[track_ids[r]] = detections[c]
+
+        # 新增目标
+        used_cols = set(col_ind)
+        for i, det in enumerate(detections):
+            if i not in used_cols:
+                new_tracks[self.next_id] = det
+                self.next_id += 1
+
+        self.tracks = new_tracks
+        return list(self.tracks.keys())
 
 class FaceRecognizer:
     """人脸识别器，使用InsightFace进行人脸识别"""
@@ -20,10 +74,11 @@ class FaceRecognizer:
             self,
             model_name: str = "buffalo_l",
             det_thresh: float = 0.5,
-            det_size: Tuple[int, int] = (640, 640),
+            det_size: Tuple[int, int] = (480, 480),
             recognition_threshold: float = 0.5,
             device: str = "cpu",
             known_faces_storage: Optional[Storage] = None,
+            container: IoCContainer = None,
     ):
         """
         初始化人脸识别器
@@ -38,6 +93,8 @@ class FaceRecognizer:
         """
         self.recognition_threshold = recognition_threshold
         self.device = device
+        self.container = Container(parent=container)
+        self.logger = self.container.get(LoggerItf) or logging.getLogger("FaceRecognizer")
 
         # 初始化InsightFace应用
         try:
@@ -51,11 +108,85 @@ class FaceRecognizer:
             logger.error(f"Failed to load InsightFace model: {e}")
             raise
 
+        self.tracker = SimpleTracker()
+
         # 加载或创建已知人脸数据库
         self.known_faces: Dict[str, KnownFace] = {}
         self.known_faces_storage = known_faces_storage
         self.known_faces_filename = "known_faces.json"
         self.load_known_faces()
+
+        # 跟踪ID到人名的映射缓存
+        self.track_id_to_name: Dict[int, str] = {}
+        self.track_id_to_embedding: Dict[int, NDArray[np.float32]] = {}
+        self.unrecognized_counter: Dict[int, int] = {}
+
+    def get_face_positions(self, img: NDArray) -> List[Position]:
+        h, w = img.shape[:2]
+        start = time.time()
+        faces = self.app.get(img)
+        self.logger.debug(f"Model cost {time.time() - start} seconds")
+        positions: List[Position] = []
+        for i, face in enumerate(faces):
+            tid = -1
+
+            # 计算中心坐标
+            center_x = (face.bbox[0] + face.bbox[2]) / 2.0
+            center_y = (face.bbox[1] + face.bbox[3]) / 2.0
+            norm_x = (center_x / w) * 2.0 - 1.0
+            norm_y = (center_y / h) * 2.0 - 1.0
+            center = np.array([norm_x, norm_y], dtype=np.float32)
+
+            # 识别人脸
+            name, embedding = self._recognize_with_img(img, face)
+
+            # 创建Position对象
+            position = Position(
+                track_id=tid,
+                bbox=face.bbox,
+                center=center,
+                confidence=face.det_confidence,
+                name=name,
+                embedding=embedding,
+                is_recognized=name is not None
+            )
+            positions.append(position)
+
+        return positions
+
+    def _recognize_with_img(
+            self,
+            img: NDArray[np.uint8],
+            face: Any,
+    ) -> Tuple[Optional[str], Optional[NDArray[np.float32]]]:
+        """
+        识别人脸
+
+        Args:
+            img: 原始图像
+            face: face
+
+        Returns:
+            (名字, 特征向量)
+        """
+        try:
+
+            # 裁剪人脸区域
+            face_img = self.crop_face_from_bbox(img, face.bbox)
+            if face_img is None:
+                return None, None
+
+            # 提取特征
+            embedding = face.normed_embedding.astype(np.float32)
+
+            # 识别
+            name, score = self.recognize(embedding)
+
+            return name, embedding
+
+        except Exception as e:
+            logger.error(f"Error recognizing face error: {e}")
+            return None, None
 
     def extract_embedding(self, face_img: NDArray[np.uint8]) -> Optional[NDArray[np.float32]]:
         """
@@ -151,6 +282,8 @@ class FaceRecognizer:
         for name, known_face in self.known_faces.items():
             # 计算余弦相似度
             similarity = self.cosine_similarity(embedding, known_face.embedding)
+
+            self.logger.debug(f"recognize {name} with similarity {similarity:.3f}")
 
             if similarity > best_score and similarity >= self.recognition_threshold:
                 best_score = similarity

@@ -1,16 +1,16 @@
 import asyncio
 import logging
-from typing import List
-
+import time
 import numpy as np
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import Provider, Container, IoCContainer, INSTANCE
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 
+from framework.abcd.agent import EventBus
+from framework.abcd.agent_event import VisionAgentEvent
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
-from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
-from moss_in_reachy_mini.camera.yolo.model import Position
+from moss_in_reachy_mini.camera.model import CameraFrame
 
 
 class HeadTracker:
@@ -21,16 +21,9 @@ class HeadTracker:
         self.logger = self._container.get(LoggerItf) or logging.getLogger("HeadTracker")
         self._camera_worker = camera_worker
 
-        self.face_tracking_offsets: List[float] = [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-        ]
-        self.face_tracking_positions: List[Position] = []
-        self.current_tracking_id = -1
+        self.latest_frame: CameraFrame | None = None
+        self.track_lost_start_at = 0
+        self.track_lost_threshold = 10
         self._run_task = None
 
         self.enabled = asyncio.Event()
@@ -39,8 +32,10 @@ class HeadTracker:
         # Smoothing parameters
         self.min_movement_threshold = 0.05  # Minimum movement to trigger head move
 
-    def set_tracking_id(self, tracking_id: int):
-        self._camera_worker.set_tracking_id(tracking_id)
+    def set_target_track_name(self, track_name: str):
+        if not track_name.isalpha() or track_name == "unknown":
+            return
+        self._camera_worker.set_target_track_name(track_name)
 
     async def run(self):
         while not self._quit.is_set():
@@ -50,20 +45,40 @@ class HeadTracker:
             if not self.enabled.is_set():
                 continue
 
-            self.face_tracking_offsets, self.face_tracking_positions, self.current_tracking_id = self._camera_worker.get_face_tracking_data()
+            self.latest_frame = self._camera_worker.get_latest_frame()
+            # 有追踪的目标且已经丢失
+            if self.latest_frame.track_name and self.latest_frame.track_lost:
+                if self.track_lost_start_at == 0:
+                    self.track_lost_start_at = time.time()
+                # 人脸追踪丢失目标，给脑子发一个event
+                if time.time() - self.track_lost_start_at > self.track_lost_threshold:
+                    # 主动关闭人脸跟随，等待大脑决策是否重新开启
+                    self.enabled.clear()
+                    self.set_target_track_name("")
+                    # 重置时间
+                    self.track_lost_start_at = 0
+                    eventbus = self._container.get(EventBus)
+                    if eventbus:
+                        await eventbus.put(VisionAgentEvent(
+                            content=f"人脸跟随的目标{self.latest_frame.track_name}已丢失超过{self.track_lost_threshold}秒，请重新根据你的最新视觉进行下一步决策",
+                            # images=[self.latest_frame.to_base64_image()],
+                            priority=-1,
+                            issuer="HeadTracker",
+                        ).to_agent_event())
+                continue
 
+            self.track_lost_start_at = 0
             # Create target pose from tracking data
             target_pose = create_head_pose(
-                x=self.face_tracking_offsets[0],
-                y=self.face_tracking_offsets[1],
-                z=self.face_tracking_offsets[2],
-                roll=self.face_tracking_offsets[3],
-                pitch=self.face_tracking_offsets[4],
-                yaw=self.face_tracking_offsets[5],
+                x=self.latest_frame.face_tracking_offsets[0],
+                y=self.latest_frame.face_tracking_offsets[1],
+                z=self.latest_frame.face_tracking_offsets[2],
+                roll=self.latest_frame.face_tracking_offsets[3],
+                pitch=self.latest_frame.face_tracking_offsets[4],
+                yaw=self.latest_frame.face_tracking_offsets[5],
                 degrees=False,
                 mm=False,
             )
-
             current_head_pose = self._mini.get_current_head_pose()
             
             # Check if movement is needed

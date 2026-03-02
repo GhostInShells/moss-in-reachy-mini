@@ -1,19 +1,17 @@
 from pathlib import Path
-from PIL import Image
 
 import cv2
-from ghoshell_common.contracts import FileStorage, DefaultFileStorage, LocalWorkspace
+from ghoshell_common.contracts import FileStorage, LocalWorkspace
 
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
-from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
 
 
-def from_storage(detector: HeadDetector, storage: FileStorage):
+def from_storage(face_recognizer: FaceRecognizer, storage: FileStorage):
     """
     从目录批量训练已知人脸
 
     Args:
-        detector: HeadDetector
+        face_recognizer: FaceRecognizer
         storage: 数据目录，结构为：
             data_dir/
                 person1/
@@ -23,13 +21,9 @@ def from_storage(detector: HeadDetector, storage: FileStorage):
                     image1.jpg
     """
     path = storage.abspath()
-    from_path(detector, path)
+    from_path(face_recognizer, path)
 
-def from_path(detector: HeadDetector, path: str):
-    face_recognizer = detector.face_recognizer
-    if not face_recognizer:
-        return
-
+def from_path(face_recognizer: FaceRecognizer, path: str):
     data_path = Path(path)
     if not data_path.exists():
         print(f"Directory {path} does not exist")
@@ -53,7 +47,7 @@ def from_path(detector: HeadDetector, path: str):
                         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
                         # 检测人脸
-                        detections, positions = detector.get_head_positions(img_rgb)
+                        positions = face_recognizer.get_face_positions(img_rgb)
 
                         if positions:
                             # 使用第一个检测到的人脸
@@ -75,13 +69,11 @@ def main():
     ws_dir = pathlib.Path(__file__).parent.parent.joinpath(".workspace")
     ws = LocalWorkspace(str(ws_dir.absolute()))
 
-    detector = HeadDetector(
-        face_recognizer=FaceRecognizer(
-            known_faces_storage=ws.configs().sub_storage("face_recognizer")
-        ),
+    face_recognizer = FaceRecognizer(
+        known_faces_storage=ws.configs().sub_storage("face_recognizer")
     )
 
-    from_storage(detector, ws.runtime().sub_storage("vision").sub_storage("faces"))
+    from_storage(face_recognizer, ws.runtime().sub_storage("vision").sub_storage("faces"))
 
 if __name__ == "__main__":
     main()
