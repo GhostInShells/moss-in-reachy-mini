@@ -94,7 +94,7 @@ class CameraWorker:
 
         while not self._stop_event.is_set():
             # Small sleep to prevent excessive CPU usage (same as main_works.py)
-            time.sleep(0.04)
+            time.sleep(0.04)  # 最大一秒25帧
             try:
                 current_time = time.time()
 

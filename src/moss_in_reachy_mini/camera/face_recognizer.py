@@ -17,13 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class SimpleTracker:
-    def __init__(self, iou_threshold=0.3):
-        self.tracks = {}  # key: track_id, value: bbox
+    def __init__(self, iou_threshold=0.3, max_lost_frames=50):
+        # 扩展track结构：key=track_id, value={bbox, last_frame, is_active}
+        self.tracks = {}
         self.next_id = 1
         self.iou_threshold = iou_threshold
+        self.max_lost_frames = max_lost_frames  # 最大丢失帧数（可根据帧率调整，如30帧=1秒）
+        self.current_frame = 0  # 记录当前帧号
 
     def iou(self, a, b):
-        # 计算IoU
+        # 保持原IoU计算逻辑不变
         x1 = max(a[0], b[0])
         y1 = max(a[1], b[1])
         x2 = min(a[2], b[2])
@@ -36,36 +39,107 @@ class SimpleTracker:
         return intersection / (area_a + area_b - intersection + 1e-6)
 
     def update(self, detections):
-        if not self.tracks:
-            for det in detections:
-                self.tracks[self.next_id] = det
-                self.next_id += 1
-            return list(self.tracks.keys())
+        self.current_frame += 1  # 帧号自增
+        active_tracks = {}  # 本次匹配上的track
+        inactive_tracks = {}  # 暂存的丢失track
 
-        # 匈牙利匹配
-        track_ids = list(self.tracks.keys())
-        track_boxes = list(self.tracks.values())
-        cost = np.zeros((len(track_boxes), len(detections)))
-        for i, t_box in enumerate(track_boxes):
-            for j, d_box in enumerate(detections):
-                cost[i, j] = 1 - self.iou(t_box, d_box)
+        # 第一步：分离活跃/暂存track（清理超时track）
+        for track_id, track_info in self.tracks.items():
+            # 计算丢失帧数
+            lost_frames = self.current_frame - track_info["last_frame"]
+            if lost_frames <= self.max_lost_frames:
+                if track_info["is_active"]:
+                    active_tracks[track_id] = track_info["bbox"]
+                else:
+                    inactive_tracks[track_id] = track_info["bbox"]
+            # 超过超时时间，彻底删除（不加入任何字典）
 
-        row_ind, col_ind = linear_sum_assignment(cost)
+        # 第二步：先匹配活跃track（原逻辑）
+        track_ids = list(active_tracks.keys())
+        track_boxes = list(active_tracks.values())
+        matched_det_indices = set()  # 已匹配的检测框索引
         new_tracks = {}
 
-        for r, c in zip(row_ind, col_ind):
-            if cost[r, c] < 1 - self.iou_threshold:
-                new_tracks[track_ids[r]] = detections[c]
+        if track_boxes and detections:
+            # 计算代价矩阵（1-IoU）
+            cost = np.zeros((len(track_boxes), len(detections)))
+            for i, t_box in enumerate(track_boxes):
+                for j, d_box in enumerate(detections):
+                    cost[i, j] = 1 - self.iou(t_box, d_box)
 
-        # 新增目标
-        used_cols = set(col_ind)
+            # 匈牙利算法匹配
+            row_ind, col_ind = linear_sum_assignment(cost)
+            for r, c in zip(row_ind, col_ind):
+                if cost[r, c] < 1 - self.iou_threshold:
+                    track_id = track_ids[r]
+                    new_tracks[track_id] = {
+                        "bbox": detections[c],
+                        "last_frame": self.current_frame,
+                        "is_active": True
+                    }
+                    matched_det_indices.add(c)
+
+        # 第三步：匹配暂存的丢失track（复用ID）
+        if inactive_tracks and detections:
+            inactive_ids = list(inactive_tracks.keys())
+            inactive_boxes = list(inactive_tracks.values())
+            # 只匹配未被活跃track占用的检测框
+            remaining_dets = [d for i, d in enumerate(detections) if i not in matched_det_indices]
+            remaining_det_indices = [i for i in range(len(detections)) if i not in matched_det_indices]
+
+            if remaining_dets:
+                cost = np.zeros((len(inactive_boxes), len(remaining_dets)))
+                for i, t_box in enumerate(inactive_boxes):
+                    for j, d_box in enumerate(remaining_dets):
+                        cost[i, j] = 1 - self.iou(t_box, d_box)
+
+                row_ind, col_ind = linear_sum_assignment(cost)
+                for r, c in zip(row_ind, col_ind):
+                    if cost[r, c] < 1 - self.iou_threshold:
+                        track_id = inactive_ids[r]
+                        det_idx = remaining_det_indices[c]
+                        new_tracks[track_id] = {
+                            "bbox": remaining_dets[c],
+                            "last_frame": self.current_frame,
+                            "is_active": True
+                        }
+                        matched_det_indices.add(det_idx)
+
+        # 第四步：新增目标（分配新ID）
         for i, det in enumerate(detections):
-            if i not in used_cols:
-                new_tracks[self.next_id] = det
+            if i not in matched_det_indices:
+                new_tracks[self.next_id] = {
+                    "bbox": det,
+                    "last_frame": self.current_frame,
+                    "is_active": True
+                }
                 self.next_id += 1
 
+        # 第五步：保留未匹配但未超时的track（标记为非活跃）
+        for track_id, track_info in self.tracks.items():
+            if track_id not in new_tracks:
+                lost_frames = self.current_frame - track_info["last_frame"]
+                if lost_frames <= self.max_lost_frames:
+                    new_tracks[track_id] = {
+                        "bbox": track_info["bbox"],  # 保留最后一次的bbox
+                        "last_frame": track_info["last_frame"],
+                        "is_active": False  # 标记为非活跃
+                    }
+
+        # 更新tracks
         self.tracks = new_tracks
-        return list(self.tracks.keys())
+        # 返回当前活跃的track ID（仅返回匹配上的）
+        return [tid for tid, info in self.tracks.items() if info["is_active"]]
+
+    # 新增：获取指定track_id的bbox（方便业务使用）
+    def get_track_bbox(self, track_id):
+        return self.tracks.get(track_id, {}).get("bbox")
+
+    # 新增：重置tracker（可选）
+    def reset(self):
+        self.tracks = {}
+        self.next_id = 1
+        self.current_frame = 0
 
 class FaceRecognizer:
     """人脸识别器，使用InsightFace进行人脸识别"""
