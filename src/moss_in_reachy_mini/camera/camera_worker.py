@@ -20,12 +20,10 @@ from scipy.spatial.transform import Rotation as R
 
 from reachy_mini import ReachyMini
 from reachy_mini.utils.interpolation import linear_pose_interpolation
-from supervision import ByteTrack
 
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
-from moss_in_reachy_mini.camera.yolo.drawer import draw_tracks, draw_detections
-from moss_in_reachy_mini.camera.yolo.head_detector import HeadDetector
-from moss_in_reachy_mini.camera.yolo.model import Position, get_position_by_track_id
+from moss_in_reachy_mini.camera.drawer import draw_detections
+from moss_in_reachy_mini.camera.model import Position, get_position_by_track_id
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +31,10 @@ logger = logging.getLogger(__name__)
 class CameraWorker:
     """Thread-safe camera worker with frame buffering and face tracking."""
 
-    def __init__(self, reachy_mini: ReachyMini, head_detector: HeadDetector) -> None:
+    def __init__(self, reachy_mini: ReachyMini, face_recognizer: FaceRecognizer) -> None:
         """Initialize."""
         self.reachy_mini = reachy_mini
-        self.head_detector = head_detector
+        self.face_recognizer = face_recognizer
 
         # Thread-safe frame storage
         self.latest_frame: NDArray[np.uint8] | None = None
@@ -269,8 +267,7 @@ class CameraWorkerProvider(Provider[CameraWorker]):
         ws = con.force_fetch(Workspace)
         face_recognizer_storage = ws.configs().sub_storage("face_recognizer")
 
-        head_detector = HeadDetector(
-            face_recognizer=FaceRecognizer(known_faces_storage=face_recognizer_storage),
-            bytetrack=ByteTrack()
+        face_recognizer = FaceRecognizer(
+            known_faces_storage=face_recognizer_storage,
         )
-        return CameraWorker(reachy_mini=mini, head_detector=head_detector)
+        return CameraWorker(reachy_mini=mini, face_recognizer=face_recognizer)
