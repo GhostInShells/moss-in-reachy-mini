@@ -16,7 +16,7 @@ from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.components.vision import Vision
-from state import AsleepState, WakenState, BoringState, MiniStateHook, InitialState
+from state import AsleepState, WakenState, BoringState, MiniStateHook, InitialState, LiveState
 
 
 class StateLog:
@@ -63,6 +63,15 @@ class MossInReachyMini:
                 vision=vision,
                 switch_to=self.switch_to,
                 container=self._container,
+            ),
+            LiveState.NAME: LiveState(
+                mini,
+                body=body,
+                head=head,
+                antennas=antennas,
+                vision=vision,
+                switch_to=self.switch_to,
+                container=self._container,
             )
         }
         self._state: MiniStateHook = InitialState()
@@ -71,11 +80,6 @@ class MossInReachyMini:
         self._bootstrapped = asyncio.Event()
 
     async def switch_to(self, state_name: str):
-        f"""
-        切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
-        
-        :param state_name: 目标状态名称
-        """
         state_name = state_name.lower()
         if state_name not in self._state_map:
             raise ValueError(f'Invalid state name: {state_name}')
@@ -121,32 +125,28 @@ class MossInReachyMini:
         assert self._bootstrapped.is_set()
 
         reachy_mini = PyChannel(name="reachy_mini", block=True)
-        reachy_mini.build.command()(self.switch_to)
-        reachy_mini.build.with_context_messages(self.context_messages)
+        # reachy_mini.build.command(doc=f"""
+        # 切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
+        #
+        # :param state_name: 目标状态名称
+        # """)(self.switch_to)
+        # reachy_mini.build.with_context_messages(self.context_messages)
 
-        # asleep state
-        asleep_chan = self._state_map[AsleepState.NAME].as_channel()
-        asleep_chan.build.with_available()(lambda: self._state.NAME == AsleepState.NAME)
-
-        # waken state
-        waken_chan = self._state_map[WakenState.NAME].as_channel()
-        waken_chan.build.with_available()(lambda: self._state.NAME == WakenState.NAME)
-
-        # boring state
-        boring_chan = self._state_map[BoringState.NAME].as_channel()
-        boring_chan.build.with_available()(lambda: self._state.NAME == BoringState.NAME)
+        channels = []
+        for name, state in self._state_map.items():
+            chan = state.as_channel()
+            chan.build.with_available()(lambda: self._state.NAME == state.NAME)
+            channels.append(chan)
 
         reachy_mini.import_channels(
-            asleep_chan,
-            waken_chan,
-            boring_chan,
+            *channels,
         )
 
         return reachy_mini
 
     async def bootstrap(self):
         await self.head.bootstrap()
-        await self.switch_to(AsleepState.NAME)
+        await self.switch_to(LiveState.NAME)
         self._bootstrapped.set()
 
     async def __aenter__(self):
@@ -154,7 +154,7 @@ class MossInReachyMini:
         return self
 
     async def aclose(self):
-        await self.switch_to(AsleepState.NAME)
+        await self.switch_to(LiveState.NAME)
         await self.head.aclose()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):

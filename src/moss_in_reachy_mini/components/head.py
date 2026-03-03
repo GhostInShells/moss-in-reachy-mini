@@ -177,7 +177,8 @@ class Head:
         return head
 
     async def bootstrap(self):
-        await self._head_tracker.start()
+        # await self._head_tracker.start()
+        pass
 
     async def aclose(self):
         await self._head_tracker.stop()

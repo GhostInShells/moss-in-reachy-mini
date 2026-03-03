@@ -67,7 +67,7 @@ class Vision:
     async def context_messages(self):
         msg = Message.new(role="system", name="__reachy_mini_vision__")
         frame = self.camera_worker.get_latest_frame()
-        if frame is not None:
+        if frame.image is not None:
             msg.with_content(
                 Text(text="This image is what you see")
             ).with_content(

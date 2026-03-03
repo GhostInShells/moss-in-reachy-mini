@@ -14,6 +14,7 @@ from reachy_mini import ReachyMini
 from framework.abcd.agent import EventBus
 from framework.abcd.agent_event import ReactAgentEvent
 from framework.abcd.agent_hook import AgentHook
+from framework.live.douyin_live_channel import DouyinLiveChannel
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
@@ -327,3 +328,107 @@ Proactive_Prompts = [
 """
 ]
 
+class LiveState(MiniStateHook):
+
+    NAME = "live"
+    LIVE_ID = "892335786371"
+
+    def __init__(self, mini: ReachyMini, body: Body, head: Head, antennas: Antennas, vision: Vision, switch_to, container: IoCContainer):
+        super().__init__()
+        self.mini = mini
+        self.body = body
+        self.head = head
+        self.antennas = antennas
+        self.vision = vision
+        self.switch_to = switch_to
+        self.container = container
+        self.logger = container.get(LoggerItf) or logging.getLogger("WakenState")
+        self._eventbus: Optional[EventBus] = container.get(EventBus)
+
+        self.douyin_live_channel = DouyinLiveChannel(self.LIVE_ID, self.container)
+
+        self._time_to_react = 20  # 20秒
+
+    async def on_self_enter(self):
+        self.mini.enable_motors()
+        self.mini.wake_up()
+        await self.head.start_breathing()
+        if self.LIVE_ID == "":
+            await self._eventbus.put(ReactAgentEvent(
+                messages=[Message.new(role="system").with_content(
+                    Text(text="切换到live状态失败，未指定直播ID，你需要切换回Waken状态")
+                )]
+            ).to_agent_event())
+            return
+
+        self.douyin_live_channel.start()
+
+    async def on_self_exit(self):
+        self.douyin_live_channel.stop()
+
+    async def _run_idle_move(self):
+        if self._idle_move_duration <= self._time_to_react:
+            return
+
+        if self._eventbus:
+            await self._eventbus.put(ReactAgentEvent(
+                messages=[Message.new(role="system").with_content(
+                    Text(text=random.choice(LiveIdle_Prompts))
+                )]
+            ).to_agent_event())
+
+    async def start_idle_move(self):
+        await super().start_idle_move()
+        await self.head.on_policy_run()
+        await self.antennas.on_policy_run()
+
+    async def cancel_idle_move(self):
+        await super().cancel_idle_move()
+        await self.head.on_policy_pause()
+        await self.antennas.on_policy_pause()
+
+    def as_channel(self):
+        chan = self.douyin_live_channel.as_channel()
+        chan.build.with_description()(lambda :"当前状态是直播状态，不可以切换为其他状态")
+        chan.build.command(doc=self.body.dance_docstring)(self.body.dance)
+        chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
+        chan.build.command(name="head_move")(self.head.move)
+        chan.build.command(name="head_reset")(self.head.reset)
+        chan.build.command()(self.head.start_breathing)
+        chan.build.command()(self.head.stop_breathing)
+        chan.build.command(name="antennas_move")(self.antennas.move)
+        chan.build.command(name="antennas_reset")(self.antennas.reset)
+        chan.build.command()(self.antennas.set_idle_flapping)
+        chan.build.command()(self.antennas.enable_flapping)
+        return chan
+
+LiveIdle_Prompts = ["""
+话题轮换：避免每次都说同样的话。可以从以下几个方向随机选择：
+1. 延续话题：回顾刚才聊的内容，补充一个有趣的细节或抛出新的角度。“刚才我们说到XX，我突然想到一个特别有意思的例子……”
+2. 提问互动：向观众抛出一个开放式问题，引导大家参与。“想问下直播间的朋友们，你们周末最喜欢做什么呀？在公屏上告诉我~”
+3. 分享日常：聊聊自己（AI）的趣事、最近的热点、冷知识等。“我最近学到一个超实用的生活小技巧，分享给你们……”
+4. 感谢与提醒：感谢观众停留，提醒点赞、分享等。“谢谢大家还在直播间，如果觉得内容不错，动动手指点个赞，让我看到你们！”
+5. 趣味互动：发起小游戏，如“猜谜语”、“看图猜物”、“听前奏猜歌名”等。“来玩个猜谜游戏：什么东西越洗越脏？答案是水！你们猜对了吗？”
+6. 结合历史：参考之前用户评论中提到的兴趣点，延续相关话题。
+7. 语气自然：保持口语化，加入表情动作，
+""",
+"""
+ 讲一个有趣的笑话，以活跃直播间气氛。请严格遵循以下多样化原则：
+
+**笑话库轮换策略**（每次从以下类别中随机选择一个）：
+- **生活糗事**：讲述自己或身边人的搞笑经历，增加真实感。“我昨天煮泡面，把调料包撕开后直接扔进了锅里，结果发现没撕口……最后捞出来的时候，调料包已经鼓成气球了！”
+- **谐音梗/双关语**：利用词语歧义制造笑点，适合轻松互动。“为什么数学书总是很忧郁？因为它有太多‘几何’（音似‘几盒’愁）问题。”
+- **冷笑话**：一本正经地讲无厘头笑话，配合呆萌的语气。“有一天，绿豆跟女朋友分手了，它很难过，然后它哭了，结果……它变成了豆芽。”
+- **动物笑话**：以小动物为主角的趣事。“为什么企鹅的肚子是白色的？因为如果它肚子朝上躺在雪地里，就没人能发现它……（停顿）好吧，其实是方便它摔倒时伪装。”
+- **程序员专属笑话**（如果直播间技术类观众多）：“程序员最讨厌康熙的哪个儿子？——四阿哥（Four阿哥，谐音for循环）。”
+
+**讲笑话的流程**：
+1.  **开场白**：用一句吸引人的话引入，如“哎，直播间有点安静，我给大家讲个笑话吧～”、“刚才突然想到一个特别搞笑的，你们想听吗？”
+2.  **讲述笑话**：口语化，适当加入语气词和停顿，模拟真人讲故事。可以在关键处加入`[神秘一笑]` `[摊手]`等动作提示。
+3.  **互动收尾**：讲完后立刻抛出互动，如“这个笑话能打几分？满分10分的话，公屏告诉我！”、“如果不好笑，我自罚一首歌！”
+
+**注意事项**：
+- 避免低俗、冒犯性内容，保持正能量。
+- 如果连续多次收到 `[空场 讲笑话]`，笑话类型必须轮换，不能重复。
+"""
+]
