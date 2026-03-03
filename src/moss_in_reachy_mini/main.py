@@ -30,6 +30,7 @@ from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
+from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -108,6 +109,11 @@ def providers(container: IoCContainer):
     )))
     # Moss
     container.register(MossInReachyMiniProvider())
+    # Moss State
+    container.register(AsleepStateProvider())
+    container.register(WakenStateProvider())
+    container.register(BoringStateProvider())
+    container.register(LiveStateProvider())
 
 
 async def run_agent(container, zmq_hub):
@@ -180,5 +186,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

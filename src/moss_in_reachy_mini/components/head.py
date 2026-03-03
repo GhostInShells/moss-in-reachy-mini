@@ -191,4 +191,5 @@ class HeadProvider(Provider[Head]):
     def factory(self, con: IoCContainer) -> INSTANCE:
         mini = con.force_fetch(ReachyMini)
         head_tracker = con.force_fetch(HeadTracker)
-        return Head(mini, head_tracker, con)
+        head = Head(mini, head_tracker, con)
+        return head

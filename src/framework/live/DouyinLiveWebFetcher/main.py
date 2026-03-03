@@ -6,10 +6,10 @@
 # @Author:      bubu
 # @Project:     douyinLiveWebFetcher
 
-from liveMan import DouyinLiveWebFetcher
+from .liveMan import DouyinLiveWebFetcher
 
 if __name__ == '__main__':
-    live_id = '510200350291'
+    live_id = '972559747665'
     room = DouyinLiveWebFetcher(live_id)
     # room.get_room_status() # 失效
     room.start()

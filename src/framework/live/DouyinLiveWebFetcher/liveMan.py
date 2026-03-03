@@ -9,6 +9,7 @@
 import codecs
 import gzip
 import hashlib
+import json
 import os
 import random
 import re
