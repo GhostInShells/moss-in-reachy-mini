@@ -176,12 +176,6 @@ class Head:
 
         return head
 
-    async def bootstrap(self):
-        await self._head_tracker.start()
-
-    async def aclose(self):
-        await self._head_tracker.stop()
-
 
 class HeadProvider(Provider[Head]):
     def singleton(self) -> bool:
@@ -190,4 +184,5 @@ class HeadProvider(Provider[Head]):
     def factory(self, con: IoCContainer) -> INSTANCE:
         mini = con.force_fetch(ReachyMini)
         head_tracker = con.force_fetch(HeadTracker)
-        return Head(mini, head_tracker, con)
+        head = Head(mini, head_tracker, con)
+        return head

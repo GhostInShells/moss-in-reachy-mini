@@ -109,3 +109,9 @@ class UnexpectedAgentEvent(AgentEventModel):
     只是用来边界条件适配的
     """
     event_type = "__unexpected__"
+
+class CTMLAgentEvent(AgentEventModel):
+    event_type = "ctml"
+
+    ctml: str = Field(description="ctml 文本")
+

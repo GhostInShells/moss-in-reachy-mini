@@ -14,11 +14,11 @@ from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent
 from framework.abcd.agent_hook import AgentHook, AgentHookState
 from framework.abcd.memory import Memory
 from framework.agent.eventbus import QueueEventBus
-from framework.agent.response import MOSShellResponse, CTMLResult
+from framework.agent.response import MOSShellResponse, CTMLResult, CTMLResponse
 from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
 
 
@@ -195,6 +195,14 @@ class BaseMainAgent(Agent, ABC):
                 inputs=inputs,
                 model=self.config.model,
                 prompts=prompts,
+                logger=self.logger,
+            )
+
+        if ctml := CTMLAgentEvent.from_agent_event(event):
+            return CTMLResponse(
+                shell=self.shell,
+                ctml=ctml.ctml,
+                event=ctml,
                 logger=self.logger,
             )
 

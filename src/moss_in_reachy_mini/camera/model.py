@@ -65,7 +65,7 @@ class CameraFrame:
             face_tracking_offsets=self.face_tracking_offsets.copy(),
             face_positons=self.face_positons.copy(),
             track_name=self.track_name,
-            image=self.image.copy(),
+            image=self.image,
             track_lost=self.track_lost,
         )
 

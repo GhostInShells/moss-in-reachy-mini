@@ -30,6 +30,7 @@ from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
+from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -44,7 +45,7 @@ class ShellProvider(Provider[MOSSShell]):
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
         speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
-        shell = new_shell(container=con, speech=speech, main_channel=create_main_channel())
+        shell = new_shell(container=con, speech=speech)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
@@ -82,7 +83,9 @@ def providers(container: IoCContainer):
     container.register(CameraWorkerProvider())
     # Agent记忆
     ws = container.force_fetch(Workspace)
-    storage = ws.runtime().sub_storage("memory")
+    storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
+    logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
+    storage = ws.runtime().sub_storage(storage_name)
     memory = StorageMemory(storage)
     container.set(StorageMemory, memory)
     container.set(Memory, memory)
@@ -108,6 +111,11 @@ def providers(container: IoCContainer):
     )))
     # Moss
     container.register(MossInReachyMiniProvider())
+    # Moss State
+    container.register(AsleepStateProvider())
+    container.register(WakenStateProvider())
+    container.register(BoringStateProvider())
+    container.register(LiveStateProvider())
 
 
 async def run_agent(container, zmq_hub):
@@ -180,5 +188,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
