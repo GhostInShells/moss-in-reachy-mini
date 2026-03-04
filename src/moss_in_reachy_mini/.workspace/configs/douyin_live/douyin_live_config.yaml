@@ -1,5 +1,6 @@
-live_id: "108691541455"
+live_id: ""  # 可以从抖音直播间地址中获取，比如：https://live.douyin.com/892335786371， 892335786371就是live_id
 
+# 以下是直播间互动事件配置
 super_gift_event:
   max_count: 1
   prompt: "用户送出一个非常有价值的礼物！你需要：
@@ -64,8 +65,9 @@ social_event:
   priority: -1
   overdue: 10
 
-idle_react_threshold: 10
-idle_prompts:
+# 以下是直播间空闲时的配置
+idle_react_threshold: 10  # 当超过{idle_react_threshold}秒没有互动事件时，触发空闲时的配置
+idle_prompts:  # 直播间空闲时的自驱prompt
   - "话题轮换：避免每次都说同样的话。可以从以下几个方向随机选择：
 1. 延续话题：回顾刚才聊的内容，补充一个有趣的细节或抛出新的角度。“刚才我们说到XX，我突然想到一个特别有意思的例子……”
 2. 提问互动：向观众抛出一个开放式问题，引导大家参与。“想问下直播间的朋友们，你们周末最喜欢做什么呀？在公屏上告诉我~”
