@@ -1,32 +1,27 @@
-from typing import Optional
-
 import numpy as np
 from ghoshell_common.contracts import LoggerItf
+from ghoshell_moss.speech.player.base_player import BaseAudioStreamPlayer
 from reachy_mini import ReachyMini
 
-try:
-    import pyaudio
-except ImportError as e:
-    raise ImportError(f"failed to import audio dependencies, please try to install ghoshell-shell[audio]: {e}")
-
-from ghoshell_moss.speech.player.base_player import BaseAudioStreamPlayer
-
+from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
 
 
 class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
-
     def __init__(
         self,
         mini: ReachyMini,
         *,
         logger: LoggerItf | None = None,
         safety_delay: float = 0.5,
+        recorder: VideoRecorderWorker | None = None,
     ):
         """
         基于 PyAudio 的异步音频播放器实现
         使用单独的线程处理阻塞的音频输出操作
         """
         self.mini = mini
+        self._recorder = recorder
+        self._logger = logger
         super().__init__(
             sample_rate=self.mini.media.get_output_audio_samplerate(),
             channels=self.mini.media.get_output_channels(),
@@ -52,5 +47,13 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
 
         # 3. 单声道转双通道（复制左声道数据到右声道，硬件要求双通道）
         audio_f32_stereo = np.column_stack((audio_f32, audio_f32))
+
+        # Tap output audio for recording (int16 PCM interleaved)
+        if self._recorder is not None:
+            try:
+                audio_i16_stereo = np.column_stack((data, data)).astype(np.int16)
+                self._recorder.push_output_audio(audio_i16_stereo.tobytes())
+            except Exception:
+                self._logger.warning("Failed to record output audio")
 
         self.mini.media.push_audio_sample(audio_f32_stereo)

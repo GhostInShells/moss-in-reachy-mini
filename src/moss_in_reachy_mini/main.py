@@ -31,6 +31,9 @@ from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
+from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
+from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
+from moss_in_reachy_mini.video.recorder_channel import VideoRecorder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -44,11 +47,13 @@ class ShellProvider(Provider[MOSSShell]):
         mini = con.force_fetch(ReachyMini)
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
+        recorder = con.force_fetch(VideoRecorderWorker)
         speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
         shell = new_shell(container=con, speech=speech)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
+            VideoRecorder(recorder).as_channel(),
             # zmq_hub.as_channel()
         )
         return shell
@@ -69,6 +74,7 @@ class AgentProvider(Provider[Agent]):
 def providers(container: IoCContainer):
     # Mini
     container.set(ReachyMini, ReachyMini())
+    container.register(FrameHubProvider())
     # Agent输入
     container.set(EventBus, QueueEventBus())
     # Agent输出
@@ -81,6 +87,7 @@ def providers(container: IoCContainer):
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
     container.register(CameraWorkerProvider())
+    container.register(VideoRecorderWorkerProvider())
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
@@ -139,6 +146,11 @@ def get_speech(
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
     container = container or get_container()
+    recorder = None
+    try:
+        recorder = container.get(VideoRecorderWorker)
+    except Exception:
+        recorder = None
     use_voice = os.environ.get("USE_VOICE_SPEECH", "no") == "yes"
     if not use_voice:
         return MockSpeech()
@@ -158,7 +170,11 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return TTSSpeech(player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf)), tts=VolcengineTTS(conf=tts_conf), logger=container.get(LoggerItf))
+    return TTSSpeech(
+        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
+        tts=VolcengineTTS(conf=tts_conf),
+        logger=container.get(LoggerItf),
+    )
 
 
 def main():
