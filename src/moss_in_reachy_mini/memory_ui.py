@@ -7,15 +7,21 @@ from framework.memory.storage_memory import StorageMemory
 from framework.memory.storage_memory_streamlit import StorageMemoryUI
 
 
-def main():
+def main(storage_name: str="memory"):
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
     with workspace_container(ws_dir) as container:
         ws = container.force_fetch(Workspace)
-        storage = ws.runtime().sub_storage("memory")
+        storage = ws.runtime().sub_storage(storage_name)
         _storage_memory = StorageMemory(storage)
         # 启动UI
         ui = StorageMemoryUI(_storage_memory)
         ui.render()
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--storage", type=str, default="memory")
+
+    args = parser.parse_args()
+    main(args.storage)
+

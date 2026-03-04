@@ -12,6 +12,7 @@ from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.head_tracker import HeadTracker
 from moss_in_reachy_mini.components.vision import Vision
 from moss_in_reachy_mini.state.abcd import MiniStateHook, QuitIdleMove
 
@@ -20,11 +21,22 @@ class WakenState(MiniStateHook):
 
     NAME = "waken"
 
-    def __init__(self, mini: ReachyMini, body: Body, head: Head, antennas: Antennas, vision: Vision, eventbus: EventBus, logger: LoggerItf=None):
+    def __init__(
+        self,
+        mini: ReachyMini,
+        body: Body,
+        head: Head,
+        head_tracker: HeadTracker,
+        antennas: Antennas,
+        vision: Vision,
+        eventbus: EventBus,
+        logger: LoggerItf=None,
+    ):
         super().__init__()
         self.mini = mini
         self.body = body
         self.head = head
+        self.head_tracker = head_tracker
         self.antennas = antennas
         self.vision = vision
         self.logger = logger or logging.getLogger("WakenState")
@@ -43,20 +55,21 @@ class WakenState(MiniStateHook):
     async def on_self_enter(self):
         self.mini.enable_motors()
         self.mini.wake_up()
+        await self.head_tracker.start()
         self._base_proactive_prob = 0.001  # 初始基础概率（空闲0秒时的概率）
-        if self.eventbus:
-            await self.eventbus.put(ReactAgentEvent(
-                messages=[
-                    Message.new(role="system").with_content(
-                        Text(text="你现在进入Waken状态了，可以选择你眼前的人进行人脸跟随")
-                    )
-                ],
-                priority=-1,
-            ).to_agent_event())
+        await self.eventbus.put(ReactAgentEvent(
+            messages=[
+                Message.new(role="system").with_content(
+                    Text(text="你需要选择你视觉内的认识的人开启人脸跟随")
+                )
+            ],
+            priority=-1,
+        ).to_agent_event())
 
     async def on_self_exit(self):
         await self.head.stop_tracking_face()
         await self.head.reset()
+        await self.head_tracker.stop()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:
@@ -169,6 +182,7 @@ class WakenStateProvider(Provider[WakenState]):
         mini = con.force_fetch(ReachyMini)
         body = con.force_fetch(Body)
         head = con.force_fetch(Head)
+        head_tracker = con.force_fetch(HeadTracker)
         vision = con.force_fetch(Vision)
         antennas = con.force_fetch(Antennas)
         eventbus = con.force_fetch(EventBus)
@@ -178,6 +192,7 @@ class WakenStateProvider(Provider[WakenState]):
             mini=mini,
             body=body,
             head=head,
+            head_tracker=head_tracker,
             antennas=antennas,
             vision=vision,
             eventbus=eventbus,

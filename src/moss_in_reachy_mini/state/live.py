@@ -18,6 +18,10 @@ from moss_in_reachy_mini.state import MiniStateHook
 
 class LiveState(MiniStateHook):
 
+    """
+    直播状态
+    """
+
     NAME = "live"
     out_switchable = False
 
@@ -46,7 +50,7 @@ class LiveState(MiniStateHook):
 
     async def on_self_enter(self):
         self.mini.enable_motors()
-        self.mini.wake_up()
+        await self.head.reset()
         await self.head.start_breathing()
         if self._config.live_id == "":
             await self._eventbus.put(CTMLAgentEvent(

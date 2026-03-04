@@ -27,6 +27,7 @@ class MossInReachyMini:
             self,
             mini: ReachyMini,
             *states: MiniStateHook,
+            default_state: str = AsleepState.NAME,
             appearance_img: Image.Image,
             structure_img: Image.Image,
             logger: LoggerItf = None,
@@ -38,6 +39,7 @@ class MossInReachyMini:
         self._state_map = { state.NAME: state for state in states }
         self._state: MiniStateHook = InitialState()
         self._state_log: List[StateLog] = []
+        self._default_state = default_state
 
         # img
         self.appearance_img = appearance_img
@@ -107,7 +109,7 @@ class MossInReachyMini:
         channels = []
         for name, state in self._state_map.items():
             chan = state.as_channel()
-            chan.build.with_available()(lambda: self._state.NAME == state.NAME)
+            chan.build.with_available()(lambda _state=state: self._state.NAME == _state.NAME)
             channels.append(chan)
 
         reachy_mini.import_channels(
@@ -117,7 +119,7 @@ class MossInReachyMini:
         return reachy_mini
 
     async def bootstrap(self):
-        await self.switch_state(LiveState.NAME)
+        await self.switch_state(self._default_state)
         self._bootstrapped.set()
 
     async def __aenter__(self):
@@ -149,13 +151,16 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
         states = [asleep, waken, boring, live]
+        default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
         if os.getenv("REACHY_MINI_MODE") == "live":
             states = [live]
+            default_state = LiveState.NAME
 
         return MossInReachyMini(
             mini, *states,
+            default_state=default_state,
             appearance_img=appearance_img, structure_img=structure_img,
             logger=logger,
         )

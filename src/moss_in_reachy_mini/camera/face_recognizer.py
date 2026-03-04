@@ -16,57 +16,6 @@ from moss_in_reachy_mini.camera.model import KnownFace, Position
 logger = logging.getLogger(__name__)
 
 
-class SimpleTracker:
-    def __init__(self, iou_threshold=0.3):
-        self.tracks = {}  # key: track_id, value: bbox
-        self.next_id = 1
-        self.iou_threshold = iou_threshold
-
-    def iou(self, a, b):
-        # 计算IoU
-        x1 = max(a[0], b[0])
-        y1 = max(a[1], b[1])
-        x2 = min(a[2], b[2])
-        y2 = min(a[3], b[3])
-        w = max(0, x2 - x1)
-        h = max(0, y2 - y1)
-        intersection = w * h
-        area_a = (a[2]-a[0])*(a[3]-a[1])
-        area_b = (b[2]-b[0])*(b[3]-b[1])
-        return intersection / (area_a + area_b - intersection + 1e-6)
-
-    def update(self, detections):
-        if not self.tracks:
-            for det in detections:
-                self.tracks[self.next_id] = det
-                self.next_id += 1
-            return list(self.tracks.keys())
-
-        # 匈牙利匹配
-        track_ids = list(self.tracks.keys())
-        track_boxes = list(self.tracks.values())
-        cost = np.zeros((len(track_boxes), len(detections)))
-        for i, t_box in enumerate(track_boxes):
-            for j, d_box in enumerate(detections):
-                cost[i, j] = 1 - self.iou(t_box, d_box)
-
-        row_ind, col_ind = linear_sum_assignment(cost)
-        new_tracks = {}
-
-        for r, c in zip(row_ind, col_ind):
-            if cost[r, c] < 1 - self.iou_threshold:
-                new_tracks[track_ids[r]] = detections[c]
-
-        # 新增目标
-        used_cols = set(col_ind)
-        for i, det in enumerate(detections):
-            if i not in used_cols:
-                new_tracks[self.next_id] = det
-                self.next_id += 1
-
-        self.tracks = new_tracks
-        return list(self.tracks.keys())
-
 class FaceRecognizer:
     """人脸识别器，使用InsightFace进行人脸识别"""
 
@@ -108,18 +57,12 @@ class FaceRecognizer:
             logger.error(f"Failed to load InsightFace model: {e}")
             raise
 
-        self.tracker = SimpleTracker()
-
         # 加载或创建已知人脸数据库
         self.known_faces: Dict[str, KnownFace] = {}
         self.known_faces_storage = known_faces_storage
         self.known_faces_filename = "known_faces.json"
         self.load_known_faces()
 
-        # 跟踪ID到人名的映射缓存
-        self.track_id_to_name: Dict[int, str] = {}
-        self.track_id_to_embedding: Dict[int, NDArray[np.float32]] = {}
-        self.unrecognized_counter: Dict[int, int] = {}
 
     def get_face_positions(self, img: NDArray) -> List[Position]:
         h, w = img.shape[:2]
