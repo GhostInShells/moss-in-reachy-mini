@@ -48,3 +48,15 @@ source src/moss_in_reachy_mini/start_memory_ui.sh
 python scripts/train_face.py
 ```
 
+## 直播
+### 直播配置文件
+[配置文件](.workspace/configs/douyin_live/douyin_live_config.yaml)
+
+### 开启直播
+.env文件中添加以下内容
+```
+REACHY_MINI_MODE="live"
+REACHY_MINI_MEMORY_STORAGE="live_memory" # 直播模式下的记忆存储位置
+```
+运行main.py即可开启直播模式
+
