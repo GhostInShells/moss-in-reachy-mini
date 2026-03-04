@@ -7,7 +7,7 @@ from ghoshell_moss import PyChannel, Message, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import EventBus
-from framework.abcd.agent_event import ReactAgentEvent
+from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
 from framework.live.douyin_live import DouyinLive, DouyinLiveConfig
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
@@ -49,10 +49,8 @@ class LiveState(MiniStateHook):
         self.mini.wake_up()
         await self.head.start_breathing()
         if self._config.live_id == "":
-            await self._eventbus.put(ReactAgentEvent(
-                messages=[Message.new(role="system").with_content(
-                    Text(text="切换到live状态失败，未指定直播ID，你需要切换回Waken状态")
-                )]
+            await self._eventbus.put(CTMLAgentEvent(
+                ctml='<reachy_mini:switch_state state_name="waken" force="true" />'
             ).to_agent_event())
             return
 
@@ -63,9 +61,9 @@ class LiveState(MiniStateHook):
 
     async def _run_idle_move(self):
         # 检查是否有新的事件
-        events = await self.douyin_live.get_agent_events()
+        events = self.douyin_live.get_agent_events()
         for event in events:
-            await self._eventbus.put(event)
+            await self._eventbus.put(event.to_agent_event())
 
         # 检查是否需要触发空闲React
         if self._idle_move_duration > self._config.idle_react_threshold:

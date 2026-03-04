@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from typing import List
+from typing import List, Optional
 
 from ghoshell_common.contracts import YamlConfig
 from ghoshell_container import INSTANCE
@@ -36,6 +36,14 @@ class BatchAsyncQueue(asyncio.Queue[INSTANCE]):
 
         return items
 
+    def get_batch_nowait(self, max_count: int) -> List[INSTANCE]:
+        items = []
+        try:
+            while len(items) < max_count and not self.empty():
+                items.append(self.get_nowait())
+        except asyncio.QueueEmpty:
+            pass
+        return items
 
 class DouyinLiveEventConfig(BaseModel):
     max_count: int = Field(default=1, description="max count")
@@ -79,8 +87,10 @@ class DouyinLive(DouyinLiveWebFetcher):
         self.current_users = 0
         self.total_users = 0
 
-    async def get_agent_events(self):
-        high_gifts = await self.super_gift_queue.get_batch(max_count=self.config.super_gift_event.max_count)
+        self._thread: Optional[threading.Thread] = None
+
+    def get_agent_events(self):
+        high_gifts = self.super_gift_queue.get_batch_nowait(max_count=self.config.super_gift_event.max_count)
         if high_gifts:
             return [UserInputAgentEvent(
                 message=Message.new(role="user").with_content(
@@ -101,7 +111,7 @@ class DouyinLive(DouyinLiveWebFetcher):
             (self.social_queue, self.config.social_event),
         ]
         for queue, config in event_queues:
-            contents = await queue.get_batch(max_count=config.max_count)
+            contents = queue.get_batch_nowait(max_count=config.max_count)
             if contents:
                 events.append(UserInputAgentEvent(
                     message=Message.new(role="user").with_content(
@@ -116,10 +126,14 @@ class DouyinLive(DouyinLiveWebFetcher):
         return events
 
     def start(self):
-        threading.Thread(target=self._connectWebSocket).start()
+        self._thread = threading.Thread(target=self._connectWebSocket)
+        self._thread.start()
 
-    def close(self):
-        self.stopped.set()
+    def stop(self):
+        if hasattr(self, "ws"):
+            self.ws.close()
+        if self._thread:
+            self._thread.join()
 
     def _parseChatMsg(self, payload):
         message = ChatMessage().parse(payload)

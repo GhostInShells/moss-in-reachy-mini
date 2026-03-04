@@ -1,6 +1,7 @@
 import asyncio
 import io
 import logging
+import os
 import time
 from functools import partial
 from typing import Optional, List
@@ -147,8 +148,14 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
+        states = [asleep, waken, boring, live]
+
+        # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
+        if os.getenv("REACHY_MINI_MODE") == "live":
+            states = [live]
+
         return MossInReachyMini(
-            mini, asleep, waken, boring, live,
+            mini, *states,
             appearance_img=appearance_img, structure_img=structure_img,
             logger=logger,
         )
