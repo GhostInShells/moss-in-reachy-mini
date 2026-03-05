@@ -18,6 +18,9 @@ dependencies = [
     "websocket-client>=1.7.0",
     "pydantic-settings>=2.0.0",
     "python-proxy>=0.0.1",
+    "mini-racer>=0.12.4",
+    "pyexecjs>=1.5.1",
+    "betterproto>=2.0.0b6",
 ]
 
 [project.optional-dependencies]

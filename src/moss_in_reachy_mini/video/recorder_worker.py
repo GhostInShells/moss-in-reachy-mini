@@ -16,6 +16,7 @@ from ghoshell_common.contracts import FileStorage, Workspace
 from ghoshell_container import Container, IoCContainer, Provider
 from reachy_mini import ReachyMini
 
+from moss_in_reachy_mini.audio.mic_hub import MicHub, MicSubscription
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.frame_hub import FrameHub
 from moss_in_reachy_mini.video.recorder_debug_logger import get_video_recorder_logger
@@ -116,9 +117,16 @@ class VideoRecorderWorker:
 
         self._last_result: RecordingResult | None = None
 
-        self._audio_out_q: queue.Queue[bytes] = queue.Queue(maxsize=200)
+        # Output audio is event-based (only pushed when TTS plays). To keep A/V timeline aligned,
+        # we store timestamps and fill silence gaps when writing the wav.
+        self._audio_out_q: queue.Queue[tuple[float, bytes]] = queue.Queue(maxsize=400)
         self._audio_in_q: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._mic_thread: threading.Thread | None = None
+        self._mic_sub: MicSubscription | None = None
+
+        # Monotonic start time for A/V timeline alignment.
+        self._av_start_mono: float | None = None
+        self._audio_out_cursor_s: float = 0.0
 
         # Start requests are executed in the worker loop to avoid blocking the agent thread.
         self._start_q: queue.Queue[_StartRequest] = queue.Queue(maxsize=1)
@@ -182,6 +190,8 @@ class VideoRecorderWorker:
 
         include_mic = self._mic_enabled and self._mic_supported()
         self._start_failed = ""
+        self._av_start_mono = None
+        self._audio_out_cursor_s = 0.0
         self._logger.info("queue start file=%s mic=%s", file_name, include_mic)
         try:
             # Best-effort: if a previous request is still pending, drop it.
@@ -239,19 +249,24 @@ class VideoRecorderWorker:
         if not self.status().recording:
             return
         try:
-            self._audio_out_q.put_nowait(pcm_bytes)
+            self._audio_out_q.put_nowait((time.monotonic(), pcm_bytes))
         except queue.Full:
             # drop if overloaded
             pass
 
     def _mic_supported(self) -> bool:
         try:
-            import pyaudio  # type: ignore
-
-            _ = pyaudio
+            _ = self._container.force_fetch(MicHub)
             return True
         except Exception:
-            return False
+            # Fallback: PyAudio direct capture if MicHub not available
+            try:
+                import pyaudio  # type: ignore
+
+                _ = pyaudio
+                return True
+            except Exception:
+                return False
 
     def _is_annotated(self) -> bool:
         return self._frame_source in ("annotated", "anno", "overlay")
@@ -390,7 +405,48 @@ class VideoRecorderWorker:
         self._ffmpeg_err_thread.start()
 
         self._video_stdin = self._ffmpeg.stdin
+        # Define A/V timebase at the moment the encoder pipeline is ready.
+        self._av_start_mono = time.monotonic()
+        self._audio_out_cursor_s = 0.0
         self._logger.info("recording started: %s", os.path.join(self._storage.abspath(), file_name))
+
+    def _write_silence_out(self, seconds: float) -> None:
+        if self._audio_out_wav is None:
+            return
+        if seconds <= 0:
+            return
+        frames = int(seconds * self._audio_out_rate)
+        if frames <= 0:
+            return
+        chunk_frames = min(frames, self._audio_out_rate)  # at most 1s per write
+        zero = (b"\x00\x00" * (chunk_frames * self._audio_out_channels))
+        remaining = frames
+        while remaining > 0:
+            n = min(remaining, chunk_frames)
+            if n != chunk_frames:
+                zero = (b"\x00\x00" * (n * self._audio_out_channels))
+            self._audio_out_wav.writeframes(zero)
+            remaining -= n
+
+    def _write_output_audio_event(self, ts_mono: float, pcm: bytes) -> None:
+        if self._audio_out_wav is None:
+            return
+        start = self._av_start_mono
+        if start is None:
+            # Pipeline not ready yet; ignore for alignment.
+            return
+
+        # Clamp events to t>=0 on our timeline.
+        rel_s = max(0.0, ts_mono - start)
+        if rel_s > self._audio_out_cursor_s:
+            self._write_silence_out(rel_s - self._audio_out_cursor_s)
+            self._audio_out_cursor_s = rel_s
+
+        # Write PCM and advance cursor by audio duration.
+        self._audio_out_wav.writeframes(pcm)
+        bytes_per_frame = 2 * self._audio_out_channels
+        frames = len(pcm) // max(1, bytes_per_frame)
+        self._audio_out_cursor_s += frames / float(self._audio_out_rate)
 
     def _close_ffmpeg(self) -> None:
         try:
@@ -579,8 +635,49 @@ class VideoRecorderWorker:
             return
         self._mic_thread.join(timeout=1.0)
         self._mic_thread = None
+        if self._mic_sub is not None:
+            try:
+                self._mic_sub.close()
+            except Exception:
+                pass
+        self._mic_sub = None
 
     def _mic_loop(self) -> None:
+        # Prefer shared MicHub to avoid multi-stream conflicts with ASR/PTT.
+        try:
+            hub = self._container.force_fetch(MicHub)
+        except Exception:
+            hub = None
+
+        if hub is not None:
+            try:
+                # Recorder subscription can drop oldest frames to avoid blocking capture.
+                sub = hub.subscribe(name="video_recorder", max_queue=1200, drop_policy="drop_oldest")
+                self._mic_sub = sub
+                # Align recorder wav metadata to hub format.
+                self._audio_in_rate = sub.rate
+                self._audio_in_channels = sub.channels
+                sub.drain()
+            except Exception as e:
+                self._logger.warning("failed to subscribe MicHub: %s", e)
+                self._mic_sub = None
+
+        if self._mic_sub is not None:
+            while self.status().recording and not self._stop_event.is_set():
+                try:
+                    data = self._mic_sub.get(timeout=0.2)
+                    self._mic_sub.task_done()
+                except queue.Empty:
+                    continue
+                except Exception:
+                    break
+                try:
+                    self._audio_in_q.put_nowait(data)
+                except queue.Full:
+                    pass
+            return
+
+        # Fallback: direct PyAudio capture (may conflict with other users of mic).
         try:
             import pyaudio  # type: ignore
         except Exception as e:
@@ -699,9 +796,9 @@ class VideoRecorderWorker:
             # ---- Audio output (TTS tap) ----
             if self._audio_out_wav is not None:
                 try:
-                    pcm = self._audio_out_q.get_nowait()
+                    ts_mono, pcm = self._audio_out_q.get_nowait()
                     self._audio_out_q.task_done()
-                    self._audio_out_wav.writeframes(pcm)
+                    self._write_output_audio_event(ts_mono, pcm)
                 except queue.Empty:
                     pass
                 except Exception as e:

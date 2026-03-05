@@ -116,6 +116,7 @@ async def _amain(
                 # Switch to waken state, then recording.
                 await _run_ctml(shell, '<reachy_mini:switch_state state_name="waken" />')
                 start_ctml = f'<reachy_mini.video_recorder:start_recording note="{note}"/>'
+                status_ctml = "<reachy_mini.video_recorder:status/>"
                 stop_ctml = "<reachy_mini.video_recorder:stop_recording/>"
 
                 start_results = await _run_ctml(shell, start_ctml)
@@ -127,6 +128,11 @@ async def _amain(
 
                 if sleep_s > 0:
                     await asyncio.sleep(sleep_s)
+
+                status_results = await _run_ctml(shell, status_ctml)
+                print("====> CTML:", status_ctml)
+                for k, v in status_results.items():
+                    print("  result:", k, "->", v)
 
                 stop_results = await _run_ctml(shell, stop_ctml)
                 print("====> CTML:", stop_ctml)

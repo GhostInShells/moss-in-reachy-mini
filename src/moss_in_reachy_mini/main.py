@@ -21,6 +21,7 @@ from framework.agent.main_agent import MainAgent
 from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
+from moss_in_reachy_mini.audio.mic_hub import MicHub, MicHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
@@ -36,6 +37,8 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+logging.getLogger("mosshell").propagate = False
+
 
 class ShellProvider(Provider[MOSSShell]):
 
@@ -72,11 +75,13 @@ def providers(container: IoCContainer):
     # Mini
     container.set(ReachyMini, ReachyMini())
     container.register(FrameHubProvider())
+    # Shared microphone capture (avoid multi-stream conflicts)
+    container.register(MicHubProvider())
     # Agent输入
     container.set(EventBus, QueueEventBus())
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsolePTTChat())
+    container.set(BaseChat, ConsolePTTChat(container=container))
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())
