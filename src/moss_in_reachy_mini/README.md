@@ -21,7 +21,7 @@ python src/moss_in_reachy_mini/main.py
 
 ### 启动UI页面
 ```commandline
-source src/moss_in_reachy_mini/start_memory_ui.sh
+streamlit run src/moss_in_reachy_mini/scripts/memory_ui.py
 ```
 
 ## 视觉

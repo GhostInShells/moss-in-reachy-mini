@@ -155,7 +155,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
         if os.getenv("REACHY_MINI_MODE") == "live":
-            states = [live]
+            states = [asleep, live]
             default_state = LiveState.NAME
 
         return MossInReachyMini(

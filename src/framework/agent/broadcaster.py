@@ -1,10 +1,9 @@
-import asyncio
 import logging
 from typing import Union
 
 from ghoshell_common.contracts import LoggerItf
-from ghoshell_container import Container, Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Message, TextDelta
+from ghoshell_container import Provider, IoCContainer, INSTANCE
+from ghoshell_moss import Message, TextDelta, Text
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
 from framework.abcd.agent import Broadcaster
@@ -12,11 +11,15 @@ from framework.agent.utils import InterruptedContent
 
 
 class LogBroadcaster(Broadcaster):
-    def __init__(self, container: Container):
-        self.logger = container.get(LoggerItf) or logging.getLogger("LogBroadcaster")
+    def __init__(self, logger: LoggerItf=None):
+        self.logger = logger or logging.getLogger("LogBroadcaster")
 
     async def broadcast(self, agent_id: str, message: Union[Message, None]) -> None:
-        self.logger.info(f"Agent(id={agent_id}) broadcast message={message}")
+        self.logger.debug(f"Agent(id={agent_id}) broadcast message={message}")
+        if message.is_done():
+            for content in message.contents:
+                if text := Text.from_content(content):
+                    self.logger.info(f"\n{message.role}: {text.text}\n")
 
     def bootstrap(self) -> None:
         pass

@@ -16,6 +16,7 @@ class QueueEventBus(EventBus):
     async def get(self, timeout: Union[float, None] = None) -> Union[AgentEvent, None]:
         try:
             item = await asyncio.wait_for(self.queue.get(), timeout)
+            self.queue.task_done()
             return item
         except asyncio.TimeoutError:
             return None
