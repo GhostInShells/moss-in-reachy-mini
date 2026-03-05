@@ -33,7 +33,6 @@ from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
-from moss_in_reachy_mini.video.recorder_channel import VideoRecorder
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -47,13 +46,11 @@ class ShellProvider(Provider[MOSSShell]):
         mini = con.force_fetch(ReachyMini)
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
-        recorder = con.force_fetch(VideoRecorderWorker)
         speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
         shell = new_shell(container=con, speech=speech)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
-            VideoRecorder(recorder).as_channel(),
             # zmq_hub.as_channel()
         )
         return shell
@@ -179,6 +176,7 @@ def get_speech(
 
 def main():
     import pathlib
+
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
     current_dir = pathlib.Path(__file__).parent
     root_dir = str(current_dir.parent.joinpath("moss_zmq_channels").absolute())

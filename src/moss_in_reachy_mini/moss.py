@@ -13,7 +13,18 @@ from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
-from state import AsleepState, WakenState, BoringState, MiniStateHook, InitialState, LiveState
+from moss_in_reachy_mini.state.abcd import MiniStateHook, InitialState
+from moss_in_reachy_mini.state.asleep import AsleepState
+from moss_in_reachy_mini.state.boring import BoringState
+from moss_in_reachy_mini.state.waken import WakenState
+
+try:
+    from moss_in_reachy_mini.state.live import LiveState
+except Exception:  # optional dependency (douyin_live extras)
+    LiveState = None  # type: ignore[assignment]
+
+from moss_in_reachy_mini.video.recorder_channel import VideoRecorder
+from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
 
 
 class StateLog:
@@ -31,6 +42,7 @@ class MossInReachyMini:
             appearance_img: Image.Image,
             structure_img: Image.Image,
             logger: LoggerItf = None,
+            recorder: VideoRecorderWorker | None = None,
     ):
         self.mini = mini
         self.logger = logger or logging.getLogger(__name__)
@@ -44,6 +56,8 @@ class MossInReachyMini:
         # img
         self.appearance_img = appearance_img
         self.structure_img = structure_img
+
+        self._recorder = recorder
 
         self._bootstrapped = asyncio.Event()
 
@@ -112,6 +126,12 @@ class MossInReachyMini:
             chan.build.with_available()(lambda _state=state: self._state.NAME == _state.NAME)
             channels.append(chan)
 
+        if self._recorder is not None:
+            recorder_chan = VideoRecorder(self._recorder).as_channel()
+            # recorder_chan.build.with_available()(lambda: self._state.NAME != AsleepState.NAME)
+            recorder_chan.build.with_available()(lambda: True)
+            channels.append(recorder_chan)
+
         reachy_mini.import_channels(
             *channels,
         )
@@ -143,24 +163,43 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         asleep = con.force_fetch(AsleepState)
         waken = con.force_fetch(WakenState)
         boring = con.force_fetch(BoringState)
-        live = con.force_fetch(LiveState)
+        live = None
+        if LiveState is not None:
+            try:
+                live = con.force_fetch(LiveState)
+            except Exception:
+                live = None
         logger = con.get(LoggerItf)
+
+        recorder = None
+        try:
+            recorder = con.get(VideoRecorderWorker)
+        except Exception:
+            recorder = None
 
         ws = con.force_fetch(Workspace)
         appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
-        states = [asleep, waken, boring, live]
+        states = [asleep, waken, boring]
+        if live is not None:
+            states.append(live)
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
         if os.getenv("REACHY_MINI_MODE") == "live":
+            if live is None:
+                raise RuntimeError(
+                    "REACHY_MINI_MODE=live requires optional dependencies. "
+                    "Please install project with 'douyin_live' extras."
+                )
             states = [live]
-            default_state = LiveState.NAME
+            default_state = LiveState.NAME  # type: ignore[union-attr]
 
         return MossInReachyMini(
             mini, *states,
             default_state=default_state,
             appearance_img=appearance_img, structure_img=structure_img,
             logger=logger,
+            recorder=recorder,
         )

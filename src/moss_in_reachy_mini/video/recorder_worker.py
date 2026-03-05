@@ -12,12 +12,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-from ghoshell_common.contracts import FileStorage, LoggerItf, Workspace
+from ghoshell_common.contracts import FileStorage, Workspace
 from ghoshell_container import Container, IoCContainer, Provider
 from reachy_mini import ReachyMini
 
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.frame_hub import FrameHub
+from moss_in_reachy_mini.video.recorder_debug_logger import get_video_recorder_logger
 from moss_in_reachy_mini.video.settings import VideoRecordSettings
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,12 @@ class RecordingResult:
     started_at_ts: int
     stopped_at_ts: int
     meta_path: str = ""
+
+
+@dataclass
+class _StartRequest:
+    file_name: str
+    include_mic: bool
 
 
 class VideoRecorderWorker:
@@ -88,7 +95,8 @@ class VideoRecorderWorker:
         self._keep_tmp = bool(keep_tmp)
 
         self._container = Container(parent=container)
-        self._logger = self._container.get(LoggerItf) or logger
+        # Use a dedicated file logger to avoid being swallowed by Rich/Prompt console UI.
+        self._logger = get_video_recorder_logger(storage.abspath())
 
         self._recording_lock = threading.Lock()
         self._info = RecordingInfo(recording=False)
@@ -112,6 +120,10 @@ class VideoRecorderWorker:
         self._audio_in_q: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._mic_thread: threading.Thread | None = None
 
+        # Start requests are executed in the worker loop to avoid blocking the agent thread.
+        self._start_q: queue.Queue[_StartRequest] = queue.Queue(maxsize=1)
+        self._start_failed: str = ""
+
         # Resolve output audio format from mini
         self._audio_out_rate = int(self._mini.media.get_output_audio_samplerate())
         self._audio_out_channels = int(self._mini.media.get_output_channels())
@@ -126,22 +138,24 @@ class VideoRecorderWorker:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        self._logger.debug("VideoRecorderWorker started")
+        self._logger.info("worker thread started")
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=2.0)
-        self._logger.debug("VideoRecorderWorker stopped")
+        self._logger.info("worker thread stopped")
 
     def status(self) -> RecordingInfo:
         with self._recording_lock:
             return RecordingInfo(**self._info.__dict__)
 
     def start_recording(self, note: str = "") -> str:
+        self._logger.info("start_recording note=%r", note)
         self.start()
         with self._recording_lock:
             if self._info.recording:
+                self._logger.info("already recording: %s", self._info.file_name)
                 return self._info.file_name
 
             now = time.time()
@@ -167,27 +181,44 @@ class VideoRecorderWorker:
                 break
 
         include_mic = self._mic_enabled and self._mic_supported()
+        self._start_failed = ""
+        self._logger.info("queue start file=%s mic=%s", file_name, include_mic)
         try:
-            self._open_ffmpeg(file_name, include_mic=include_mic)
-            # Fail fast if ffmpeg exits immediately (common when pipes are misconfigured).
-            time.sleep(0.05)
-            if self._ffmpeg is not None and self._ffmpeg.poll() is not None:
-                self._close_ffmpeg()
-            if include_mic:
-                self._start_mic()
-        except Exception:
+            # Best-effort: if a previous request is still pending, drop it.
+            while not self._start_q.empty():
+                try:
+                    self._start_q.get_nowait()
+                except queue.Empty:
+                    break
+            self._start_q.put_nowait(_StartRequest(file_name=file_name, include_mic=include_mic))
+        except queue.Full:
+            # Shouldn't happen due to draining above; fail closed.
+            self._start_failed = "start queue full"
             with self._recording_lock:
                 self._info = RecordingInfo(recording=False)
-            raise
+            raise RuntimeError("failed to start recording: start queue full")
+
         return file_name
 
     def stop_recording(self) -> str:
+        self._logger.info("stop_recording")
         with self._recording_lock:
             if not self._info.recording:
+                self._logger.info("stop_recording: not recording")
                 return ""
             file_name = self._info.file_name
             started_at = self._info.started_at
             self._info = RecordingInfo(recording=False)
+
+        # If start hasn't actually completed yet, cancel pending request and exit.
+        if self._ffmpeg is None and self._rec_dir is None:
+            try:
+                while not self._start_q.empty():
+                    self._start_q.get_nowait()
+            except Exception:
+                pass
+            self._logger.warning("stop_recording: recording not fully started")
+            return ""
 
         self._stop_mic()
         out_path = os.path.join(self._storage.abspath(), file_name)
@@ -197,6 +228,9 @@ class VideoRecorderWorker:
 
     def last_result(self) -> RecordingResult | None:
         return self._last_result
+
+    def last_error(self) -> str:
+        return self._start_failed
 
     def push_output_audio(self, pcm_bytes: bytes) -> None:
         """Tap point for robot output audio (int16 PCM interleaved)."""
@@ -265,13 +299,9 @@ class VideoRecorderWorker:
         else:
             self._audio_in_wav = None
 
-        # Wait for first frame to know width/height
-        # Ensure media pipeline has started producing frames.
-        try:
-            _ = self._mini.media.get_frame()
-        except Exception as e:
-            self._logger.warning("Failed to get first frame from camera: %s", e)
-
+        # Wait for first frame to know width/height.
+        # IMPORTANT: do NOT call `mini.media.get_frame()` here, as the camera capture
+        # loop should be centralized in FrameHub to avoid concurrent camera access.
         start_at = time.time()
         frame = None
         while frame is None and time.time() - start_at < 5.0:
@@ -281,7 +311,11 @@ class VideoRecorderWorker:
         if frame is None:
             raise RuntimeError("no camera frame available for recording")
 
+        waited_s = time.time() - start_at
+        self._logger.info("got first frame after %.2fs", waited_s)
+
         height, width = frame.shape[0], frame.shape[1]
+        self._logger.info("frame size: %dx%d fps=%s", width, height, self._fps)
 
         cmd = [
             "ffmpeg",
@@ -338,6 +372,8 @@ class VideoRecorderWorker:
             ]
         )
 
+        self._logger.info("ffmpeg cmd: %s", " ".join(cmd))
+
         try:
             self._ffmpeg = subprocess.Popen(
                 cmd,
@@ -354,14 +390,14 @@ class VideoRecorderWorker:
         self._ffmpeg_err_thread.start()
 
         self._video_stdin = self._ffmpeg.stdin
-        self._logger.info("Recording started: %s", os.path.join(self._storage.abspath(), file_name))
+        self._logger.info("recording started: %s", os.path.join(self._storage.abspath(), file_name))
 
     def _close_ffmpeg(self) -> None:
         try:
             if self._video_stdin:
                 self._video_stdin.close()
         except Exception as e:
-            self._logger.warning("Failed to close video stdin: %s", e)
+            self._logger.warning("failed to close video stdin: %s", e)
         self._video_stdin = None
 
         if self._ffmpeg is None:
@@ -392,7 +428,7 @@ class VideoRecorderWorker:
                 if w is not None:
                     w.close()
             except Exception as e:
-                self._logger.warning("Failed to close audio writer: %s", e)
+                self._logger.warning("failed to close audio writer: %s", e)
         self._audio_out_wav = None
         self._audio_in_wav = None
 
@@ -522,7 +558,7 @@ class VideoRecorderWorker:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             result.meta_path = meta_path
         except Exception as e:
-            self._logger.warning("Failed to write sidecar json: %s", e)
+            self._logger.warning("failed to write sidecar json: %s", e)
 
     def _read_ffmpeg_stderr(self) -> None:
         if self._ffmpeg is None or self._ffmpeg.stderr is None:
@@ -567,7 +603,7 @@ class VideoRecorderWorker:
             except Exception:
                 stream = None
         if stream is None:
-            self._logger.warning("Failed to open microphone input")
+            self._logger.warning("failed to open microphone input")
             pa.terminate()
             return
 
@@ -583,7 +619,7 @@ class VideoRecorderWorker:
                 stream.stop_stream()
                 stream.close()
             except Exception as e:
-                self._logger.warning("Failed to close mic stream: %s", e)
+                self._logger.warning("failed to close mic stream: %s", e)
             pa.terminate()
 
     def _loop(self) -> None:
@@ -591,14 +627,64 @@ class VideoRecorderWorker:
 
         last_frame_at = 0.0
         frame_interval = 1.0 / self._fps
+        last_heartbeat_at = 0.0
 
         while not self._stop_event.is_set():
             if not self.status().recording:
                 time.sleep(0.05)
                 continue
 
-            # ---- Video ----
+            # Lazily start ffmpeg inside worker thread so agent command won't block.
+            if self._ffmpeg is None and self._rec_dir is None:
+                try:
+                    req = self._start_q.get_nowait()
+                except queue.Empty:
+                    req = None
+                if req is not None:
+                    try:
+                        self._logger.info("background starting ffmpeg: %s", req.file_name)
+                        self._open_ffmpeg(req.file_name, include_mic=req.include_mic)
+                        # Fail fast if ffmpeg exits immediately (common when pipes are misconfigured).
+                        time.sleep(0.05)
+                        if self._ffmpeg is not None and self._ffmpeg.poll() is not None:
+                            self._close_ffmpeg()
+                        if req.include_mic:
+                            self._start_mic()
+                    except Exception as e:
+                        self._start_failed = str(e)
+                        self._logger.exception("failed to start")
+                        with self._recording_lock:
+                            self._info = RecordingInfo(recording=False)
+                        # Best-effort cleanup
+                        try:
+                            self._close_audio_writers()
+                        except Exception:
+                            pass
+                        try:
+                            if self._rec_dir and not self._keep_tmp:
+                                shutil.rmtree(self._rec_dir, ignore_errors=True)
+                        except Exception:
+                            pass
+                        self._rec_dir = None
+                        self._tmp_video_path = None
+                        time.sleep(0.1)
+                        continue
+
             now = time.time()
+            if now - last_heartbeat_at >= 2.0:
+                try:
+                    info = self.status()
+                    self._logger.debug(
+                        "heartbeat file=%s out_q=%s in_q=%s",
+                        info.file_name,
+                        self._audio_out_q.qsize(),
+                        self._audio_in_q.qsize(),
+                    )
+                except Exception:
+                    pass
+                last_heartbeat_at = now
+
+            # ---- Video ----
             if now - last_frame_at >= frame_interval:
                 frame = self._get_latest_video_frame()
                 if frame is not None and self._video_stdin is not None:
@@ -607,7 +693,7 @@ class VideoRecorderWorker:
                     except BlockingIOError:
                         pass
                     except Exception as e:
-                        self._logger.warning("Video write failed: %s", e)
+                        self._logger.warning("video write failed: %s", e)
                 last_frame_at = now
 
             # ---- Audio output (TTS tap) ----
@@ -619,7 +705,7 @@ class VideoRecorderWorker:
                 except queue.Empty:
                     pass
                 except Exception as e:
-                    self._logger.warning("Audio-out write failed: %s", e)
+                    self._logger.warning("audio-out write failed: %s", e)
 
             # ---- Audio input (mic) ----
             if self._audio_in_wav is not None:
@@ -630,7 +716,7 @@ class VideoRecorderWorker:
                 except queue.Empty:
                     pass
                 except Exception as e:
-                    self._logger.warning("Audio-in write failed: %s", e)
+                    self._logger.warning("audio-in write failed: %s", e)
 
             time.sleep(0.005)
 

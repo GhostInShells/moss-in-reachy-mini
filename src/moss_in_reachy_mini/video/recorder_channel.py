@@ -1,3 +1,4 @@
+import asyncio
 import time
 
 from ghoshell_moss import Message, PyChannel, Text
@@ -11,17 +12,18 @@ class VideoRecorder:
 
     async def start_recording(self, note: str = "") -> str:
         """Start background recording (camera + mic + robot output audio)."""
-        return self._worker.start_recording(note=note)
+        # Run in a worker thread to avoid blocking the agent event loop.
+        return await asyncio.to_thread(self._worker.start_recording, note)
 
     async def stop_recording(self) -> str:
         """Stop recording and return saved file absolute path."""
-        return self._worker.stop_recording()
+        return await asyncio.to_thread(self._worker.stop_recording)
 
     async def status(self) -> str:
         """Return a human readable recording status."""
-        info = self._worker.status()
+        info = await asyncio.to_thread(self._worker.status)
         if not info.recording:
-            last = self._worker.last_result()
+            last = await asyncio.to_thread(self._worker.last_result)
             if last is None:
                 return "not recording"
             return (
@@ -52,9 +54,10 @@ class VideoRecorder:
 
     def as_channel(self) -> PyChannel:
         chan = PyChannel(
+            # Child channel name (full path will become `reachy_mini.video_recorder`).
             name="video_recorder",
             description="Background video recorder (camera + mic + robot output audio).",
-            block=True,
+            block=False,
         )
 
         chan.build.command()(self.start_recording)

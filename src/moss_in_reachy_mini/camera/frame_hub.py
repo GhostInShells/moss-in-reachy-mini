@@ -4,7 +4,7 @@ import time
 from typing import Optional
 
 import numpy as np
-from ghoshell_container import Provider, IoCContainer, INSTANCE
+from ghoshell_container import IoCContainer, Provider
 from reachy_mini import ReachyMini
 
 logger = logging.getLogger(__name__)
@@ -60,8 +60,8 @@ class FrameHub:
             except RuntimeError as e:
                 # Common when camera is not opened yet; keep looping quietly.
                 logger.debug("FrameHub camera not ready: %s", e)
-            except Exception as e:
-                logger.error("FrameHub error: %s", e)
+            except Exception:
+                logger.exception("FrameHub error")
                 time.sleep(0.1)
 
 
@@ -69,6 +69,6 @@ class FrameHubProvider(Provider[FrameHub]):
     def singleton(self) -> bool:
         return True
 
-    def factory(self, con: IoCContainer) -> INSTANCE:
+    def factory(self, con: IoCContainer) -> FrameHub:
         mini = con.force_fetch(ReachyMini)
         return FrameHub(mini)
