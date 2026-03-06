@@ -196,16 +196,15 @@ wheels = [
 
 [[package]]
 name = "anyio"
-version = "4.10.0"
+version = "4.12.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "idna" },
-    { name = "sniffio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f1/b4/636b3b65173d3ce9a38ef5f0522789614e590dab6a8d505340a4efe4c567/anyio-4.10.0.tar.gz", hash = "sha256:3f3fae35c96039744587aa5b8371e7e8e603c0702999535961dd336026973ba6", size = 213252, upload-time = "2025-08-04T08:54:26.451Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/f0/5eb65b2bb0d09ac6776f2eb54adee6abe8228ea05b20a5ad0e4945de8aac/anyio-4.12.1.tar.gz", hash = "sha256:41cfcc3a4c85d3f05c932da7c26d0201ac36f72abd4435ba90d0464a3ffed703", size = 228685, upload-time = "2026-01-06T11:45:21.246Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/12/e5e0282d673bb9746bacfb6e2dba8719989d3660cdb2ea79aee9a9651afb/anyio-4.10.0-py3-none-any.whl", hash = "sha256:60e474ac86736bbfd6f210f7a61218939c318f43f9972497381f1c5e930ed3d1", size = 107213, upload-time = "2025-08-04T08:54:24.882Z" },
+    { url = "https://files.pythonhosted.org/packages/38/0e/27be9fdef66e72d64c0cdc3cc2823101b80585f8119b5c112c2e8f5f7dab/anyio-4.12.1-py3-none-any.whl", hash = "sha256:d405828884fc140aa80a3c667b8beed277f1dfedec42ba031bd6ac3db606ab6c", size = 113592, upload-time = "2026-01-06T11:45:19.497Z" },
 ]
 
 [[package]]
@@ -798,17 +797,17 @@ wheels = [
 [[package]]
 name = "ghoshell-moss"
 version = "0.1.0a0"
-source = { registry = "https://pypi.org/simple" }
+source = { path = "dependencies/ghoshell_moss-0.1.0a0-py3-none-any.whl" }
 dependencies = [
+    { name = "anyio" },
     { name = "ghoshell-common" },
     { name = "ghoshell-container" },
     { name = "openai" },
     { name = "pillow" },
     { name = "python-frontmatter" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/26/79/3404c73add343f342e9a2fa9485a71155527182f764008afe33720daeaed/ghoshell_moss-0.1.0a0.tar.gz", hash = "sha256:378972dfc1e0a823909c5b251a6ddbee2b92585c97aac3f973d298ba7ec4b240", size = 202517, upload-time = "2026-02-20T13:42:14.016Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/82/0d/c4aa8fe73b990ceeabdb7ed767daaa34a1318b7c483123878304fa6018aa/ghoshell_moss-0.1.0a0-py3-none-any.whl", hash = "sha256:6bec4c5230cb104768ec288873b8dd2fd7d92f0c735d63907ee0bb32b49e3b80", size = 227876, upload-time = "2026-02-20T13:42:11.273Z" },
+    { filename = "ghoshell_moss-0.1.0a0-py3-none-any.whl", hash = "sha256:986a021b76f5c79ad3c9183766e72b6ab98c65b6dba2ecb41f4f5c413bb76075" },
 ]
 
 [package.optional-dependencies]
@@ -837,6 +836,40 @@ zmq = [
     { name = "psutil" },
     { name = "zmq" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiozmq", marker = "extra == 'zmq'", specifier = ">=1.0.0" },
+    { name = "anyio", specifier = ">=4.12.1" },
+    { name = "fakeredis", marker = "extra == 'redis'", specifier = ">=2.32.1" },
+    { name = "ghoshell-common", specifier = ">=0.5.0" },
+    { name = "ghoshell-container", specifier = ">=0.3.1" },
+    { name = "javascript", marker = "extra == 'contrib'", specifier = ">=1!1.2.6" },
+    { name = "litellm", marker = "extra == 'contrib'", specifier = ">=1.78.5" },
+    { name = "live2d-py", marker = "extra == 'contrib'", specifier = ">=0.5.4,<0.6.0" },
+    { name = "loadenv", marker = "extra == 'contrib'", specifier = ">=0.1.1" },
+    { name = "mcp", extras = ["cli"], marker = "extra == 'mcp'", specifier = ">=1.17.0" },
+    { name = "mermaid-py", marker = "extra == 'contrib'", specifier = ">=0.8.1" },
+    { name = "mss", marker = "extra == 'contrib'", specifier = ">=10.1.0" },
+    { name = "openai", specifier = ">=2.8.1" },
+    { name = "opencv-python", marker = "extra == 'contrib'", specifier = ">=4.13.0.92" },
+    { name = "pillow", specifier = ">=12.1.0" },
+    { name = "prompt-toolkit", marker = "extra == 'contrib'", specifier = ">=3.0.52" },
+    { name = "psutil", marker = "extra == 'zmq'", specifier = ">=7.2.1" },
+    { name = "pulsectl", marker = "extra == 'audio'", specifier = ">=24.12.0" },
+    { name = "pyaudio", marker = "extra == 'audio'", specifier = ">=0.2.14" },
+    { name = "pygame", marker = "extra == 'contrib'", specifier = ">=2.6.1" },
+    { name = "pymupdf", marker = "extra == 'contrib'", specifier = ">=1.27.1" },
+    { name = "pyqt6", marker = "extra == 'contrib'", specifier = ">=6.10.2" },
+    { name = "python-frontmatter", specifier = ">=1.1.0" },
+    { name = "python-mpv-jsonipc", marker = "extra == 'contrib'", specifier = ">=1.2.1" },
+    { name = "redis", marker = "extra == 'redis'", specifier = ">=7.0.1" },
+    { name = "rich", marker = "extra == 'contrib'", specifier = ">=14.2.0" },
+    { name = "scipy", marker = "extra == 'audio'", specifier = ">=1.15.3" },
+    { name = "websockets", marker = "extra == 'wss'", specifier = ">=15.0.1" },
+    { name = "zmq", marker = "extra == 'zmq'", specifier = ">=0.0.0" },
+]
+provides-extras = ["zmq", "mcp", "wss", "redis", "audio", "contrib"]
 
 [[package]]
 name = "gitdb"
@@ -1633,8 +1666,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "betterproto", marker = "extra == 'douyin-live'", specifier = "==2.0.0b6" },
-    { name = "ghoshell-moss", specifier = "==0.1.0a0" },
-    { name = "ghoshell-moss", extras = ["audio", "contrib", "zmq"] },
+    { name = "ghoshell-moss", path = "dependencies/ghoshell_moss-0.1.0a0-py3-none-any.whl" },
+    { name = "ghoshell-moss", extras = ["audio", "contrib", "zmq"], path = "dependencies/ghoshell_moss-0.1.0a0-py3-none-any.whl" },
     { name = "insightface", specifier = "==0.7.3" },
     { name = "mini-racer", marker = "extra == 'douyin-live'", specifier = "==0.12.4" },
     { name = "onnxruntime", specifier = "==1.24.2" },

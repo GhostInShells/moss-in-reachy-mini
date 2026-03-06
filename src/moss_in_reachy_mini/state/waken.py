@@ -123,7 +123,7 @@ class WakenState(MiniStateHook):
         return [msg] + vision_message + head_msg + antenna_msg
 
     def as_channel(self):
-        waken_chan = PyChannel(name=WakenState.NAME, description=f"current state is waken", block=True)
+        waken_chan = PyChannel(name=WakenState.NAME, description=f"current state is waken", blocking=True)
         waken_chan.build.command(doc=self.body.dance_docstring)(self.body.dance)
         waken_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         waken_chan.build.command(name="head_move")(self.head.move)
@@ -137,7 +137,7 @@ class WakenState(MiniStateHook):
         waken_chan.build.command()(self.antennas.set_idle_flapping)
         waken_chan.build.command()(self.antennas.enable_flapping)
         waken_chan.build.command()(self.vision.look)
-        waken_chan.build.with_context_messages(self.context_messages)
+        waken_chan.build.context_messages(self.context_messages)
         return waken_chan
 
 Proactive_Prompts = [

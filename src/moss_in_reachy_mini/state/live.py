@@ -95,7 +95,7 @@ class LiveState(MiniStateHook):
 
     def as_channel(self):
         chan = PyChannel(name="douyin_live", description="当前状态是直播状态，不可以切换为其他状态")
-        chan.build.with_context_messages(self.context_messages)
+        chan.build.context_messages(self.context_messages)
         chan.build.command(doc=self.body.dance_docstring)(self.body.dance)
         chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         chan.build.command(name="head_move")(self.head.move)

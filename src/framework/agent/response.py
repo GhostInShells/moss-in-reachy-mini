@@ -1,23 +1,18 @@
 import asyncio
 import json
 import logging
-from typing import List, Optional, AsyncIterator, AsyncIterable
+from typing import List, Optional, AsyncIterator, AsyncIterable, Self
 
 import litellm
 from ghoshell_common.contracts import LoggerItf
-from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel, Addition
+from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel, Addition, Delta, \
+    DeltaModel, Interpretation
 from ghoshell_moss.message.adapters.openai_adapter import parse_messages_to_params
 from pydantic import Field
 
-from framework.abcd.agent import Response, ModelConf
-from framework.abcd.agent_event import UserInputAgentEvent, AgentEventModel
+from framework.abcd.agent import Response, ModelConf, EventBus
+from framework.abcd.agent_event import UserInputAgentEvent, AgentEventModel, ReactAgentEvent
 
-
-class CTMLResult(ContentModel):
-    CONTENT_TYPE = "function_call"
-
-    ctml: str = Field(description="ctml")
-    result: str = Field(description="ctml result. ")
 
 class AgentEventAddition(Addition):
 
@@ -38,12 +33,14 @@ class MOSShellResponse(Response):
             inputs: List[Message],
             model: Optional[ModelConf] = None,
             prompts: List[Message] = None,
+            eventbus: EventBus = None,
             logger: Optional[LoggerItf] = None,
     ):
         self.shell = shell
         self.model = model
         self.prompts = prompts
         self.inputs = inputs
+        self.eventbus = eventbus
 
         self._logger = logger or logging.getLogger()
         self.event = event
@@ -81,18 +78,12 @@ class MOSShellResponse(Response):
                     reasoning = False
 
                     # 构建请求消息列表
-                    messages = []
-                    moss_instruction = interpreter.moss_instruction()
-                    if moss_instruction:
-                        messages.append({"role": "system", "content": moss_instruction})
+                    merged = interpreter.merge_messages(
+                        self.prompts,
+                        self.inputted()
+                    )
 
-                    # 拼接各类消息
-                    messages.extend(parse_messages_to_params(self.prompts))
-                    context = interpreter.context_messages()
-                    if context:
-                        messages.extend(parse_messages_to_params(context))
-                    messages.extend(parse_messages_to_params(self.inputted()))
-
+                    messages = parse_messages_to_params(merged)
                     with open("temp.json", "w", encoding="utf-8") as f:
                         json.dump(messages, f, ensure_ascii=False, indent=4)
 
@@ -139,8 +130,6 @@ class MOSShellResponse(Response):
                         content = delta.content
                         if not content:
                             continue
-                        interpreter.feed(content)
-
                         # 生成间包
                         delta_msg = Message(
                             meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
@@ -149,27 +138,33 @@ class MOSShellResponse(Response):
                         ).as_delta(TextDelta(content=content))
                         self._buffered.append(delta_msg)
                         yield delta_msg
+                        interpreter.feed(content)
 
-                    # 处理完成后的尾包（未中断时）
-                    if not self._interrupted.is_set():
-                        interpreter.commit()
-                        results = await interpreter.results()
-                        result_contents = [
-                            CTMLResult(ctml=_ctml, result=_result)
-                            for _ctml, _result in results.items()
-                        ]
-
-                        completed_msg = Message(
-                            meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
-                        ).with_content(
-                            Text(text=interpreter.executed_tokens()),
-                            *result_contents
-                        ).with_additions(
-                            self._event_addition,
-                        ).as_completed()
-                        self._buffered.append(completed_msg)
-                        yield completed_msg
-
+                    # 解释器完成
+                    interpreter.commit()
+                    interpretation = await interpreter.wait_stopped()
+                    # 处理尾包
+                    completed_msg = Message(
+                        meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
+                    ).with_content(
+                        Text(text=interpreter.executed_tokens()),
+                    ).with_additions(
+                        self._event_addition,
+                    ).as_completed()
+                    self._buffered.append(completed_msg)
+                    yield completed_msg
+                    # 需要被客户端看到的消息
+                    for message in interpretation.output_messages():
+                        self._buffered.append(message)
+                        yield message
+                    # 处理观察消息
+                    for message in interpretation.observe_messages():
+                        self._buffered.append(message)
+                    if interpretation.observe:
+                        await self.eventbus.put(ReactAgentEvent(
+                            messages=interpretation.observe_messages(),
+                            priority=1,  # 高优事件
+                        ).to_agent_event())
             except asyncio.CancelledError:
                 self.logger.info("Message stream generator cancelled")
             except Exception as e:
@@ -230,10 +225,12 @@ class CTMLResponse(Response):
             *,
             ctml: str,
             event: AgentEventModel,
+            eventbus: EventBus = None,
             logger: Optional[LoggerItf] = None,
     ):
         self.shell = shell
         self.ctml = ctml
+        self.eventbus = eventbus
         self.inputs = []
 
         self._logger = logger or logging.getLogger()
@@ -265,24 +262,31 @@ class CTMLResponse(Response):
             try:
                 async with self.shell.interpreter_in_ctx() as interpreter:
                     interpreter.feed(self.ctml)
+                    # 解释器完成
                     interpreter.commit()
-                    results = await interpreter.results()
-                    result_contents = [
-                        CTMLResult(ctml=_ctml, result=_result)
-                        for _ctml, _result in results.items()
-                    ]
-
+                    interpretation = await interpreter.wait_stopped()
+                    # 处理尾包
                     completed_msg = Message(
                         meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
                     ).with_content(
                         Text(text=interpreter.executed_tokens()),
-                        *result_contents
                     ).with_additions(
                         self._event_addition,
                     ).as_completed()
                     self._buffered.append(completed_msg)
                     yield completed_msg
-
+                    # 需要被客户端看到的消息
+                    for message in interpretation.output_messages():
+                        self._buffered.append(message)
+                        yield message
+                    # 处理观察消息
+                    if interpretation.observe:
+                        for message in interpretation.observe_messages():
+                            self._buffered.append(message)
+                        await self.eventbus.put(ReactAgentEvent(
+                            messages=interpretation.observe_messages(),
+                            priority=1,  # 高优事件
+                        ).to_agent_event())
             except asyncio.CancelledError:
                 self.logger.info("Message stream generator cancelled")
             except Exception as e:

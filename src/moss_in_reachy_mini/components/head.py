@@ -162,9 +162,9 @@ class Head:
                 self._breathing_task = None
 
     def as_channel(self) -> PyChannel:
-        head = PyChannel(name="head", block=True)
+        head = PyChannel(name="head", blocking=True)
 
-        head.build.with_context_messages(self.context_messages)
+        head.build.context_messages(self.context_messages)
         head.build.on_policy_run(self.on_policy_run)
         head.build.on_policy_pause(self.on_policy_pause)
 

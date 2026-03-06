@@ -5,7 +5,8 @@ import os
 from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import Container, get_container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Speech, MOSSShell
-from ghoshell_moss import new_shell
+from ghoshell_moss import new_ctml_shell
+from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent import ConsoleChat
@@ -33,7 +34,7 @@ from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 class ShellProvider(Provider[MOSSShell]):
 
@@ -44,12 +45,11 @@ class ShellProvider(Provider[MOSSShell]):
         mini = con.force_fetch(ReachyMini)
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
-        speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
-        shell = new_shell(container=con, speech=speech)
+        shell = new_ctml_shell(container=con)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
-            # zmq_hub.as_channel()
+            get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
         )
         return shell
 
@@ -137,17 +137,11 @@ async def run_agent(container, zmq_hub):
 
 def get_speech(
     mini: ReachyMini,
-    container: Container | None = None,
     default_speaker: str | None = None,
-) -> Speech:
-    from ghoshell_moss.speech import TTSSpeech
-    from ghoshell_moss.speech.mock import MockSpeech
+    logger_: LoggerItf=None
+) -> SpeechChannel:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
-    container = container or get_container()
-    use_voice = os.environ.get("USE_VOICE_SPEECH", "no") == "yes"
-    if not use_voice:
-        return MockSpeech()
     app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
     app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
     resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")
@@ -164,7 +158,13 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return TTSSpeech(player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf)), tts=VolcengineTTS(conf=tts_conf), logger=container.get(LoggerItf))
+
+    return TTSSpeechChannel(
+        name="speech",
+        description="你要用这个通道说话才会被听到.",
+        player=ReachyMiniStreamPlayer(mini, logger=logger_),
+        tts=VolcengineTTS(conf=tts_conf),
+    )
 
 
 def main():

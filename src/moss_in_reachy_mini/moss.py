@@ -97,19 +97,19 @@ class MossInReachyMini:
         self.logger.info("MossInReachyMini.as_channel()...")
         assert self._bootstrapped.is_set()
 
-        reachy_mini = PyChannel(name="reachy_mini", block=True)
+        reachy_mini = PyChannel(name="reachy_mini", blocking=True)
         reachy_mini.build.command(doc=f"""
         切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
 
         :param state_name: 目标状态名称
         :param force: 务必使用默认值False，任何情况都不能设置为True
         """)(self.switch_state)
-        reachy_mini.build.with_context_messages(self.context_messages)
+        reachy_mini.build.context_messages(self.context_messages)
 
         channels = []
         for name, state in self._state_map.items():
             chan = state.as_channel()
-            chan.build.with_available()(lambda _state=state: self._state.NAME == _state.NAME)
+            chan.build.available(lambda _state=state: self._state.NAME == _state.NAME)
             channels.append(chan)
 
         reachy_mini.import_channels(

@@ -257,7 +257,7 @@ class StorageMemory(Memory):
         memory.build.command()(self.refresh_mood_base)
         memory.build.command()(self.refresh_autobiographical_memory)
         memory.build.command()(self.refresh_summary_memory)
-        memory.build.with_context_messages(self.context_messages)
+        memory.build.context_messages(self.context_messages)
 
         return memory
 

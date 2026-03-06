@@ -165,9 +165,9 @@ class Antennas:
         await self.reset(duration=0.5)
 
     def as_channel(self) -> PyChannel:
-        antennas = PyChannel(name="antennas", description="This channel should only be used when the user explicitly and actively specifies an antenna-related command.", block=True)
+        antennas = PyChannel(name="antennas", description="This channel should only be used when the user explicitly and actively specifies an antenna-related command.", blocking=True)
 
-        antennas.build.with_context_messages(self.context_messages)
+        antennas.build.context_messages(self.context_messages)
         antennas.build.on_policy_run(self.on_policy_run)
         antennas.build.on_policy_pause(self.on_policy_pause)
         antennas.build.command()(self.move)
