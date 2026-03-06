@@ -13,6 +13,9 @@ dependencies = [
     "streamlit>=1.54.0",
     "insightface==0.7.3",
     "onnxruntime==1.24.2",
+    "newsapi-python==0.2.7",
+    "cchardet==2.2.0a2",
+    "trafilatura==2.0.0",
 ]
 
 [project.optional-dependencies]
