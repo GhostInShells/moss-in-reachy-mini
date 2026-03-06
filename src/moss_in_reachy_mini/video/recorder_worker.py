@@ -114,19 +114,23 @@ class VideoRecorderWorker:
         self._tmp_video_path: str | None = None
         self._audio_out_wav: wave.Wave_write | None = None
         self._audio_in_wav: wave.Wave_write | None = None
+        self._audio_in_wav_path: str | None = None
 
         self._last_result: RecordingResult | None = None
 
         # Output audio is event-based (only pushed when TTS plays). To keep A/V timeline aligned,
         # we store timestamps and fill silence gaps when writing the wav.
         self._audio_out_q: queue.Queue[tuple[float, bytes]] = queue.Queue(maxsize=400)
-        self._audio_in_q: queue.Queue[bytes] = queue.Queue(maxsize=200)
+        # Mic audio is also aligned on the same monotonic timeline.
+        self._audio_in_q: queue.Queue[tuple[float, bytes]] = queue.Queue(maxsize=400)
         self._mic_thread: threading.Thread | None = None
         self._mic_sub: MicSubscription | None = None
 
         # Monotonic start time for A/V timeline alignment.
         self._av_start_mono: float | None = None
         self._audio_out_cursor_s: float = 0.0
+        self._audio_in_cursor_s: float = 0.0
+        self._audio_in_format_locked: bool = False
 
         # Start requests are executed in the worker loop to avoid blocking the agent thread.
         self._start_q: queue.Queue[_StartRequest] = queue.Queue(maxsize=1)
@@ -306,13 +310,13 @@ class VideoRecorderWorker:
         self._audio_out_wav.setframerate(self._audio_out_rate)
 
         if include_mic:
-            audio_in_wav_path = os.path.join(rec_dir, "audio_in.wav")
-            self._audio_in_wav = wave.open(audio_in_wav_path, "wb")
-            self._audio_in_wav.setnchannels(self._audio_in_channels)
-            self._audio_in_wav.setsampwidth(2)
-            self._audio_in_wav.setframerate(self._audio_in_rate)
+            # Delay opening until we know the actual mic format (rate/channels).
+            # Otherwise ffmpeg will interpret bytes with wrong sample rate and drift.
+            self._audio_in_wav_path = os.path.join(rec_dir, "audio_in.wav")
+            self._audio_in_wav = None
         else:
             self._audio_in_wav = None
+            self._audio_in_wav_path = None
 
         # Wait for first frame to know width/height.
         # IMPORTANT: do NOT call `mini.media.get_frame()` here, as the camera capture
@@ -408,7 +412,71 @@ class VideoRecorderWorker:
         # Define A/V timebase at the moment the encoder pipeline is ready.
         self._av_start_mono = time.monotonic()
         self._audio_out_cursor_s = 0.0
+        self._audio_in_cursor_s = 0.0
+        self._audio_in_format_locked = False
         self._logger.info("recording started: %s", os.path.join(self._storage.abspath(), file_name))
+
+    def _ensure_audio_in_writer(self) -> None:
+        if self._audio_in_wav is not None:
+            return
+        if self._audio_in_wav_path is None:
+            return
+
+        rate = int(self._audio_in_rate)
+        channels = int(self._audio_in_channels)
+        if rate <= 0:
+            rate = 44100
+        if channels <= 0:
+            channels = 1
+
+        self._audio_in_wav = wave.open(self._audio_in_wav_path, "wb")
+        self._audio_in_wav.setnchannels(channels)
+        self._audio_in_wav.setsampwidth(2)
+        self._audio_in_wav.setframerate(rate)
+        self._audio_in_format_locked = True
+        self._logger.info("mic wav opened rate=%s channels=%s", rate, channels)
+
+    def _write_silence_in(self, seconds: float) -> None:
+        if self._audio_in_wav is None:
+            return
+        if seconds <= 0:
+            return
+        frames = int(seconds * self._audio_in_rate)
+        if frames <= 0:
+            return
+        chunk_frames = min(frames, int(self._audio_in_rate))  # at most 1s per write
+        zero = (b"\x00\x00" * (chunk_frames * self._audio_in_channels))
+        remaining = frames
+        while remaining > 0:
+            n = min(remaining, chunk_frames)
+            if n != chunk_frames:
+                zero = (b"\x00\x00" * (n * self._audio_in_channels))
+            self._audio_in_wav.writeframes(zero)
+            remaining -= n
+
+    def _write_input_audio_event(self, ts_mono: float, pcm: bytes) -> None:
+        if not pcm:
+            return
+        start = self._av_start_mono
+        if start is None:
+            return
+        if self._audio_in_wav_path is None:
+            return
+
+        # Create writer with actual mic format on first chunk.
+        self._ensure_audio_in_writer()
+        if self._audio_in_wav is None:
+            return
+
+        rel_s = max(0.0, ts_mono - start)
+        if rel_s > self._audio_in_cursor_s:
+            self._write_silence_in(rel_s - self._audio_in_cursor_s)
+            self._audio_in_cursor_s = rel_s
+
+        self._audio_in_wav.writeframes(pcm)
+        bytes_per_frame = 2 * max(1, int(self._audio_in_channels))
+        frames = len(pcm) // max(1, bytes_per_frame)
+        self._audio_in_cursor_s += frames / float(max(1, int(self._audio_in_rate)))
 
     def _write_silence_out(self, seconds: float) -> None:
         if self._audio_out_wav is None:
@@ -487,6 +555,7 @@ class VideoRecorderWorker:
                 self._logger.warning("failed to close audio writer: %s", e)
         self._audio_out_wav = None
         self._audio_in_wav = None
+        self._audio_in_wav_path = None
 
     def _finalize_recording(self, out_path: str, *, started_at: float) -> RecordingResult:
         started_at_ts = int(started_at)
@@ -655,8 +724,10 @@ class VideoRecorderWorker:
                 sub = hub.subscribe(name="video_recorder", max_queue=1200, drop_policy="drop_oldest")
                 self._mic_sub = sub
                 # Align recorder wav metadata to hub format.
-                self._audio_in_rate = sub.rate
-                self._audio_in_channels = sub.channels
+                # IMPORTANT: once wav header is written, do not change rate/channels.
+                if not self._audio_in_format_locked:
+                    self._audio_in_rate = sub.rate
+                    self._audio_in_channels = sub.channels
                 sub.drain()
             except Exception as e:
                 self._logger.warning("failed to subscribe MicHub: %s", e)
@@ -672,7 +743,7 @@ class VideoRecorderWorker:
                 except Exception:
                     break
                 try:
-                    self._audio_in_q.put_nowait(data)
+                    self._audio_in_q.put_nowait((time.monotonic(), data))
                 except queue.Full:
                     pass
             return
@@ -695,7 +766,8 @@ class VideoRecorderWorker:
                     input=True,
                     frames_per_buffer=1024,
                 )
-                self._audio_in_rate = rate
+                if not self._audio_in_format_locked:
+                    self._audio_in_rate = rate
                 break
             except Exception:
                 stream = None
@@ -708,7 +780,7 @@ class VideoRecorderWorker:
             while self.status().recording and not self._stop_event.is_set():
                 data = stream.read(1024, exception_on_overflow=False)
                 try:
-                    self._audio_in_q.put_nowait(data)
+                    self._audio_in_q.put_nowait((time.monotonic(), data))
                 except queue.Full:
                     pass
         finally:
@@ -805,11 +877,11 @@ class VideoRecorderWorker:
                     self._logger.warning("audio-out write failed: %s", e)
 
             # ---- Audio input (mic) ----
-            if self._audio_in_wav is not None:
+            if self._audio_in_wav_path is not None:
                 try:
-                    pcm = self._audio_in_q.get_nowait()
+                    ts_mono, pcm = self._audio_in_q.get_nowait()
                     self._audio_in_q.task_done()
-                    self._audio_in_wav.writeframes(pcm)
+                    self._write_input_audio_event(ts_mono, pcm)
                 except queue.Empty:
                     pass
                 except Exception as e:

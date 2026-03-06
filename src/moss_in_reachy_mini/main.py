@@ -6,7 +6,6 @@ from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import Container, get_container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Speech, MOSSShell
 from ghoshell_moss import new_shell
-from ghoshell_moss.core.shell.main_channel import create_main_channel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent import ConsoleChat
@@ -15,6 +14,7 @@ from reachy_mini import ReachyMini
 
 from framework.abcd.agent import AgentConfig, ModelConf, EventBus, Agent
 from framework.abcd.memory import Memory
+from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
@@ -77,6 +77,7 @@ def providers(container: IoCContainer):
     container.register(FrameHubProvider())
     # Shared microphone capture (avoid multi-stream conflicts)
     container.register(MicHubProvider())
+    container.register(AgentFastAPIProvider())
     # Agent输入
     container.set(EventBus, QueueEventBus())
     # Agent输出
@@ -134,8 +135,13 @@ async def run_agent(container, zmq_hub):
         moss = container.force_fetch(MossInReachyMini)
         async with moss:
             agent = container.make(Agent)
-            chat = container.force_fetch(BaseChat)
-            await run_agent_with_chat(agent, chat)
+            chat = container.make(BaseChat)
+            agent_fastapi = container.make(AgentFastAPI)
+
+            await asyncio.gather(
+                run_agent_with_chat(agent, chat),
+                agent_fastapi.run()
+            )
 
 
 def get_speech(

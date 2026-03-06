@@ -17,7 +17,6 @@ from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, 
     UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent
 from framework.abcd.agent_hook import AgentHook, AgentHookState
 from framework.abcd.memory import Memory
-from framework.agent.eventbus import QueueEventBus
 from framework.agent.response import MOSShellResponse, CTMLResult, CTMLResponse
 from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
 
@@ -487,7 +486,7 @@ class AgentProvider(Provider[Agent]):
         return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=self._hook_state)
 
 
-async def main(container: Container) -> None:
+async def main(container: Container, server) -> None:
     agent = MainAgent.new(
         container=container,
         config=AgentConfig(
@@ -504,8 +503,9 @@ async def main(container: Container) -> None:
             instructions=""
         ),
     )
-    chat = container.force_fetch(BaseChat)
-    await run_agent_with_chat(agent, chat)
+
+    await agent.start(auto_shutdown=False)
+    await server.run()
 
 
 if __name__ == '__main__':
@@ -516,6 +516,9 @@ if __name__ == '__main__':
     from ghoshell_moss_contrib.agent import ConsoleChat
     from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
     from ghoshell_moss.speech import MockSpeech
+    from framework.agent.agent_fastapi import AgentFastAPI
+    from framework.agent.eventbus import QueueEventBus
+
     _container = Container()
     _container.set(LoggerItf, logging.getLogger())
     logging.basicConfig(level=logging.INFO)
@@ -527,7 +530,8 @@ if __name__ == '__main__':
         _memory.as_channel()
     )
     _container.set(MOSSShell, _shell)
-    _container.set(EventBus, QueueEventBus())
+    eventbus = QueueEventBus()
+    _container.set(EventBus, eventbus)
     _container.set(BaseChat, ConsoleChat(logger=_container.get(LoggerItf)))
     _container.register(ChatBroadcasterProvider())
-    asyncio.run(main(container=_container))
+    asyncio.run(main(container=_container, server=AgentFastAPI(eventbus=eventbus)))

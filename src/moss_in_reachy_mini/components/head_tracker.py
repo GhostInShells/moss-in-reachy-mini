@@ -71,8 +71,8 @@ class HeadTracker:
                     eventbus = self._container.get(EventBus)
                     if eventbus:
                         await eventbus.put(VisionAgentEvent(
-                            content=f"人脸跟随的目标{self.latest_frame.track_name}已丢失超过{self.track_lost_threshold}秒，请重新根据你的最新视觉进行下一步决策",
-                            # images=[self.latest_frame.to_base64_image()],
+                            content=f"人脸跟随的目标{self.latest_frame.track_name}已丢失超过{self.track_lost_threshold}秒，你需要根据最新的视觉信息判断是换个人看，还是说只是遮挡了面部或者做点动作说点话来主动交互",
+                            images=[self.latest_frame.to_base64_image()],
                             priority=-1,
                             issuer="HeadTracker",
                         ).to_agent_event())

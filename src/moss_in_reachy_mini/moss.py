@@ -193,7 +193,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
                     "REACHY_MINI_MODE=live requires optional dependencies. "
                     "Please install project with 'douyin_live' extras."
                 )
-            states = [live]
+            states = [asleep, live]
             default_state = LiveState.NAME  # type: ignore[union-attr]
 
         return MossInReachyMini(
