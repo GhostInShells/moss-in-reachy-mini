@@ -1,14 +1,13 @@
 import asyncio
-import logging
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import Container, get_container, Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Speech, MOSSShell
-from ghoshell_moss import new_shell
+from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE
+from ghoshell_moss import MOSSShell
+from ghoshell_moss import new_ctml_shell
+from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
-from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
@@ -18,26 +17,23 @@ from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
-from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
+from framework.memory.storage_memory import StorageMemory
+from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
-from moss_in_reachy_mini.audio.mic_hub import MicHub, MicHubProvider
+from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
+from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
+from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
-from moss_in_reachy_mini.utils import load_instructions
-from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
-from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
+from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-logging.getLogger("mosshell").propagate = False
 
 
 class ShellProvider(Provider[MOSSShell]):
@@ -49,12 +45,11 @@ class ShellProvider(Provider[MOSSShell]):
         mini = con.force_fetch(ReachyMini)
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
-        speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
-        shell = new_shell(container=con, speech=speech)
+        shell = new_ctml_shell(container=con)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
-            # zmq_hub.as_channel()
+            get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
         )
         return shell
 
@@ -94,7 +89,9 @@ def providers(container: IoCContainer):
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
-    logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
+    logger = container.get(LoggerItf)
+    if logger:
+        logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
     storage = ws.runtime().sub_storage(storage_name)
     memory = StorageMemory(storage)
     container.set(StorageMemory, memory)
@@ -103,7 +100,7 @@ def providers(container: IoCContainer):
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md"],
+        files=["ctml_enrich.md", "speech.md"],
         storage_name="reachy_mini_instructions",
     )
     container.register(AgentProvider(AgentConfig(
@@ -146,22 +143,17 @@ async def run_agent(container, zmq_hub):
 
 def get_speech(
     mini: ReachyMini,
-    container: Container | None = None,
     default_speaker: str | None = None,
-) -> Speech:
-    from ghoshell_moss.speech import TTSSpeech
-    from ghoshell_moss.speech.mock import MockSpeech
+    logger_: LoggerItf=None,
+    container: IoCContainer=None,
+) -> SpeechChannel:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
     container = container or get_container()
-    recorder = None
     try:
         recorder = container.get(VideoRecorderWorker)
     except Exception:
         recorder = None
-    use_voice = os.environ.get("USE_VOICE_SPEECH", "no") == "yes"
-    if not use_voice:
-        return MockSpeech()
     app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
     app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
     resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")
@@ -178,10 +170,11 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return TTSSpeech(
+    return TTSSpeechChannel(
+        name="speech",
+        description="语音输出channel，使用该channel可以进行语音交互",
         player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
         tts=VolcengineTTS(conf=tts_conf),
-        logger=container.get(LoggerItf),
     )
 
 
@@ -195,6 +188,9 @@ def main():
     from ghoshell_moss_contrib.example_ws import workspace_container
 
     with workspace_container(ws_dir) as container:
+        logger = setup_logger(str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),)
+        container.set(LoggerItf, logger)
+
         zmq_hub = ZMQChannelHub(
             config=ZMQHubConfig(
                 name="hub",

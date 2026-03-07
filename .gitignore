@@ -15,3 +15,5 @@ wheels/
 temp.png
 temp.json
 video_records/
+
+known_faces.json

@@ -57,11 +57,11 @@ class VideoRecorder:
             # Child channel name (full path will become `reachy_mini.video_recorder`).
             name="video_recorder",
             description="Background video recorder (camera + mic + robot output audio).",
-            block=False,
+            blocking=False,
         )
 
         chan.build.command()(self.start_recording)
         chan.build.command()(self.stop_recording)
         chan.build.command()(self.status)
-        chan.build.with_context_messages(self.context_messages)
+        chan.build.context_messages(self.context_messages)
         return chan

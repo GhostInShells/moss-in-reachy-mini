@@ -17,7 +17,7 @@ from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, 
     UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent
 from framework.abcd.agent_hook import AgentHook, AgentHookState
 from framework.abcd.memory import Memory
-from framework.agent.response import MOSShellResponse, CTMLResult, CTMLResponse
+from framework.agent.response import MOSShellResponse, CTMLResponse
 from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
 
 
@@ -171,6 +171,7 @@ class BaseMainAgent(Agent, ABC):
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,
+                eventbus=self._eventbus,
             )
 
         if react := ReactAgentEvent.from_agent_event(event):
@@ -181,6 +182,7 @@ class BaseMainAgent(Agent, ABC):
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,
+                eventbus=self._eventbus,
             )
 
         if vision := VisionAgentEvent.from_agent_event(event):
@@ -195,6 +197,7 @@ class BaseMainAgent(Agent, ABC):
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,
+                eventbus=self._eventbus,
             )
 
         if ctml := CTMLAgentEvent.from_agent_event(event):
@@ -243,35 +246,47 @@ class BaseMainAgent(Agent, ABC):
              await self.memory.save_turn(inputs, outputs)
 
         # 如果response output里有拿到ctml执行的返回值，直接触发ReactEvent给Agent继续处理
-        if len(outputs) > 0 and outputs[-1].is_completed():
-            ctml_results: List[CTMLResult] = []
-            for content in outputs[-1].contents:
-                if result := CTMLResult.from_content(content):
-                    ctml_results.append(result)
+        # if len(outputs) > 0 and outputs[-1].is_completed():
+        #     ctml_results: List[CTMLResult] = []
+        #     for content in outputs[-1].contents:
+        #         if result := CTMLResult.from_content(content):
+        #             ctml_results.append(result)
+        #     if ctml_results:
+        #         await self.eventbus().put(ReactAgentEvent(
+        #             event_id=response.response_id,  # 保持同一个会话
+        #             messages=[Message.new(role="assistant").with_content(*ctml_results)]
+        #         ).to_agent_event())
 
-            def _should_auto_react(ctml: str) -> bool:
-                """Whether CTML execution results should trigger a follow-up ReactEvent.
+        # if len(outputs) > 0 and outputs[-1].is_completed():
+        #     ctml_results: List[CTMLResult] = []
+        #     for content in outputs[-1].contents:
+        #         if result := CTMLResult.from_content(content):
+        #             ctml_results.append(result)
+        #
+        #     def _should_auto_react(ctml: str) -> bool:
+        #         """Whether CTML execution results should trigger a follow-up ReactEvent.
+        #
+        #         Some CTML commands are side-effect tools (e.g. start/stop background
+        #         workers) where an automatic second LLM turn adds noise (extra UI
+        #         prompts) and increases chances of user interrupts.
+        #         """
+        #
+        #         ctml_stripped = (ctml or "").strip()
+        #         no_react_prefixes = (
+        #             "<reachy_mini.video_recorder:start_recording",
+        #             "<reachy_mini.video_recorder:stop_recording",
+        #             "<reachy_mini.video_recorder:status",
+        #         )
+        #         return not any(ctml_stripped.startswith(prefix) for prefix in no_react_prefixes)
+        #
+        #     reactable_results = [r for r in ctml_results if _should_auto_react(r.ctml)]
+        #
+        #     if reactable_results:
+        #         await self.eventbus().put(ReactAgentEvent(
+        #             event_id=response.response_id,  # 保持同一个会话
+        #             messages=[Message.new(role="assistant").with_content(*reactable_results)]
+        #         ).to_agent_event())
 
-                Some CTML commands are side-effect tools (e.g. start/stop background
-                workers) where an automatic second LLM turn adds noise (extra UI
-                prompts) and increases chances of user interrupts.
-                """
-
-                ctml_stripped = (ctml or "").strip()
-                no_react_prefixes = (
-                    "<reachy_mini.video_recorder:start_recording",
-                    "<reachy_mini.video_recorder:stop_recording",
-                    "<reachy_mini.video_recorder:status",
-                )
-                return not any(ctml_stripped.startswith(prefix) for prefix in no_react_prefixes)
-
-            reactable_results = [r for r in ctml_results if _should_auto_react(r.ctml)]
-
-            if reactable_results:
-                await self.eventbus().put(ReactAgentEvent(
-                    event_id=response.response_id,  # 保持同一个会话
-                    messages=[Message.new(role="assistant").with_content(*reactable_results)]
-                ).to_agent_event())
 
     def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
@@ -379,10 +394,6 @@ class BaseMainAgent(Agent, ABC):
             # 相同级别的事件在运行, 也会触发中断.
             if parsed["priority"] >= _running_response.event.priority:
                 await self._preempt_event_queue.put(parsed)
-                # 清空普通事件队列.
-                clear_queue(self._queued_event_queue)
-                # 还是要快速中断当前运行的任务.
-                # 保存完被中断逻辑.
                 await self._interrupt()
                 return
             else:
@@ -509,7 +520,7 @@ async def main(container: Container, server) -> None:
 
 
 if __name__ == '__main__':
-    from ghoshell_moss import new_shell
+    from ghoshell_moss import new_ctml_shell
     from framework.memory.storage_memory import StorageMemory
     from framework.agent.broadcaster import ChatBroadcasterProvider
     from ghoshell_moss_contrib.agent.chat.base import BaseChat
@@ -518,6 +529,7 @@ if __name__ == '__main__':
     from ghoshell_moss.speech import MockSpeech
     from framework.agent.agent_fastapi import AgentFastAPI
     from framework.agent.eventbus import QueueEventBus
+    from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
 
     _container = Container()
     _container.set(LoggerItf, logging.getLogger())
@@ -525,9 +537,12 @@ if __name__ == '__main__':
 
     _memory = StorageMemory(MemoryStorage(dir_=""))
     _container.set(Memory, _memory)
-    _shell = new_shell(container=_container, speech=MockSpeech(typing_sleep=0.1))
+    _shell = new_ctml_shell(container=_container)
+
+    _speech = MockSpeech(typing_sleep=0.1)
     _shell.main_channel.import_channels(
-        _memory.as_channel()
+        _memory.as_channel(),
+        SpeechChannel(name="speech", description="", speech=_speech)
     )
     _container.set(MOSSShell, _shell)
     eventbus = QueueEventBus()

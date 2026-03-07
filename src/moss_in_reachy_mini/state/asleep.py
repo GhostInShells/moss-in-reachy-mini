@@ -31,8 +31,8 @@ class AsleepState(MiniStateHook):
         return [msg]
 
     def as_channel(self):
-        chan = PyChannel(name=AsleepState.NAME, description=f"current state is asleep", block=True)
-        chan.build.with_context_messages(self.context_messages)
+        chan = PyChannel(name=AsleepState.NAME, description=f"current state is asleep", blocking=True)
+        chan.build.context_messages(self.context_messages)
         return chan
 
 

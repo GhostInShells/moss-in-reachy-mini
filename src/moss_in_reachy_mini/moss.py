@@ -3,12 +3,11 @@ import io
 import logging
 import os
 import time
-from functools import partial
-from typing import Optional, List
+from typing import List
 
 from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import IoCContainer, Provider, INSTANCE, Container
+from ghoshell_container import IoCContainer, Provider, INSTANCE
 from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
@@ -111,25 +110,25 @@ class MossInReachyMini:
         self.logger.info("MossInReachyMini.as_channel()...")
         assert self._bootstrapped.is_set()
 
-        reachy_mini = PyChannel(name="reachy_mini", block=True)
+        reachy_mini = PyChannel(name="reachy_mini", blocking=True)
         reachy_mini.build.command(doc=f"""
         切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
 
         :param state_name: 目标状态名称
         :param force: 务必使用默认值False，任何情况都不能设置为True
         """)(self.switch_state)
-        reachy_mini.build.with_context_messages(self.context_messages)
+        reachy_mini.build.context_messages(self.context_messages)
 
         channels = []
         for name, state in self._state_map.items():
             chan = state.as_channel()
-            chan.build.with_available()(lambda _state=state: self._state.NAME == _state.NAME)
+            chan.build.available(lambda _state=state: self._state.NAME == _state.NAME)
             channels.append(chan)
 
         if self._recorder is not None:
             recorder_chan = VideoRecorder(self._recorder).as_channel()
             # recorder_chan.build.with_available()(lambda: self._state.NAME != AsleepState.NAME)
-            recorder_chan.build.with_available()(lambda: True)
+            recorder_chan.build.available(lambda: True)
             channels.append(recorder_chan)
 
         reachy_mini.import_channels(
@@ -171,7 +170,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
                 live = None
         logger = con.get(LoggerItf)
 
-        recorder = None
         try:
             recorder = con.get(VideoRecorderWorker)
         except Exception:
@@ -181,9 +179,8 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
+        # 桌面陪伴模式
         states = [asleep, waken, boring]
-        if live is not None:
-            states.append(live)
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
