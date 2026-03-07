@@ -21,6 +21,7 @@ from framework.agent.main_agent import MainAgent
 from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
+from moss_in_reachy_mini.audio.mic_hub import MicHub, MicHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
@@ -31,9 +32,13 @@ from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
+from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
+from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+logging.getLogger("mosshell").propagate = False
+
 
 class ShellProvider(Provider[MOSSShell]):
 
@@ -69,12 +74,15 @@ class AgentProvider(Provider[Agent]):
 def providers(container: IoCContainer):
     # Mini
     container.set(ReachyMini, ReachyMini())
+    container.register(FrameHubProvider())
+    # Shared microphone capture (avoid multi-stream conflicts)
+    container.register(MicHubProvider())
     container.register(AgentFastAPIProvider())
     # Agent输入
     container.set(EventBus, QueueEventBus())
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsolePTTChat())
+    container.set(BaseChat, ConsolePTTChat(container=container))
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())
@@ -82,6 +90,7 @@ def providers(container: IoCContainer):
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
     container.register(CameraWorkerProvider())
+    container.register(VideoRecorderWorkerProvider())
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
@@ -145,6 +154,11 @@ def get_speech(
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
     container = container or get_container()
+    recorder = None
+    try:
+        recorder = container.get(VideoRecorderWorker)
+    except Exception:
+        recorder = None
     use_voice = os.environ.get("USE_VOICE_SPEECH", "no") == "yes"
     if not use_voice:
         return MockSpeech()
@@ -164,11 +178,16 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return TTSSpeech(player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf)), tts=VolcengineTTS(conf=tts_conf), logger=container.get(LoggerItf))
+    return TTSSpeech(
+        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
+        tts=VolcengineTTS(conf=tts_conf),
+        logger=container.get(LoggerItf),
+    )
 
 
 def main():
     import pathlib
+
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
     current_dir = pathlib.Path(__file__).parent
     root_dir = str(current_dir.parent.joinpath("moss_zmq_channels").absolute())

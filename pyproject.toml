@@ -13,6 +13,12 @@ dependencies = [
     "streamlit>=1.54.0",
     "insightface==0.7.3",
     "onnxruntime==1.24.2",
+    "websocket-client>=1.7.0",
+    "pydantic-settings>=2.0.0",
+    "python-proxy>=0.0.1",
+    "mini-racer>=0.12.4",
+    "pyexecjs>=1.5.1",
+    "betterproto>=2.0.0b6",
 ]
 
 [project.optional-dependencies]
@@ -41,5 +47,4 @@ dev = [
     "ruff>=0.15.0",
     "pytest>=8.3.5",
     "pytest-asyncio>=1.1.0",
-    "anyio>=4.10.0",
 ]
