@@ -1,7 +1,7 @@
 import asyncio
-from typing import Optional
+from typing import Optional, Self
 
-from ghoshell_moss import Message, Text, ContentModel
+from ghoshell_moss import Message, Text, ContentModel, Delta, DeltaModel
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
 from framework.abcd.agent import Agent
@@ -49,4 +49,12 @@ class InterruptedContent(ContentModel):
     """
     完成打断
     """
+
     CONTENT_TYPE = "interrupted"
+
+    def buffer_delta(self, delta: Delta | DeltaModel) -> bool:
+        return False
+
+    @classmethod
+    def from_delta(cls, delta: Delta | DeltaModel) -> Self | None:
+        return None

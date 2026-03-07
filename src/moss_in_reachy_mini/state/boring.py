@@ -63,10 +63,10 @@ class BoringState(MiniStateHook):
         return [msg] + vision_message
 
     def as_channel(self):
-        boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", block=True)
+        boring_chan = PyChannel(name=BoringState.NAME, description=f"current state is boring", blocking=True)
         boring_chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         boring_chan.build.command()(self.vision.look)
-        boring_chan.build.with_context_messages(self.context_messages)
+        boring_chan.build.context_messages(self.context_messages)
         return boring_chan
 
 class BoringStateProvider(Provider[BoringState]):

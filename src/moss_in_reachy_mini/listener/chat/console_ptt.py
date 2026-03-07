@@ -5,10 +5,13 @@ from datetime import datetime
 import traceback
 import threading
 
+from ghoshell_container import IoCContainer
 from ghoshell_moss_contrib.agent.depends import check_agent
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_common.contracts import LoggerItf
 from reachy_mini import ReachyMini
+
+from moss_in_reachy_mini.audio.mic_hub import MicHub
 
 if check_agent():
     from rich.markdown import Markdown
@@ -19,7 +22,14 @@ if check_agent():
 
 
 class ConsolePTTChat(BaseChat):
-    def __init__(self, debug: bool = False, logger: LoggerItf | None = None, mini: ReachyMini = None):
+    def __init__(
+        self,
+        debug: bool = False,
+        logger: LoggerItf | None = None,
+        mini: ReachyMini = None,
+        *,
+        container: IoCContainer | None = None,
+    ):
         super().__init__()
         # 存储完整的对话历史
         self.conversation_history: List[Dict] = []
@@ -45,6 +55,8 @@ class ConsolePTTChat(BaseChat):
         self._quit_event = threading.Event()
         self._input_thread: Optional[threading.Thread] = None
 
+        self._container = container
+
         self.ai_response_done = asyncio.Event()
 
     def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
@@ -69,9 +81,23 @@ class ConsolePTTChat(BaseChat):
 
         config = ListenerConfig()
 
+        audio_input = None
+        if self._container is not None:
+            try:
+                hub = self._container.force_fetch(MicHub)
+                # Dedicated subscription for ASR/PTT. Drop oldest on overflow to avoid blocking capture.
+                audio_input = hub.new_audio_input(
+                    name="ptt_asr",
+                    max_queue=800,
+                    drop_policy="drop_oldest",
+                )
+            except Exception as e:
+                self.logger.warning("failed to init MicHub audio input, fallback to PyAudioInput: %s", e)
+
         self.listener_service = ListenerServiceImpl(
             config=config,
             logger=self.logger,
+            audio_input=audio_input,
             # audio_input=ReachyMiniInput(mini=mini),
         )
 
