@@ -51,7 +51,6 @@ class LiveState(MiniStateHook):
     async def on_self_enter(self):
         self.mini.enable_motors()
         await self.head.reset()
-        await self.head.start_breathing()
         if self._config.live_id == "":
             await self._eventbus.put(CTMLAgentEvent(
                 ctml='<reachy_mini:switch_state state_name="waken" force="true" />'
@@ -77,16 +76,6 @@ class LiveState(MiniStateHook):
                 )]
             ).to_agent_event())
 
-    async def start_idle_move(self):
-        await super().start_idle_move()
-        await self.head.on_policy_run()
-        await self.antennas.on_policy_run()
-
-    async def cancel_idle_move(self):
-        await super().cancel_idle_move()
-        await self.head.on_policy_pause()
-        await self.antennas.on_policy_pause()
-
     async def context_messages(self):
         msg = Message.new(role="system").with_content(
             Text(text=f"你正在抖音里进行直播，当前观看人数：{self.douyin_live.current_users}，累计观看人数：{self.douyin_live.total_users}")
@@ -100,12 +89,9 @@ class LiveState(MiniStateHook):
         chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         chan.build.command(name="head_move")(self.head.move)
         chan.build.command(name="head_reset")(self.head.reset)
-        chan.build.command()(self.head.start_breathing)
-        chan.build.command()(self.head.stop_breathing)
         chan.build.command(name="antennas_move")(self.antennas.move)
         chan.build.command(name="antennas_reset")(self.antennas.reset)
-        chan.build.command()(self.antennas.set_idle_flapping)
-        chan.build.command()(self.antennas.enable_flapping)
+        chan.build.idle(self.head.on_idle)
         return chan
 
 

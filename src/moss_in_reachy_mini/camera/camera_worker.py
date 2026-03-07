@@ -23,6 +23,7 @@ from reachy_mini.utils.interpolation import linear_pose_interpolation
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
 from moss_in_reachy_mini.camera.drawer import draw_detections
 from moss_in_reachy_mini.camera.model import get_position_by_track_name, CameraFrame
+from moss_in_reachy_mini.camera.frame_hub import FrameHub
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +31,10 @@ logger = logging.getLogger(__name__)
 class CameraWorker:
     """Thread-safe camera worker with frame buffering and face tracking."""
 
-    def __init__(self, reachy_mini: ReachyMini, face_recognizer: FaceRecognizer) -> None:
+    def __init__(self, reachy_mini: ReachyMini, frame_hub: FrameHub, face_recognizer: FaceRecognizer) -> None:
         """Initialize."""
         self.reachy_mini = reachy_mini
+        self.frame_hub = frame_hub
         self.face_recognizer = face_recognizer
 
         # Thread-safe frame storage
@@ -64,6 +66,8 @@ class CameraWorker:
 
     def start(self) -> None:
         """Start the camera worker loop in a thread."""
+        # FrameHub is the single camera reader.
+        self.frame_hub.start()
         self._stop_event.clear()
         self._thread = threading.Thread(target=self.working_loop, daemon=True)
         self._thread.start()
@@ -93,8 +97,9 @@ class CameraWorker:
             try:
                 current_time = time.time()
 
-                # Get frame from robot
-                frame = self.reachy_mini.media.get_frame()
+                # self.reachy_mini.media.get_frame()
+                # Get frame from FrameHub (single capture loop)
+                frame = self.frame_hub.get_latest_frame()
                 if frame is None:
                     continue
 
@@ -236,6 +241,7 @@ class CameraWorkerProvider(Provider[CameraWorker]):
 
     def factory(self, con: IoCContainer) -> INSTANCE:
         mini = con.force_fetch(ReachyMini)
+        frame_hub = con.force_fetch(FrameHub)
 
         ws = con.force_fetch(Workspace)
         face_recognizer_storage = ws.configs().sub_storage("face_recognizer")
@@ -243,4 +249,4 @@ class CameraWorkerProvider(Provider[CameraWorker]):
         face_recognizer = FaceRecognizer(
             known_faces_storage=face_recognizer_storage,
         )
-        return CameraWorker(reachy_mini=mini, face_recognizer=face_recognizer)
+        return CameraWorker(reachy_mini=mini, frame_hub=frame_hub, face_recognizer=face_recognizer)

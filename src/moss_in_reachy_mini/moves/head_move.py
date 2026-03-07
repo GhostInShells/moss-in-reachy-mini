@@ -37,7 +37,7 @@ class BreathingMove(Move):  # type: ignore
 
     def __init__(
         self,
-        interpolation_start_pose: npt.NDArray[np.float32],
+        interpolation_start_pose: npt.NDArray[np.float64],
         interpolation_start_antennas: Tuple[float, float],
         interpolation_duration: float = 1.0,
     ):
@@ -98,4 +98,4 @@ class BreathingMove(Move):  # type: ignore
             antennas = np.array([antenna_sway, -antenna_sway], dtype=np.float64)
 
         # Return in official Move interface format: (head_pose, antennas_array, body_yaw)
-        return head_pose, None, 0.0
+        return head_pose, antennas, 0.0

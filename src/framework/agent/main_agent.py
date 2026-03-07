@@ -257,6 +257,37 @@ class BaseMainAgent(Agent, ABC):
         #             messages=[Message.new(role="assistant").with_content(*ctml_results)]
         #         ).to_agent_event())
 
+        # if len(outputs) > 0 and outputs[-1].is_completed():
+        #     ctml_results: List[CTMLResult] = []
+        #     for content in outputs[-1].contents:
+        #         if result := CTMLResult.from_content(content):
+        #             ctml_results.append(result)
+        #
+        #     def _should_auto_react(ctml: str) -> bool:
+        #         """Whether CTML execution results should trigger a follow-up ReactEvent.
+        #
+        #         Some CTML commands are side-effect tools (e.g. start/stop background
+        #         workers) where an automatic second LLM turn adds noise (extra UI
+        #         prompts) and increases chances of user interrupts.
+        #         """
+        #
+        #         ctml_stripped = (ctml or "").strip()
+        #         no_react_prefixes = (
+        #             "<reachy_mini.video_recorder:start_recording",
+        #             "<reachy_mini.video_recorder:stop_recording",
+        #             "<reachy_mini.video_recorder:status",
+        #         )
+        #         return not any(ctml_stripped.startswith(prefix) for prefix in no_react_prefixes)
+        #
+        #     reactable_results = [r for r in ctml_results if _should_auto_react(r.ctml)]
+        #
+        #     if reactable_results:
+        #         await self.eventbus().put(ReactAgentEvent(
+        #             event_id=response.response_id,  # 保持同一个会话
+        #             messages=[Message.new(role="assistant").with_content(*reactable_results)]
+        #         ).to_agent_event())
+
+
     def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
             self._running_response = None

@@ -1,15 +1,13 @@
 import asyncio
-import logging
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import Container, get_container, Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Speech, MOSSShell
+from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE
+from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
-from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
@@ -19,9 +17,12 @@ from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
-from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
+from framework.memory.storage_memory import StorageMemory
+from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
+from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
+from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
@@ -30,9 +31,9 @@ from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
-from moss_in_reachy_mini.utils import load_instructions
-from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
+from moss_in_reachy_mini.utils import load_instructions
+from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
 
 
 class ShellProvider(Provider[MOSSShell]):
@@ -68,12 +69,15 @@ class AgentProvider(Provider[Agent]):
 def providers(container: IoCContainer):
     # Mini
     container.set(ReachyMini, ReachyMini())
+    container.register(FrameHubProvider())
+    # Shared microphone capture (avoid multi-stream conflicts)
+    container.register(MicHubProvider())
     container.register(AgentFastAPIProvider())
     # Agent输入
     container.set(EventBus, QueueEventBus())
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsolePTTChat())
+    container.set(BaseChat, ConsolePTTChat(container=container))
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())
@@ -81,6 +85,7 @@ def providers(container: IoCContainer):
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
     container.register(CameraWorkerProvider())
+    container.register(VideoRecorderWorkerProvider())
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
@@ -95,7 +100,7 @@ def providers(container: IoCContainer):
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md"],
+        files=["ctml_enrich.md", "speech.md"],
         storage_name="reachy_mini_instructions",
     )
     container.register(AgentProvider(AgentConfig(
@@ -139,10 +144,16 @@ async def run_agent(container, zmq_hub):
 def get_speech(
     mini: ReachyMini,
     default_speaker: str | None = None,
-    logger_: LoggerItf=None
+    logger_: LoggerItf=None,
+    container: IoCContainer=None,
 ) -> SpeechChannel:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
+    container = container or get_container()
+    try:
+        recorder = container.get(VideoRecorderWorker)
+    except Exception:
+        recorder = None
     app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
     app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
     resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")
@@ -159,17 +170,17 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-
     return TTSSpeechChannel(
         name="speech",
-        description="你要用这个通道说话才会被听到.",
-        player=ReachyMiniStreamPlayer(mini, logger=logger_),
+        description="语音输出channel，使用该channel可以进行语音交互",
+        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
         tts=VolcengineTTS(conf=tts_conf),
     )
 
 
 def main():
     import pathlib
+
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
     current_dir = pathlib.Path(__file__).parent
     root_dir = str(current_dir.parent.joinpath("moss_zmq_channels").absolute())

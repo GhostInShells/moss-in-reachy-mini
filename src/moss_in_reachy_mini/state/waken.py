@@ -14,7 +14,7 @@ from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.components.head_tracker import HeadTracker
 from moss_in_reachy_mini.components.vision import Vision
-from moss_in_reachy_mini.state.abcd import MiniStateHook, QuitIdleMove
+from moss_in_reachy_mini.state.abcd import MiniStateHook
 
 
 class WakenState(MiniStateHook):
@@ -105,13 +105,9 @@ class WakenState(MiniStateHook):
 
     async def start_idle_move(self):
         await super().start_idle_move()
-        await self.head.on_policy_run()
-        await self.antennas.on_policy_run()
 
     async def cancel_idle_move(self):
         await super().cancel_idle_move()
-        await self.head.on_policy_pause()
-        await self.antennas.on_policy_pause()
 
     async def context_messages(self):
         msg = Message.new(role="system").with_content(
@@ -130,14 +126,11 @@ class WakenState(MiniStateHook):
         waken_chan.build.command(name="head_reset")(self.head.reset)
         waken_chan.build.command()(self.head.start_tracking_face)
         waken_chan.build.command()(self.head.stop_tracking_face)
-        waken_chan.build.command()(self.head.start_breathing)
-        waken_chan.build.command()(self.head.stop_breathing)
         waken_chan.build.command(name="antennas_move")(self.antennas.move)
         waken_chan.build.command(name="antennas_reset")(self.antennas.reset)
-        waken_chan.build.command()(self.antennas.set_idle_flapping)
-        waken_chan.build.command()(self.antennas.enable_flapping)
         waken_chan.build.command()(self.vision.look)
         waken_chan.build.context_messages(self.context_messages)
+        waken_chan.build.idle(self.head.on_idle)
         return waken_chan
 
 Proactive_Prompts = [

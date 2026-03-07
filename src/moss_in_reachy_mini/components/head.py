@@ -21,10 +21,6 @@ class Head:
         self._head_tracker = head_tracker
         self._tracking_event = asyncio.Event()
 
-        self._breathing_task: Optional[asyncio.Task] = None
-        self._breathing_event = asyncio.Event()
-        self._breathing_event.set()
-
     async def move(
             self,
             x: float = 0,
@@ -71,7 +67,7 @@ class Head:
             name: 根据你的视觉输入信息，选择你能看到的name填写入参，不能用中文，不能使用你当前视觉里没有的name
         """
         if name == "unknown":
-            return "unknown表示当前用户未识别，不能作为追踪目标"
+            raise ValueError("unknown表示当前用户未识别，不能作为追踪目标")
         self._tracking_event.set()
         self._head_tracker.enabled.set()
         self._head_tracker.set_target_track_name(name)
@@ -84,27 +80,15 @@ class Head:
         self._head_tracker.enabled.clear()
         self._head_tracker.set_target_track_name("")
 
-    async def start_breathing(self):
-        self._breathing_event.set()
-
-    async def stop_breathing(self):
-        self.mini.set_target_body_yaw(0.0)
-        self._breathing_event.clear()
-
     async def _breathing(self):
-        try:  # 捕获取消异常，确保任务优雅退出
-            if self._breathing_event.is_set():
-                _, current_antennas = self.mini.get_current_joint_positions()
-                current_head_pose = self.mini.get_current_head_pose()
-                breathing_move = BreathingMove(
-                    interpolation_start_pose=current_head_pose,
-                    interpolation_start_antennas=current_antennas,
-                    interpolation_duration=1.0,
-                )
-                await self.mini.async_play_move(breathing_move)
-        except asyncio.CancelledError:
-            self.logger.info("Breathing task was cancelled")
-            raise  # 重新抛出，让外层await能捕获
+        _, current_antennas = self.mini.get_current_joint_positions()
+        current_head_pose = self.mini.get_current_head_pose()
+        breathing_move = BreathingMove(
+            interpolation_start_pose=current_head_pose,
+            interpolation_start_antennas=current_antennas,
+            interpolation_duration=1.0,
+        )
+        await self.mini.async_play_move(breathing_move)
 
     async def context_messages(self):
         msg = Message.new(role="user", name="__reachy_mini_head__")
@@ -129,44 +113,22 @@ class Head:
 
         return [msg]
 
-    async def on_policy_run(self):
-        self.logger.info(f"Running Head on-policy run")
-
-        if self._tracking_event.is_set():
-            self._head_tracker.enabled.set()
-        else:
-            if not self._breathing_event.is_set():
-                return
-            # 先取消旧任务（如果存在），避免多任务并发
-            if self._breathing_task and not self._breathing_task.done():
-                self._breathing_task.cancel()
-                try:
-                    await self._breathing_task
-                except asyncio.CancelledError:
-                    pass
-            self._breathing_task = asyncio.create_task(self._breathing())
-
-    async def on_policy_pause(self):
-        self.logger.info("Running Head on-policy pause")
-        self._head_tracker.enabled.clear()
-
-        # 1. 边界检查：任务存在且未完成时才取消
-        if self._breathing_task and not self._breathing_task.done():
-            self._breathing_task.cancel()
-            try:
-                # 2. 捕获取消异常，避免程序崩溃
-                await self._breathing_task
-            except asyncio.CancelledError:
-                self.logger.info("Breathing task cancelled successfully")
-            finally:
-                self._breathing_task = None
+    async def on_idle(self):
+        self.logger.info("Head on-idle entering")
+        try:
+            if self._tracking_event.is_set():
+                self._head_tracker.enabled.set()
+            else:
+                await self._breathing()
+        except asyncio.CancelledError:
+            self._head_tracker.enabled.clear()
+            self.logger.info("Head on_idle task cancelled successfully")
 
     def as_channel(self) -> PyChannel:
         head = PyChannel(name="head", blocking=True)
 
         head.build.context_messages(self.context_messages)
-        head.build.on_policy_run(self.on_policy_run)
-        head.build.on_policy_pause(self.on_policy_pause)
+        head.build.idle(self.on_idle)
 
         # move
         head.build.command()(self.move)
