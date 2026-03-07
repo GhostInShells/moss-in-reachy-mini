@@ -8,6 +8,7 @@ from reachy_mini import ReachyMini
 
 from framework.abcd.agent import EventBus
 from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
+from framework.channels.todolist_channel import TodoList
 from framework.live.douyin_live import DouyinLive, DouyinLiveConfig
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
@@ -34,6 +35,7 @@ class LiveState(MiniStateHook):
             vision: Vision,
             eventbus: EventBus,
             config: DouyinLiveConfig,
+            todolist: TodoList=None,
             logger: LoggerItf=None,
     ):
         super().__init__()
@@ -45,6 +47,7 @@ class LiveState(MiniStateHook):
         self.logger = logger or logging.getLogger("WakenState")
         self._eventbus = eventbus
         self._config = config
+        self._todolist = todolist
 
         self.douyin_live = DouyinLive(config)
 
@@ -64,6 +67,15 @@ class LiveState(MiniStateHook):
         self.douyin_live.stop()
 
     async def _run_idle_move(self):
+        if self._todolist:
+            todos = self._todolist.todo_todos
+            if todos:
+                await self._eventbus.put(ReactAgentEvent(
+                    messages=[Message.new(role="system").with_content(
+                        Text(text=f"你需要继续完成todolist，同时你要关注直播间互动，你需要用很短的话让用户知道当前在干什么")
+                    )]
+                ).to_agent_event())
+
         # 检查是否有新的事件
         events = self.douyin_live.get_agent_events()
         for event in events:
@@ -123,6 +135,7 @@ class LiveStateProvider(Provider[LiveState]):
         _storage: FileStorage|Storage = con.force_fetch(Workspace).configs().sub_storage("douyin_live")
         config = WorkspaceConfigs(_storage).get_or_create(DouyinLiveConfig())
         logger = con.get(logging.Logger)
+        todolist = con.get(TodoList)
 
         return LiveState(
             mini=mini,
@@ -132,5 +145,6 @@ class LiveStateProvider(Provider[LiveState]):
             vision=vision,
             eventbus=eventbus,
             config=config,
+            todolist=todolist,
             logger=logger,
         )

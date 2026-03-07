@@ -18,6 +18,8 @@ from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
+from framework.channels.news_channel import NewsAPIProvider, NewsAPI
+from framework.channels.todolist_channel import TodoList, TodoListProvider
 from framework.memory.storage_memory import StorageMemory
 from framework.agent.utils import run_agent_with_chat
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
@@ -32,8 +34,8 @@ from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+# logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)
 
 class ShellProvider(Provider[MOSSShell]):
 
@@ -44,12 +46,16 @@ class ShellProvider(Provider[MOSSShell]):
         mini = con.force_fetch(ReachyMini)
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
-        speech = get_speech(mini, con, default_speaker="saturn_zh_female_keainvsheng_tob")
+        todolist = con.force_fetch(TodoList)
+        news = con.force_fetch(NewsAPI)
+        speech = get_speech(mini, con, default_speaker="saturn_zh_female_cancan_tob")
         shell = new_shell(container=con, speech=speech)
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
             # zmq_hub.as_channel()
+            todolist.as_channel(),
+            # news.as_channel(),
         )
         return shell
 
@@ -85,12 +91,19 @@ def providers(container: IoCContainer):
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
-    logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
+    logger = container.get(LoggerItf)
+    if logger:
+        logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
     storage = ws.runtime().sub_storage(storage_name)
     memory = StorageMemory(storage)
     container.set(StorageMemory, memory)
     container.set(Memory, memory)
-    container.register(ShellProvider())  # Shell
+    # TodoList
+    container.register(TodoListProvider())
+    # News
+    container.register(NewsAPIProvider())
+    # Shell
+    container.register(ShellProvider())
     # Agent
     instructions = load_instructions(
         container,
@@ -106,6 +119,9 @@ def providers(container: IoCContainer):
                 "thinking": {
                     "type": "disabled",
                 },
+                "extra_body": {
+                    "enable_web_search": True
+                }
             },
         ),
         instructions=instructions,

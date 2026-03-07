@@ -1,0 +1,135 @@
+[
+    {
+        "key": "iran_situation",
+        "title": "伊朗局势讲解",
+        "description": "规划并讲解伊朗局势相关内容",
+        "status": "done",
+        "parent_key": ""
+    },
+    {
+        "key": "latest_battle",
+        "title": "最新战况",
+        "description": "收集并讲解伊朗局势的最新战况",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "battle_time",
+        "title": "时间信息",
+        "description": "确认最新战况发生的具体时间",
+        "status": "done",
+        "parent_key": "latest_battle"
+    },
+    {
+        "key": "battle_location",
+        "title": "地点信息",
+        "description": "确认最新战况发生的具体地点",
+        "status": "done",
+        "parent_key": "latest_battle"
+    },
+    {
+        "key": "battle_details",
+        "title": "详细内容",
+        "description": "收集最新战况的详细内容",
+        "status": "done",
+        "parent_key": "latest_battle"
+    },
+    {
+        "key": "countries_attitude",
+        "title": "世界各国态度",
+        "description": "收集并讲解世界各国对伊朗局势的态度",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "us_attitude",
+        "title": "美国态度",
+        "description": "收集美国对伊朗局势的态度",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "eu_attitude",
+        "title": "欧盟态度",
+        "description": "收集欧盟对伊朗局势的态度",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "russia_attitude",
+        "title": "俄罗斯态度",
+        "description": "收集俄罗斯对伊朗局势的态度",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "china_attitude",
+        "title": "中国态度",
+        "description": "收集中国对伊朗局势的态度",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "domestic_perspective",
+        "title": "国内感兴趣的视角",
+        "description": "收集并讲解国内对伊朗局势感兴趣的视角",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "energy_impact",
+        "title": "能源影响",
+        "description": "分析伊朗局势对能源市场的影响",
+        "status": "done",
+        "parent_key": "domestic_perspective"
+    },
+    {
+        "key": "diplomatic_strategy",
+        "title": "外交策略",
+        "description": "分析中国在伊朗局势中的外交策略",
+        "status": "done",
+        "parent_key": "domestic_perspective"
+    },
+    {
+        "key": "more_topics",
+        "title": "更多话题",
+        "description": "收集并讲解与伊朗局势相关的更多话题",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "humanitarian_crisis",
+        "title": "人道主义危机",
+        "description": "分析伊朗局势引发的人道主义危机",
+        "status": "done",
+        "parent_key": "more_topics"
+    },
+    {
+        "key": "regional_stability",
+        "title": "地区稳定",
+        "description": "分析伊朗局势对地区稳定的影响",
+        "status": "done",
+        "parent_key": "more_topics"
+    },
+    {
+        "key": "china_oil_import",
+        "title": "中国石油进口情况",
+        "description": "分析中国石油进口受伊朗局势的具体影响",
+        "status": "done",
+        "parent_key": "domestic_perspective"
+    },
+    {
+        "key": "oil_price_trend",
+        "title": "油价走势分析",
+        "description": "分析伊朗局势下国际油价未来一周走势预测",
+        "status": "done",
+        "parent_key": "china_oil_import"
+    },
+    {
+        "key": "energy_security",
+        "title": "能源安全策略",
+        "description": "探讨中国应对能源进口波动的长期战略",
+        "status": "done",
+        "parent_key": "china_oil_import"
+    }
+]

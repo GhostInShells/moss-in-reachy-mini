@@ -479,6 +479,9 @@ async def main(container: Container, server) -> None:
                     "thinking": {
                         "type": "disabled",
                     },
+                    "extra_body": {
+                        "enable_web_search": True
+                    }
                 },
             ),
             instructions=""

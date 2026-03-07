@@ -174,3 +174,6 @@ class DouyinLive(DouyinLiveWebFetcher):
         message = RoomUserSeqMessage().parse(payload)
         self.current_users = message.total
         self.total_users = message.total_pv_for_anchor
+
+    async def context_messages(self):
+        pass
