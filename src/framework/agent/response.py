@@ -158,11 +158,11 @@ class MOSShellResponse(Response):
                         self._buffered.append(message)
                         yield message
                     # 处理观察消息
-                    for message in interpretation.observe_messages():
+                    for message in interpretation.execution_messages():
                         self._buffered.append(message)
                     if interpretation.observe:
                         await self.eventbus.put(ReactAgentEvent(
-                            messages=interpretation.observe_messages(),
+                            messages=interpretation.execution_messages(),
                             priority=1,  # 高优事件
                         ).to_agent_event())
             except asyncio.CancelledError:
@@ -281,10 +281,10 @@ class CTMLResponse(Response):
                         yield message
                     # 处理观察消息
                     if interpretation.observe:
-                        for message in interpretation.observe_messages():
+                        for message in interpretation.execution_messages():
                             self._buffered.append(message)
                         await self.eventbus.put(ReactAgentEvent(
-                            messages=interpretation.observe_messages(),
+                            messages=interpretation.execution_messages(),
                             priority=1,  # 高优事件
                         ).to_agent_event())
             except asyncio.CancelledError:

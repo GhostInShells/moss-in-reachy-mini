@@ -28,13 +28,12 @@ from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
+from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 class ShellProvider(Provider[MOSSShell]):
 
@@ -85,7 +84,9 @@ def providers(container: IoCContainer):
     # Agent记忆
     ws = container.force_fetch(Workspace)
     storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
-    logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
+    logger = container.get(LoggerItf)
+    if logger:
+        logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
     storage = ws.runtime().sub_storage(storage_name)
     memory = StorageMemory(storage)
     container.set(StorageMemory, memory)
@@ -176,6 +177,9 @@ def main():
     from ghoshell_moss_contrib.example_ws import workspace_container
 
     with workspace_container(ws_dir) as container:
+        logger = setup_logger(str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),)
+        container.set(LoggerItf, logger)
+
         zmq_hub = ZMQChannelHub(
             config=ZMQHubConfig(
                 name="hub",
