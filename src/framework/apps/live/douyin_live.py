@@ -2,10 +2,11 @@ import asyncio
 import enum
 import json
 import logging
+import random
 import threading
 import time
 from collections import defaultdict
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from ghoshell_common.contracts import YamlConfig, Storage, WorkspaceConfigs, FileStorage, Workspace, LoggerItf
 from ghoshell_container import INSTANCE, Provider, IoCContainer
@@ -108,7 +109,7 @@ class DouyinLive(DouyinLiveWebFetcher):
     def __init__(self, eventbus: EventBus, history_storage: Storage, config: DouyinLiveConfig, logger: LoggerItf=None):
         super().__init__(config.live_id)
         self.eventbus = eventbus
-        self.history_storage = history_storage.sub_storage(config.live_id)
+        self.history_storage = history_storage.sub_storage(f"live_id_{config.live_id}")
         self.config = config
         self.logger = logger or logging.getLogger("DouyinLive")
 
@@ -287,7 +288,7 @@ class DouyinLive(DouyinLiveWebFetcher):
         ]
 
         # 按用户做一次聚合
-        group_by_user = defaultdict(list)
+        group_by_user: Dict[tuple, List[DouyinLiveEvent]] = defaultdict(list)
         for event in all_events:
             group_by_user[(event.user_id, event.user_name)].append(event)
 
@@ -296,13 +297,19 @@ class DouyinLive(DouyinLiveWebFetcher):
             user_id = key[0]
             user_name = key[1]
 
+            # 交互的用户超过20人的话 直接忽略掉进入直播间进入的事件
+            if len(group_by_user) > 20 and len(events) == 1 and events[0].event_type == DouyinLiveEventType.enter:
+                # 90%的概率忽略
+                if random.random() < 0.9:
+                    continue
+
             # 当前最新的直播间发生的交互行为
             message = Message.new(role="user", name=f"__douyin_live_{user_name}#{user_id}_interaction__")
             current_contents = []
             for event in events:
                 current_contents.append(Text(text=event.to_natural()))
             message.with_content(
-                Text(text="以下是当前用户在直播间最新的交互行为"),
+                Text(text=f"以下是当前用户{user_name}在直播间最新的交互行为"),
                 *current_contents,
             )
             messages.append(message)
@@ -326,8 +333,8 @@ class DouyinLive(DouyinLiveWebFetcher):
                     )
 
                 messages.append(message)
-                # 异步存储到本地文件
-                await self.save_queue.put((user_id, user_name, events))
+            # 异步存储到本地文件
+            self.save_queue.put_nowait((user_id, user_name, events))
 
         return messages
 
