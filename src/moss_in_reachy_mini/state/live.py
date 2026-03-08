@@ -1,15 +1,15 @@
 import logging
 import random
 
-from ghoshell_common.contracts import LoggerItf, Workspace, WorkspaceConfigs, FileStorage, Storage
+from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import PyChannel, Message, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import EventBus
-from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
-from framework.channels.todolist_channel import TodoList
-from framework.live.douyin_live import DouyinLive, DouyinLiveConfig
+from framework.abcd.agent_event import UserInputAgentEvent
+from framework.apps.live.douyin_live import DouyinLive
+from framework.apps.todolist import TodoList
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
@@ -34,8 +34,8 @@ class LiveState(MiniStateHook):
             antennas: Antennas,
             vision: Vision,
             eventbus: EventBus,
-            config: DouyinLiveConfig,
-            todolist: TodoList=None,
+            douyin_live: DouyinLive,
+            todolist: TodoList,
             logger: LoggerItf=None,
     ):
         super().__init__()
@@ -45,58 +45,48 @@ class LiveState(MiniStateHook):
         self.antennas = antennas
         self.vision = vision
         self.logger = logger or logging.getLogger("WakenState")
-        self._eventbus = eventbus
-        self._config = config
-        self._todolist = todolist
-
-        self.douyin_live = DouyinLive(config)
+        self.eventbus = eventbus
+        self.todolist = todolist
+        self.douyin_live = douyin_live
 
     async def on_self_enter(self):
         self.mini.enable_motors()
         await self.head.reset()
-        if self._config.live_id == "":
-            await self._eventbus.put(CTMLAgentEvent(
-                ctml='<reachy_mini:switch_state state_name="waken" force="true" />'
+
+    async def on_self_exit(self):
+        pass
+
+    async def _run_idle_move(self):
+        message = Message.new(role="user")
+        if self.todolist.todo_todos:
+            message.with_content(
+                Text(text="按照以下要求继续回答（以下内容不需要刻意回应）"),
+                Text(text=f"按 todolist 顺序执行下一个未完成的叶子任务，并且需要用很短的话让用户知道当前在干什么"),
+            )
+
+        if not self.douyin_live.event_queue.empty():
+            message.with_content(
+                Text(text="根据现在的直播间互动情况，挑选一两条回答你感兴趣的弹幕，然后感谢点赞、关注和进入直播间的用户（不需要挨个点名感谢）"),
+            )
+
+        if not message.is_empty():
+            await self.eventbus.put(UserInputAgentEvent(
+                message=message,
+                priority=0,  # 正常事件队列
             ).to_agent_event())
             return
 
-        self.douyin_live.start()
-
-    async def on_self_exit(self):
-        self.douyin_live.stop()
-
-    async def _run_idle_move(self):
-        if self._todolist:
-            todos = self._todolist.todo_todos
-            if todos:
-                await self._eventbus.put(ReactAgentEvent(
-                    messages=[Message.new(role="system").with_content(
-                        Text(text=f"你需要继续完成todolist，同时你要关注直播间互动，你需要用很短的话让用户知道当前在干什么")
-                    )]
-                ).to_agent_event())
-
-        # 检查是否有新的事件
-        events = self.douyin_live.get_agent_events()
-        for event in events:
-            await self._eventbus.put(event.to_agent_event())
-
-        # 检查是否需要触发空闲React
-        if self._idle_move_duration > self._config.idle_react_threshold:
-            await self._eventbus.put(ReactAgentEvent(
-                messages=[Message.new(role="system").with_content(
-                    Text(text=random.choice(self._config.idle_prompts))
-                )]
+        # 空闲的主动说话放到Agent级别的idle hook里
+        if self._idle_move_duration > self.douyin_live.config.idle_react_threshold:
+            await self.eventbus.put(UserInputAgentEvent(
+                message=Message.new(role="user").with_content(
+                    Text(text=random.choice(self.douyin_live.config.idle_prompts))
+                ),
+                priority=-1,
             ).to_agent_event())
 
-    async def context_messages(self):
-        msg = Message.new(role="system").with_content(
-            Text(text=f"你正在抖音里进行直播，当前观看人数：{self.douyin_live.current_users}，累计观看人数：{self.douyin_live.total_users}")
-        )
-        return [msg]
-
     def as_channel(self):
-        chan = PyChannel(name="douyin_live", description="当前状态是直播状态，不可以切换为其他状态")
-        chan.build.context_messages(self.context_messages)
+        chan = PyChannel(name="live", description="当前状态是直播状态，不可以切换为其他状态")
         chan.build.command(doc=self.body.dance_docstring)(self.body.dance)
         chan.build.command(doc=self.body.emotion_docstring)(self.body.emotion)
         chan.build.command(name="head_move")(self.head.move)
@@ -104,6 +94,11 @@ class LiveState(MiniStateHook):
         chan.build.command(name="antennas_move")(self.antennas.move)
         chan.build.command(name="antennas_reset")(self.antennas.reset)
         chan.build.idle(self.head.on_idle)
+
+        chan.import_channels(
+            self.douyin_live.as_channel()
+        )
+
         return chan
 
 
@@ -118,10 +113,9 @@ class LiveStateProvider(Provider[LiveState]):
         vision = con.force_fetch(Vision)
         antennas = con.force_fetch(Antennas)
         eventbus = con.force_fetch(EventBus)
-        _storage: FileStorage|Storage = con.force_fetch(Workspace).configs().sub_storage("douyin_live")
-        config = WorkspaceConfigs(_storage).get_or_create(DouyinLiveConfig())
         logger = con.get(logging.Logger)
-        todolist = con.get(TodoList)
+        douyin_live = con.force_fetch(DouyinLive)
+        todolist = con.force_fetch(TodoList)
 
         return LiveState(
             mini=mini,
@@ -130,7 +124,7 @@ class LiveStateProvider(Provider[LiveState]):
             antennas=antennas,
             vision=vision,
             eventbus=eventbus,
-            config=config,
+            douyin_live=douyin_live,
             todolist=todolist,
             logger=logger,
         )

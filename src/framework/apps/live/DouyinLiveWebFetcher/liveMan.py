@@ -19,11 +19,12 @@ import threading
 import time
 import execjs
 import urllib.parse
+import asyncio
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import aiohttp
 import requests
-import websocket
 from py_mini_racer import MiniRacer
 
 from .ac_signature import get__ac_signature
@@ -40,7 +41,7 @@ def execute_js(js_file: str):
     """
     with open(js_file, 'r', encoding='utf-8') as file:
         js_code = file.read()
-    
+
     ctx = execjs.compile(js_code)
     return ctx
 
@@ -48,11 +49,11 @@ def execute_js(js_file: str):
 @contextmanager
 def patched_popen_encoding(encoding='utf-8'):
     original_popen_init = subprocess.Popen.__init__
-    
+
     def new_popen_init(self, *args, **kwargs):
         kwargs['encoding'] = encoding
         original_popen_init(self, *args, **kwargs)
-    
+
     with patch.object(subprocess.Popen, '__init__', new_popen_init):
         yield
 
@@ -78,16 +79,16 @@ def generateSignature(wss):
 
     with codecs.open(script_file, 'r', encoding='utf8') as f:
         script = f.read()
-    
+
     ctx = MiniRacer()
     ctx.eval(script)
-    
+
     try:
         signature = ctx.call("get_sign", md5_param)
         return signature
     except Exception as e:
         print(e)
-    
+
     # 以下代码对应js脚本为sign_v0.js
     # context = execjs.compile(script)
     # with patched_popen_encoding(encoding='utf-8'):
@@ -110,7 +111,7 @@ def generateMsToken(length=182):
 
 
 class DouyinLiveWebFetcher:
-    
+
     def __init__(self, live_id):
         """
         直播间弹幕抓取对象
@@ -130,13 +131,26 @@ class DouyinLiveWebFetcher:
         self.headers = {
             'User-Agent': self.user_agent
         }
-    
-    def start(self):
-        self._connectWebSocket()
+        self.ws = None
+        self.heartbeat_task = None
+        self.running = False
 
-    def stop(self):
-        self.ws.close()
-    
+    async def start(self):
+        """异步启动WebSocket连接"""
+        await self._connectWebSocket()
+
+    async def stop(self):
+        """异步停止WebSocket连接"""
+        self.running = False
+        if self.ws:
+            await self.ws.close()
+        if self.heartbeat_task:
+            self.heartbeat_task.cancel()
+            try:
+                await self.heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
     @property
     def ttwid(self):
         """
@@ -156,7 +170,7 @@ class DouyinLiveWebFetcher:
         else:
             self.__ttwid = response.cookies.get('ttwid')
             return self.__ttwid
-    
+
     @property
     def room_id(self):
         """
@@ -179,18 +193,18 @@ class DouyinLiveWebFetcher:
             match = re.search(r'roomId\\":\\"(\d+)\\"', response.text)
             if match is None or len(match.groups()) < 1:
                 print("【X】No match found for roomId")
-            
+
             self.__room_id = match.group(1)
-            
+
             return self.__room_id
-    
+
     def get_ac_nonce(self):
         """
         获取 __ac_nonce
         """
         resp_cookies = self.session.get(self.host, headers=self.headers).cookies
         return resp_cookies.get("__ac_nonce")
-    
+
     def get_ac_signature(self, __ac_nonce: str = None) -> str:
         """
         获取 __ac_signature
@@ -198,7 +212,7 @@ class DouyinLiveWebFetcher:
         __ac_signature = get__ac_signature(self.host[8:], __ac_nonce, self.user_agent)
         self.session.cookies.set("__ac_signature", __ac_signature)
         return __ac_signature
-    
+
     def get_a_bogus(self, url_params: dict):
         """
         获取 a_bogus
@@ -207,7 +221,7 @@ class DouyinLiveWebFetcher:
         ctx = execute_js(self.abogus_file)
         _a_bogus = ctx.call("get_ab", url, self.user_agent)
         return _a_bogus
-    
+
     def get_room_status(self):
         """
         获取直播间开播状态:
@@ -241,10 +255,10 @@ class DouyinLiveWebFetcher:
             user_id = user.get('id_str')
             nickname = user.get('nickname')
             print(f"【{nickname}】[{user_id}]直播间：{['正在直播', '已结束'][bool(room_status)]}.")
-    
-    def _connectWebSocket(self):
+
+    async def _connectWebSocket(self):
         """
-        连接抖音直播间websocket服务器，请求直播间数据
+        异步连接抖音直播间websocket服务器，请求直播间数据
         """
         wss = ("wss://webcast100-ws-web-lq.douyin.com/webcast/im/push/v2/?app_name=douyin_web"
                "&version_code=180800&webcast_sdk_version=1.0.14-beta.0"
@@ -261,67 +275,76 @@ class DouyinLiveWebFetcher:
                f"&host=https://live.douyin.com&aid=6383&live_id=1&did_rule=3&endpoint=live_pc&support_wrds=1"
                f"&user_unique_id=7319483754668557238&im_path=/webcast/im/fetch/&identity=audience"
                f"&need_persist_msg_count=15&insert_task_id=&live_reason=&room_id={self.room_id}&heartbeatDuration=0")
-        
+
         signature = generateSignature(wss)
         wss += f"&signature={signature}"
-        
+
         headers = {
             "cookie": f"ttwid={self.ttwid}",
             'user-agent': self.user_agent,
         }
-        self.ws = websocket.WebSocketApp(wss,
-                                         header=headers,
-                                         on_open=self._wsOnOpen,
-                                         on_message=self._wsOnMessage,
-                                         on_error=self._wsOnError,
-                                         on_close=self._wsOnClose)
+
         try:
-            self.ws.run_forever()
-        except Exception:
-            self.stop()
-            raise
-    
-    def _sendHeartbeat(self):
+            self.running = True
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(wss, headers=headers) as ws:
+                    self.ws = ws
+                    print("【√】WebSocket连接成功.")
+
+                    # 启动心跳任务
+                    self.heartbeat_task = asyncio.create_task(self._sendHeartbeat())
+
+                    # 接收消息
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.BINARY:
+                            await self._wsOnMessage(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            print(f"WebSocket error: {ws.exception()}")
+                            break
+                        elif msg.type == aiohttp.WSMsgType.CLOSE:
+                            print("WebSocket connection closed.")
+                            break
+
+        except Exception as e:
+            print(f"WebSocket连接错误: {e}")
+        finally:
+            self.running = False
+            await self._wsOnClose()
+
+    async def _sendHeartbeat(self):
         """
-        发送心跳包
+        异步发送心跳包
         """
-        while True:
+        while self.running:
             try:
                 heartbeat = PushFrame(payload_type='hb').SerializeToString()
-                self.ws.send(heartbeat, websocket.ABNF.OPCODE_PING)
-                print("【√】发送心跳包")
+                if self.ws and not self.ws.closed:
+                    await self.ws.send_bytes(heartbeat)
+                    print("【√】发送心跳包")
             except Exception as e:
                 print("【X】心跳包检测错误: ", e)
                 break
-            else:
-                time.sleep(5)
-    
-    def _wsOnOpen(self, ws):
+            await asyncio.sleep(5)
+
+    async def _wsOnMessage(self, message):
         """
-        连接建立成功
-        """
-        print("【√】WebSocket连接成功.")
-        threading.Thread(target=self._sendHeartbeat).start()
-    
-    def _wsOnMessage(self, ws, message):
-        """
-        接收到数据
-        :param ws: websocket实例
+        异步接收到数据
         :param message: 数据
         """
-        
+
         # 根据proto结构体解析对象
         package = PushFrame().parse(message)
         response = Response().parse(gzip.decompress(package.payload))
-        
+
         # 返回直播间服务器链接存活确认消息，便于持续获取数据
         if response.need_ack:
             ack = PushFrame(log_id=package.log_id,
                             payload_type='ack',
                             payload=response.internal_ext.encode('utf-8')
                             ).SerializeToString()
-            ws.send(ack, websocket.ABNF.OPCODE_BINARY)
-        
+            if self.ws and not self.ws.closed:
+                await self.ws.send_bytes(ack)
+
         # 根据消息类别解析消息体
         for msg in response.messages_list:
             method = msg.method
@@ -343,14 +366,11 @@ class DouyinLiveWebFetcher:
                 }.get(method)(msg.payload)
             except Exception:
                 pass
-    
-    def _wsOnError(self, ws, error):
-        print("WebSocket error: ", error)
-    
-    def _wsOnClose(self, ws, *args):
+
+    async def _wsOnClose(self):
         self.get_room_status()
         print("WebSocket connection closed.")
-    
+
     def _parseChatMsg(self, payload):
         """聊天消息"""
         message = ChatMessage().parse(payload)
@@ -358,7 +378,7 @@ class DouyinLiveWebFetcher:
         user_id = message.user.id
         content = message.content
         print(f"【聊天msg】[{user_id}]{user_name}: {content}")
-    
+
     def _parseGiftMsg(self, payload):
         """礼物消息"""
         message = GiftMessage().parse(payload)
@@ -366,14 +386,14 @@ class DouyinLiveWebFetcher:
         gift_name = message.gift.name
         gift_cnt = message.combo_count
         print(f"【礼物msg】{user_name} 送出了 {gift_name}x{gift_cnt}")
-    
+
     def _parseLikeMsg(self, payload):
         '''点赞消息'''
         message = LikeMessage().parse(payload)
         user_name = message.user.nick_name
         count = message.count
         print(f"【点赞msg】{user_name} 点了{count}个赞")
-    
+
     def _parseMemberMsg(self, payload):
         '''进入直播间消息'''
         message = MemberMessage().parse(payload)
@@ -381,27 +401,27 @@ class DouyinLiveWebFetcher:
         user_id = message.user.id
         gender = ["女", "男"][message.user.gender]
         print(f"【进场msg】[{user_id}][{gender}]{user_name} 进入了直播间")
-    
+
     def _parseSocialMsg(self, payload):
         '''关注消息'''
         message = SocialMessage().parse(payload)
         user_name = message.user.nick_name
         user_id = message.user.id
         print(f"【关注msg】[{user_id}]{user_name} 关注了主播")
-    
+
     def _parseRoomUserSeqMsg(self, payload):
         '''直播间统计'''
         message = RoomUserSeqMessage().parse(payload)
         current = message.total
         total = message.total_pv_for_anchor
         print(f"【统计msg】当前观看人数: {current}, 累计观看人数: {total}")
-    
+
     def _parseFansclubMsg(self, payload):
         '''粉丝团消息'''
         message = FansclubMessage().parse(payload)
         content = message.content
         print(f"【粉丝团msg】 {content}")
-    
+
     def _parseEmojiChatMsg(self, payload):
         '''聊天表情包消息'''
         message = EmojiChatMessage().parse(payload)
@@ -410,31 +430,31 @@ class DouyinLiveWebFetcher:
         common = message.common
         default_content = message.default_content
         print(f"【聊天表情包id】 {emoji_id},user：{user},common:{common},default_content:{default_content}")
-    
+
     def _parseRoomMsg(self, payload):
         message = RoomMessage().parse(payload)
         common = message.common
         room_id = common.room_id
         print(f"【直播间msg】直播间id:{room_id}")
-    
+
     def _parseRoomStatsMsg(self, payload):
         message = RoomStatsMessage().parse(payload)
         display_long = message.display_long
         print(f"【直播间统计msg】{display_long}")
-    
+
     def _parseRankMsg(self, payload):
         message = RoomRankMessage().parse(payload)
         ranks_list = message.ranks_list
         print(f"【直播间排行榜msg】{ranks_list}")
-    
+
     def _parseControlMsg(self, payload):
         '''直播间状态消息'''
         message = ControlMessage().parse(payload)
-        
+
         if message.status == 3:
             print("直播间已结束")
-            self.stop()
-    
+            asyncio.create_task(self.stop())
+
     def _parseRoomStreamAdaptationMsg(self, payload):
         message = RoomStreamAdaptationMessage().parse(payload)
         adaptationType = message.adaptation_type

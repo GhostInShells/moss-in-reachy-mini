@@ -1,12 +1,13 @@
 import pytest
 from ghoshell_common.contracts.storage import MemoryStorage
 
-from framework.channels.todolist_channel import TodoList, TodoTreeGenerator, TodoStatus
+from framework.agent.eventbus import QueueEventBus
+from framework.apps.todolist import TodoList, TodoTreeGenerator, TodoStatus
 
 
 @pytest.mark.asyncio
-async def test_todolist_channel():
-    todolist = TodoList(storage=MemoryStorage(dir_=""))
+async def test_todolist():
+    todolist = TodoList(eventbus=QueueEventBus(), storage=MemoryStorage(dir_=""))
     assert todolist.todos == []
 
     await todolist.append_todo(key="key1", title="title1", description="description1")

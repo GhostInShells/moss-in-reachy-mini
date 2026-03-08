@@ -8,17 +8,17 @@ from typing import Union, Optional, Self, List
 from ghoshell_common.contracts.logger import LoggerItf
 from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_container import Container, Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Message, Text, MOSSShell, Base64Image
+from ghoshell_moss import Message, Text, MOSSShell
 
 from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
     UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent
-from framework.abcd.agent_hook import AgentHook, AgentHookState
+from framework.abcd.agent_hook import AgentHookState
 from framework.abcd.memory import Memory
 from framework.agent.response import MOSShellResponse, CTMLResponse
-from framework.agent.utils import get_event, clear_queue, run_agent_with_chat, InterruptedContent
+from framework.agent.utils import get_event, InterruptedContent
 
 
 class BaseMainAgent(Agent, ABC):
@@ -290,6 +290,7 @@ class BaseMainAgent(Agent, ABC):
 
     def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
+            self._running_response.interrupt()
             self._running_response = None
 
     async def _main_loop(self) -> None:
@@ -524,15 +525,14 @@ async def main(container: Container, server) -> None:
 
 if __name__ == '__main__':
     from ghoshell_moss import new_ctml_shell
-    from framework.memory.storage_memory import StorageMemory
+    from framework.apps.memory.storage_memory import StorageMemory
     from framework.agent.broadcaster import ChatBroadcasterProvider
     from ghoshell_moss_contrib.agent.chat.base import BaseChat
     from ghoshell_moss_contrib.agent import ConsoleChat
-    from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
     from ghoshell_moss.speech import MockSpeech
     from framework.agent.agent_fastapi import AgentFastAPI
     from framework.agent.eventbus import QueueEventBus
-    from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
+    from ghoshell_moss.channels.speech_channel import SpeechChannel
 
     _container = Container()
     _container.set(LoggerItf, logging.getLogger())

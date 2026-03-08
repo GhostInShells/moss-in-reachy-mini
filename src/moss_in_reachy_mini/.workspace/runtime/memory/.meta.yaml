@@ -1,7 +1,7 @@
 # from class: framework.memory.storage_memory:MetaConfig
 autobiographical_memory_md: .autobiographical_memory.md
 behavior_preference_md: .behavior_preference.md
-current_session_id: ""
+current_session_id: fdb44662-7f03-446d-8c2f-e573315659f0
 max_tokens: -1
 mood_base_md: .mood_base.md
 personality_md: .personality.md

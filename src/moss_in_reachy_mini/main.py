@@ -5,7 +5,7 @@ from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
-from ghoshell_moss.channels.speech_channel import TTSSpeechChannel, SpeechChannel
+from ghoshell_moss.speech import BaseTTSSpeech
 from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
@@ -18,9 +18,10 @@ from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import run_agent_with_chat
-from framework.channels.news_channel import NewsAPIProvider
-from framework.channels.todolist_channel import TodoList, TodoListProvider
-from framework.memory.storage_memory import StorageMemory
+from framework.apps.live.douyin_live import DouyinLiveProvider
+from framework.apps.memory.storage_memory import StorageMemory
+from framework.apps.news import NewsAPIProvider
+from framework.apps.todolist import TodoList, TodoListProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
@@ -49,12 +50,15 @@ class ShellProvider(Provider[MOSSShell]):
         memory = con.force_fetch(StorageMemory)
         todolist = con.force_fetch(TodoList)
         # news = con.force_fetch(NewsAPI)
-        shell = new_ctml_shell(container=con)
+        shell = new_ctml_shell(
+            container=con,
+            speech=get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
+            experimental=False,
+        )
         shell.main_channel.import_channels(
             moss.as_channel(),
             memory.as_channel(),
             todolist.as_channel(),
-            get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
         )
         return shell
 
@@ -105,12 +109,14 @@ def providers(container: IoCContainer):
     container.register(TodoListProvider())
     # News
     container.register(NewsAPIProvider())
+    # Douyin Live
+    container.register(DouyinLiveProvider())
     # Shell
     container.register(ShellProvider())
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "speech.md"],
+        files=["ctml_enrich.md", "speech.md", "websearch.md", "news.md"],
         storage_name="reachy_mini_instructions",
     )
     container.register(AgentProvider(AgentConfig(
@@ -159,7 +165,7 @@ def get_speech(
     default_speaker: str | None = None,
     logger_: LoggerItf=None,
     container: IoCContainer=None,
-) -> SpeechChannel:
+) -> BaseTTSSpeech:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
     container = container or get_container()
@@ -183,11 +189,9 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return TTSSpeechChannel(
-        name="speech",
-        description="语音输出channel，使用该channel可以进行语音交互",
-        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
+    return BaseTTSSpeech(
         tts=VolcengineTTS(conf=tts_conf),
+        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
     )
 
 

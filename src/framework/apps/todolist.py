@@ -3,14 +3,15 @@ import enum
 import json
 import logging
 from collections import defaultdict
-from typing import Optional, List, Dict
+from typing import List, Dict
 
 from ghoshell_common.contracts import LoggerItf, FileStorage, Workspace, Storage
 from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import PyChannel, Message, Text
 from pydantic import BaseModel, Field
 
-from framework.channels.utils import EnumEncoder
+from framework.abcd.agent import EventBus
+from framework.apps.utils import EnumEncoder
 
 
 class TodoStatus(enum.Enum):
@@ -97,7 +98,8 @@ class TodoTreeGenerator:
 
 class TodoList:
 
-    def __init__(self, storage: Storage, logger: LoggerItf=None):
+    def __init__(self, eventbus: EventBus, storage: Storage, logger: LoggerItf=None):
+        self.eventbus = eventbus
         self.storage = storage
         self._locker: asyncio.Lock = asyncio.Lock()
         self.logger = logger or logging.getLogger("TodoList")
@@ -132,6 +134,13 @@ class TodoList:
         file_bytes = json.dumps(prepare, ensure_ascii=False, indent=4, cls=EnumEncoder).encode("utf-8")
         self.storage.put("todolist.json", file_bytes)
 
+    async def clear_todo(self):
+        """
+        清空当前任务列表
+        """
+        self._save([])
+        return "already clear todolist"
+
     async def append_todo(self, key: str, title: str, description: str, parent_key=""):
         """
         给任务列表追加一个to.do.任务
@@ -162,18 +171,22 @@ class TodoList:
             )
             self._save(todos)
 
-    async def start_todo(self, key: str):
+    async def mark_as_doing(self, key: str):
         """
-        标记一个to.do.任务已开始，且只能标记叶子节点的to.do.任务，自身和所有的父节点都会被标记为DOING状态
+        标记一个to.do.任务开始，且只能标记叶子节点的to.do.任务，自身和所有的父节点都会被标记为DOING状态
         :param key: 叶子节点的to.do任务
         """
         todos = self.todos
         generator = TodoTreeGenerator(todos)
         children = generator.get_children(key)
         if len(children) > 0:
-            raise ValueError(f"key {key} has children, start it's children first")
+            raise ValueError(f"Task {key} has children, start it's children first")
         async with self._locker:
             todo = generator.get_todo(key)
+            if todo.status == TodoStatus.DOING:
+                raise ValueError(f"Task {key} already mark as doing, you need to execute this task now and when you finish this task, mark it as done")
+            if todo.status == TodoStatus.DONE:
+                raise ValueError(f"Task {key} already mark as done, you need to start another task")
             todo.status = TodoStatus.DOING
 
             # 递归所有的父节点
@@ -184,8 +197,9 @@ class TodoList:
                     break
                 parent.status = TodoStatus.DOING
             self._save(todos)
+            return f"Task {key} marked as done, you need to execute this task with {todo.description}"
 
-    async def finish_todo(self, key: str):
+    async def mark_as_done(self, key: str):
         """
         标记一个to.do.任务已完成，且只能标记叶子节点的to.do.任务，自身会被标记为DONE状态，所有的父节点都会被检查是否所有子任务都完成
         :param key: 叶子节点的to.do任务
@@ -218,16 +232,34 @@ class TodoList:
         text = TodoTreeGenerator(self.todos).generate_tree_text()
         self.logger.debug(f"current todo list=\n{text}")
         msg = Message.new(role="system", name="__todolist__").with_content(
+            Text(text="todolist如下所示，任务状态说明：[✓]已完成 [~]执行中 [ ]未开始"),
             Text(text=text),
         )
         return [msg]
 
     def as_channel(self):
-        chan = PyChannel(name="todolist", block=True)
+        description = """执行规则
+1. todolist作用：规划任务结构 + 标记进度，**标记后必须真正执行任务，不允许只标记不执行**。
+2. 执行顺序：
+   - 只执行【叶子节点】任务
+   - 从上到下取第一个【未开始/执行中】的叶子任务
+3. 单轮必须完整执行：
+   ① 调用 mark_as_doing 标记当前任务
+   ② 用1句短话说明：当前正在做什么
+   ③ 真正执行并输出该任务的内容/结果
+   ④ 执行完立刻调用 mark_as_done 标记完成
+4. 禁止行为：
+   - 禁止重复标记同一个任务
+   - 禁止无限循环输出同一句指令
+   - 禁止只输出标记、不执行任务
+5. 输出风格：简洁、清晰、符合当前使用场景。
+"""
+        chan = PyChannel(name="todolist", description=description.strip(), blocking=True)
         chan.build.command()(self.append_todo)
-        chan.build.command()(self.start_todo)
-        chan.build.command()(self.finish_todo)
-        chan.build.with_context_messages(self.context_messages)
+        chan.build.command()(self.mark_as_doing)
+        chan.build.command()(self.mark_as_done)
+        chan.build.command()(self.clear_todo)
+        chan.build.context_messages(self.context_messages)
         return chan
 
 
@@ -238,9 +270,10 @@ class TodoListProvider(Provider[TodoList]):
 
     def factory(self, con: IoCContainer) -> INSTANCE:
         ws = con.force_fetch(Workspace)
+        eventbus = con.force_fetch(EventBus)
         storage: FileStorage|Storage = ws.runtime().sub_storage("todolist")
         logger = con.get(LoggerItf)
-        return TodoList(storage=storage, logger=logger)
+        return TodoList(eventbus=eventbus, storage=storage, logger=logger)
 
 
 if __name__ == "__main__":

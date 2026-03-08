@@ -13,7 +13,12 @@ from framework.abcd.agent import EventBus
 from framework.abcd.agent_event import ReactAgentEvent
 
 
-trafilatura.PROXY_URL = "http://127.0.0.1:1087"
+# newsapi中国需要挂代理才可以访问
+NEWS_HTTP_PROXY = os.getenv("NEWS_HTTP_PROXY")
+NEWS_HTTPS_PROXY = os.getenv("NEWS_HTTPS_PROXY")
+
+if NEWS_HTTP_PROXY:
+    trafilatura.PROXY_URL = NEWS_HTTP_PROXY
 
 
 class NewsSource(BaseModel):
@@ -44,10 +49,15 @@ class NewsAPI:
     def __init__(self, api_key: str, eventbus: EventBus=None):
         self._eventbus = eventbus
         session = requests.Session()
-        session.proxies = {
-            "http": "http://127.0.0.1:1087",
-            "https": "http://127.0.0.1:1087"
-        }
+        session.proxies = {}
+        if NEWS_HTTP_PROXY:
+            session.proxies.update({
+                "http": NEWS_HTTP_PROXY,
+            })
+        if NEWS_HTTPS_PROXY:
+            session.proxies.update({
+                "https": NEWS_HTTPS_PROXY,
+            })
         self.newsapi = NewsApiClient(api_key=api_key, session=session)
 
     async def get_news(self, q: str, page_size: int = 10, page: int = 1):
@@ -90,7 +100,7 @@ class NewsAPI:
         if self._eventbus:
             await self._eventbus.put(ReactAgentEvent(
                 messages=[Message.new(role="system").with_content(
-                    Text(text=f"查到{page}页的相关新闻，总共有{total}条，当前页新闻详情如下，如果有和主题无关的内容，请忽略。"),
+                    Text(text=f"get_news查到{page}页的相关新闻，总共有{total}条，当前页新闻详情如下，如果有和主题无关的内容，请忽略。"),
                     *[
                         Text(text=f"title={item.title}\nauthor={item.author}\ndescription={item.description}\ncontent={item.fullContent}")
                         for item in news
@@ -100,9 +110,10 @@ class NewsAPI:
 
 
     def as_channel(self):
-        chan = PyChannel(name="news", block=True)
+        chan = PyChannel(name="news", blocking=True)
         chan.build.command()(self.get_news)
         return chan
+
 
 class NewsAPIProvider(Provider[NewsAPI]):
 
@@ -127,6 +138,5 @@ if __name__ == "__main__":
     # 基于Shadowsocks的代理，翻墙
     # os.environ["HTTP_PROXY"] = "http://127.0.0.1:1087"
     # os.environ["HTTPS_PROXY"] = "http://127.0.0.1:1087"
-    os.environ["NEWSAPI_API_KEY"] = "1d8d11c1d95c415a9856c1bc05836076"
     import asyncio
     asyncio.run(main())
