@@ -116,7 +116,7 @@ def providers(container: IoCContainer):
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "speech.md", "websearch.md", "news.md"],
+        files=["ctml_enrich.md", "websearch.md", "news.md"],
         storage_name="reachy_mini_instructions",
     )
     container.register(AgentProvider(AgentConfig(
@@ -189,10 +189,12 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
-    return BaseTTSSpeech(
+    speech = BaseTTSSpeech(
         tts=VolcengineTTS(conf=tts_conf),
         player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
     )
+    speech.commands = lambda: []
+    return speech
 
 
 def main():

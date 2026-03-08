@@ -1,0 +1,16 @@
+[
+    {
+        "key": "task1",
+        "title": "回复感兴趣的弹幕",
+        "description": "挑选直播间里感兴趣的弹幕进行回应",
+        "status": "done",
+        "parent_key": ""
+    },
+    {
+        "key": "task2",
+        "title": "感谢互动用户",
+        "description": "统一感谢点赞、关注和进入直播间的用户",
+        "status": "doing",
+        "parent_key": ""
+    }
+]
