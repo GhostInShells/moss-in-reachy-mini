@@ -2,7 +2,7 @@ import pytest
 from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_moss import Message, Text
 
-from framework.memory.storage_memory import StorageMemory
+from framework.apps.memory.storage_memory import StorageMemory
 
 
 @pytest.mark.asyncio

@@ -3,8 +3,8 @@ import pathlib
 from ghoshell_common.contracts import Workspace
 from ghoshell_moss_contrib.example_ws import workspace_container
 
-from framework.memory.storage_memory import StorageMemory
-from framework.memory.storage_memory_streamlit import StorageMemoryUI
+from framework.apps.memory.storage_memory import StorageMemory
+from framework.apps.memory import StorageMemoryUI
 
 
 def main(storage_name: str="memory"):

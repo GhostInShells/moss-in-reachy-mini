@@ -8,6 +8,7 @@ from ghoshell_common.contracts import LoggerItf
 from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel, Addition, Delta, \
     DeltaModel, Interpretation
 from ghoshell_moss.message.adapters.openai_adapter import parse_messages_to_params
+from litellm.types.llms.openai import OpenAIWebSearchOptions
 from pydantic import Field
 
 from framework.abcd.agent import Response, ModelConf, EventBus

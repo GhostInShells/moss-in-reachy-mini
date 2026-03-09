@@ -38,7 +38,8 @@ class Body:
     async def emotion(self, name: str):
         params = self._emotions.get(name)
         if not params:
-            raise ValueError(f"{name} is not a valid emotion")
+            # raise ValueError(f"{name} is not a valid emotion")
+            params = self._emotions.get("dance1")
 
         sound_path = None
         # if play_sound:

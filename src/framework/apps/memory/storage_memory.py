@@ -70,7 +70,7 @@ class StorageMemory(Memory):
     async def save_turn(self, inputs: List[Message], outputs: List[Message]):
         session = await self._get_session()
 
-        saved_outputs = [o for o in outputs if o.is_completed()]  # 只保存完整的消息包
+        saved_outputs = [o for o in outputs if o.is_completed() and not o.is_empty()]  # 只保存完整的消息包
 
         turn_id = str(uuid.uuid4())
         for msg in inputs + saved_outputs:
@@ -228,15 +228,20 @@ class StorageMemory(Memory):
     async def context_messages(self):
         msgs = await self.get_session_history()
 
+        personality = await self.read_md(self._meta_config.personality_md)
+        behavior_preference = await self.read_md(self._meta_config.behavior_preference_md)
+        mood_base = await self.read_md(self._meta_config.mood_base_md)
         msgs.append(Message.new(role="system", name="__personality__").with_content(
-            Text(text=await self.read_md(self._meta_config.personality_md)),
-            Text(text=await self.read_md(self._meta_config.behavior_preference_md)),
-            Text(text=await self.read_md(self._meta_config.mood_base_md)),
+            Text(text=personality or "Empty"),
+            Text(text=behavior_preference or "Empty"),
+            Text(text=mood_base or "Empty"),
         ))
 
+        autobiographical_memory = await self.read_md(self._meta_config.autobiographical_memory_md)
+        summary_memory = await self.read_md(self._meta_config.summary_memory_md)
         msgs.append(Message.new(role="system", name="__memory__").with_content(
-            Text(text=await self.read_md(self._meta_config.autobiographical_memory_md)),
-            Text(text=await self.read_md(self._meta_config.summary_memory_md)),
+            Text(text=autobiographical_memory or "Empty"),
+            Text(text=summary_memory or "Empty"),
         ))
 
         msgs.append(Message.new(role="system", name="__memory_settings__").with_content(

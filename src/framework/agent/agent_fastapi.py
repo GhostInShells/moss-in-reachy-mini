@@ -49,7 +49,7 @@ class AgentFastAPI:
                     await self._eventbus.put(
                         CTMLAgentEvent(
                             ctml=ctml,
-                            priority=0,
+                            priority=1,
                         ).to_agent_event()
                     )
                     enqueue.append("CTML")

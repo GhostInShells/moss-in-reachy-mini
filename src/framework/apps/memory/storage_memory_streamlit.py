@@ -5,7 +5,7 @@ import streamlit as st
 import asyncio
 from ghoshell_moss import Message, Text
 from framework.agent.response import AgentEventAddition
-from framework.memory.storage_memory import TurnAddition, StorageMemory
+from framework.apps.memory.storage_memory import TurnAddition, StorageMemory
 
 
 def run_async(coro):
