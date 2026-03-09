@@ -110,7 +110,7 @@ class MossInReachyMini:
         self.logger.info("MossInReachyMini.as_channel()...")
         assert self._bootstrapped.is_set()
 
-        reachy_mini = PyChannel(name="reachy_mini", blocking=True)
+        reachy_mini = PyChannel(name="reachy_mini", description="reachy mini root channel", blocking=True)
         reachy_mini.build.command(doc=f"""
         切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
 

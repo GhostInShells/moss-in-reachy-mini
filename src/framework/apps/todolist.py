@@ -231,10 +231,16 @@ class TodoList:
     async def context_messages(self):
         text = TodoTreeGenerator(self.todos).generate_tree_text()
         self.logger.debug(f"current todo list=\n{text}")
-        msg = Message.new(role="system", name="__todolist__").with_content(
-            Text(text="todolist如下所示，任务状态说明：[✓]已完成 [~]执行中 [ ]未开始"),
-            Text(text=text),
-        )
+        msg = Message.new(role="system", name="__todolist__")
+        if text:
+            msg.with_content(
+                Text(text="todolist如下所示，任务状态说明：[✓]已完成 [~]执行中 [ ]未开始"),
+                Text(text=text),
+            )
+        else:
+            msg.with_content(
+                Text(text="todolist当前是空的")
+            )
         return [msg]
 
     def as_channel(self):

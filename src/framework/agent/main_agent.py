@@ -236,7 +236,7 @@ class BaseMainAgent(Agent, ABC):
         finally:
             await self._finish_response(response)
             await self.set_state(AgentStateName.IDLE)
-            self._clear_running_response(response.response_id)
+            await self._clear_running_response(response.response_id)
 
     async def _finish_response(self, response: Response) -> None:
         inputs = response.inputted()
@@ -288,9 +288,9 @@ class BaseMainAgent(Agent, ABC):
         #         ).to_agent_event())
 
 
-    def _clear_running_response(self, response_id: str) -> None:
+    async def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
-            self._running_response.interrupt()
+            await self._running_response.interrupt()
             self._running_response = None
 
     async def _main_loop(self) -> None:
@@ -411,7 +411,7 @@ class BaseMainAgent(Agent, ABC):
         if self._running_response is not None:
             response = self._running_response
             await response.interrupt()
-            self._clear_running_response(response.response_id)
+            await self._clear_running_response(response.response_id)
             self._logger.info("interrupt response set")
 
         # 广播打断完成消息
@@ -507,15 +507,16 @@ async def main(container: Container, server) -> None:
             description="",
             model=ModelConf(
                 kwargs={
-                    "thinking": {
-                        "type": "disabled",
-                    },
                     "extra_body": {
-                        "enable_web_search": True
+                        "thinking": {
+                            "type": "disabled",
+                            "enable_web_search": True
+                        }
                     }
                 },
+                temperature=0.6
             ),
-            instructions=""
+            instructions="",
         ),
     )
 
@@ -540,12 +541,11 @@ if __name__ == '__main__':
 
     _memory = StorageMemory(MemoryStorage(dir_=""))
     _container.set(Memory, _memory)
-    _shell = new_ctml_shell(container=_container)
-
     _speech = MockSpeech(typing_sleep=0.1)
+    _shell = new_ctml_shell(container=_container, speech=_speech)
+
     _shell.main_channel.import_channels(
         _memory.as_channel(),
-        SpeechChannel(name="speech", description="", speech=_speech)
     )
     _container.set(MOSSShell, _shell)
     eventbus = QueueEventBus()

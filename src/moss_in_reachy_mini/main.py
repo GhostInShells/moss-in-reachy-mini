@@ -125,13 +125,14 @@ def providers(container: IoCContainer):
         description="",
         model=ModelConf(
             kwargs={
-                "thinking": {
-                    "type": "disabled",
-                },
                 "extra_body": {
-                    "enable_web_search": True
+                    "thinking": {
+                        "type": "disabled",
+                        "enable_web_search": True
+                    }
                 }
             },
+            temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
         ),
         instructions=instructions,
     )))
