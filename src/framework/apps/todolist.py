@@ -10,7 +10,7 @@ from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import PyChannel, Message, Text
 from pydantic import BaseModel, Field
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.apps.utils import EnumEncoder
 
 

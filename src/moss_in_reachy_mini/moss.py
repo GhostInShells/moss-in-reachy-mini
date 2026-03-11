@@ -106,18 +106,22 @@ class MossInReachyMini:
         msg.with_content(*contents)
         return [msg]
 
-    def as_channel(self) -> PyChannel:
+    def as_channel(self, only_context_messages=False) -> PyChannel:
         self.logger.info("MossInReachyMini.as_channel()...")
-        assert self._bootstrapped.is_set()
 
         reachy_mini = PyChannel(name="reachy_mini", description="reachy mini root channel", blocking=True)
+
+        if only_context_messages:
+            reachy_mini.build.context_messages(self.context_messages)
+            return reachy_mini
+
         reachy_mini.build.command(doc=f"""
         切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
 
         :param state_name: 目标状态名称
         :param force: 务必使用默认值False，任何情况都不能设置为True
         """)(self.switch_state)
-        reachy_mini.build.context_messages(self.context_messages)
+
 
         channels = []
         for name, state in self._state_map.items():
@@ -135,21 +139,19 @@ class MossInReachyMini:
             *channels,
         )
 
+        reachy_mini.build.start_up(self.bootstrap)
+        reachy_mini.build.close(self.aclose)
+
         return reachy_mini
 
     async def bootstrap(self):
+        self.mini.__enter__()
         await self.switch_state(self._default_state)
         self._bootstrapped.set()
 
-    async def __aenter__(self):
-        await self.bootstrap()
-        return self
-
     async def aclose(self):
+        self.mini.__exit__(None, None, None)
         await self.switch_state(AsleepState.NAME)
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.aclose()
 
 
 class MossInReachyMiniProvider(Provider[MossInReachyMini]):
@@ -166,7 +168,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         if LiveState is not None:
             try:
                 live = con.force_fetch(LiveState)
-            except Exception:
+            except Exception as e:
                 live = None
         logger = con.get(LoggerItf)
 

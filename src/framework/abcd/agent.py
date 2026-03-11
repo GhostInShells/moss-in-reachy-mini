@@ -13,6 +13,7 @@ from framework.abcd.agent_event import AgentEventModel, AgentEvent
 
 
 class Response(ABC):
+    agent_id: str
     thread_id: str
     response_id: str
     event: AgentEventModel
@@ -118,23 +119,6 @@ class AgentStateName(str, Enum):
         return state != cls.SHUTDOWN and state != cls.HALT and state != cls.CRATED
 
 
-class EventBus(ABC):
-    @abstractmethod
-    async def put(self, event: AgentEvent) -> None:
-        """
-        将 event 入队.
-        """
-        pass
-
-    @abstractmethod
-    async def get(self, timeout: Union[float, None] = None) -> Union[AgentEvent, None]:
-        """
-        吐出 event.
-        :param timeout: 超时时间, 并不会抛出异常, 如果拿不到会返回 None. 如果超时时间为 None, 则是 get_nowait
-        """
-        pass
-
-
 class ModelConf(BaseModel):
     default_env: ClassVar[dict[str, None | str]] = {
         "base_url": None,
@@ -212,7 +196,7 @@ class AgentConfig(BaseModel):
     )
 
     model: ModelConf = Field(
-        default=ModelConf(),
+        default_factory=ModelConf,
         description="大模型配置"
     )
 
@@ -235,6 +219,10 @@ class Agent(ABC):
         pass
 
     @abstractmethod
+    async def add_event(self, event: AgentEventModel) -> None:
+        pass
+
+    @abstractmethod
     def state(self) -> AgentStateName:
         """
         同步获取 Agent 状态, 用于一些展示.
@@ -243,10 +231,6 @@ class Agent(ABC):
 
     @abstractmethod
     def broadcaster(self) -> Broadcaster:
-        pass
-
-    @abstractmethod
-    def eventbus(self) -> EventBus:
         pass
 
     @abstractmethod

@@ -7,7 +7,7 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Text, Message, PyChannel
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
@@ -64,7 +64,7 @@ class WakenState(MiniStateHook):
                 )
             ],
             priority=-1,
-        ).to_agent_event())
+        ))
 
     async def on_self_exit(self):
         await self.head.stop_tracking_face()
@@ -75,7 +75,7 @@ class WakenState(MiniStateHook):
         if self._idle_move_duration >= self._time_to_boring:
             await self.eventbus.put(CTMLAgentEvent(
                 ctml='<reachy_mini:switch_state state_name="boring" />'
-            ).to_agent_event())
+            ))
 
         if self.eventbus:
             # 1. 计算每秒循环次数
@@ -97,7 +97,7 @@ class WakenState(MiniStateHook):
                         )
                     ],
                     priority=-1,
-                ).to_agent_event())
+                ))
                 # 5. 触发后衰减基础概率（避免频繁触发）
                 self._base_proactive_prob -= self._trigger_decay
                 # 确保衰减后基础概率不低于最小值

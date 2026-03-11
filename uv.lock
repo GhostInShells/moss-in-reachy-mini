@@ -912,12 +912,13 @@ dependencies = [
     { name = "anyio" },
     { name = "ghoshell-common" },
     { name = "ghoshell-container" },
+    { name = "janus" },
     { name = "openai" },
     { name = "pillow" },
     { name = "python-frontmatter" },
 ]
 wheels = [
-    { filename = "ghoshell_moss-0.1.0a0-py3-none-any.whl", hash = "sha256:6be75cc77ed0bf0f5b00a579f1d8cca2632dbbac26f544b551e66a18b44ae82a" },
+    { filename = "ghoshell_moss-0.1.0a0-py3-none-any.whl", hash = "sha256:72e9b971c75c9c17d96c2b4c335629dcc1088dbbf6f3dc684cfa67a78bea87b3" },
 ]
 
 [package.optional-dependencies]
@@ -954,6 +955,7 @@ requires-dist = [
     { name = "fakeredis", marker = "extra == 'redis'", specifier = ">=2.32.1" },
     { name = "ghoshell-common", specifier = ">=0.5.0" },
     { name = "ghoshell-container", specifier = ">=0.3.1" },
+    { name = "janus", specifier = ">=2.0.0" },
     { name = "javascript", marker = "extra == 'contrib'", specifier = ">=1!1.2.6" },
     { name = "litellm", marker = "extra == 'contrib'", specifier = ">=1.78.5" },
     { name = "live2d-py", marker = "extra == 'contrib'", specifier = ">=0.5.4,<0.6.0" },
@@ -1256,6 +1258,15 @@ dependencies = [
     { name = "tqdm" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/8d/0f4af90999ca96cf8cb846eb5ae27c5ef5b390f9c090dd19e4fa76364c13/insightface-0.7.3.tar.gz", hash = "sha256:f191f719612ebb37018f41936814500544cd0f86e6fcd676c023f354c668ddf7", size = 439490, upload-time = "2023-04-02T08:01:54.541Z" }
+
+[[package]]
+name = "janus"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/7f/69884b6618be4baf6ebcacc716ee8680a842428a19f403db6d1c0bb990aa/janus-2.0.0.tar.gz", hash = "sha256:0970f38e0e725400496c834a368a67ee551dc3b5ad0a257e132f5b46f2e77770", size = 22910, upload-time = "2024-12-13T12:59:08.622Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/68/34/65604740edcb20e1bda6a890348ed7d282e7dd23aa00401cbe36fd0edbd9/janus-2.0.0-py3-none-any.whl", hash = "sha256:7e6449d34eab04cd016befbd7d8c0d8acaaaab67cb59e076a69149f9031745f9", size = 12161, upload-time = "2024-12-13T12:59:06.106Z" },
+]
 
 [[package]]
 name = "javascript"

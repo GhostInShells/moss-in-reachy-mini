@@ -1,0 +1,4 @@
+# from class: framework.apps.session.storage_session:MetaConfig
+current_session_id: b12767a7-90cf-42bd-8be4-d7999dac4d45
+max_tokens: -1
+turn_rounds: 20

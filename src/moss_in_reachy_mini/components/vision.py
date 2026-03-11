@@ -62,7 +62,7 @@ class Vision:
             event = VisionAgentEvent(content=about + ' 本次look失败,没有获取到视觉信息', images=[])
 
         event.priority = -1  # 降低优先级
-        await agent.eventbus().put(event.to_agent_event())
+        await agent.eventbus().put(event)
 
     async def context_messages(self):
         msg = Message.new(role="system", name="__reachy_mini_vision__")

@@ -2,26 +2,28 @@ import asyncio
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE
+from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE, Container
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
-from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
-from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import AgentConfig, ModelConf, EventBus, Agent
-from framework.abcd.memory import Memory
+from framework.abcd.agent import AgentConfig, ModelConf
+from framework.abcd.agent_hub import EventBus, AgentHub
+from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
+from framework.agent.agent_hub import AgentHubImpl
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
-from framework.agent.utils import run_agent_with_chat
-from framework.apps.live.douyin_live import DouyinLiveProvider
+from framework.agent.utils import setup_chat
+from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
+from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
-from framework.apps.news import NewsAPIProvider
+from framework.apps.session.storage_session import StorageSession
 from framework.apps.todolist import TodoList, TodoListProvider
+from framework.apps.utils import AgentConsoleChat
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
@@ -39,54 +41,157 @@ from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
 
 
-class ShellProvider(Provider[MOSSShell]):
+MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
-    def singleton(self) -> bool:
-        return True
 
-    def factory(self, con: IoCContainer) -> INSTANCE:
-        mini = con.force_fetch(ReachyMini)
-        moss = con.force_fetch(MossInReachyMini)
-        memory = con.force_fetch(StorageMemory)
-        todolist = con.force_fetch(TodoList)
-        # news = con.force_fetch(NewsAPI)
-        shell = new_ctml_shell(
-            container=con,
-            speech=get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
-            experimental=False,
-        )
-        shell.main_channel.import_channels(
-            moss.as_channel(),
-            memory.as_channel(),
-            todolist.as_channel(),
-        )
-        return shell
+def build_live_agent(parent: Container) -> LiveAgent:
+    container = Container(parent=parent, name="live_agent")
 
-class AgentProvider(Provider[Agent]):
-    def __init__(self, config: AgentConfig):
-        self._config = config
+    # chat
+    container.set(BaseChat, AgentConsoleChat(agent_id="live"))
+    container.register(ChatBroadcasterProvider())
 
-    def singleton(self) -> bool:
-        return True
+    # memory
+    memory = container.force_fetch(StorageMemory)
 
-    def factory(self, con: IoCContainer) -> INSTANCE:
-        shell = con.force_fetch(MOSSShell)
-        memory = con.force_fetch(Memory)
-        moss = con.force_fetch(MossInReachyMini)
-        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=moss)
+    # session
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("live_agent_sessions")
+    session = StorageSession(storage)
+    container.set(Session, session)
 
-def providers(container: IoCContainer):
-    # Mini
-    container.set(ReachyMini, ReachyMini())
-    container.register(FrameHubProvider())
-    # Shared microphone capture (avoid multi-stream conflicts)
-    container.register(MicHubProvider())
-    container.register(AgentFastAPIProvider())
-    # Agent输入
-    container.set(EventBus, QueueEventBus())
+    # douyin_live
+    douyin_live = container.force_fetch(DouyinLive)
+
+    # moss_in_reachy_mini
+    moss = container.force_fetch(MossInReachyMini)
+
+    # shell
+    shell = new_ctml_shell(
+        name="live_shell",
+        container=container,
+    )
+    shell.main_channel.import_channels(
+        memory.as_channel(),
+        session.as_channel(),
+        douyin_live.as_channel(is_live_agent=True),
+        moss.as_channel(only_context_messages=True)
+    )
+    container.set(MOSSShell, shell)
+    instructions = load_instructions(
+        container,
+        files=["ctml_enrich.md", "live_agent_persona.md"],
+        storage_name="instructions",
+    )
+    live_agent = LiveAgent.new(container, AgentConfig(
+        id="live",
+        name="live",
+        description="",
+        model=ModelConf(
+            base_url="$LIVE_LLM_BASE_URL",
+            model="$LIVE_LLM_MODEL",
+            api_key="$LIVE_LLM_API_KEY",
+            kwargs={
+                "extra_body": {
+                    "thinking": {
+                        "type": "enabled",
+                    },
+                    "enable_web_search": True
+                }
+            },
+            temperature=float(os.getenv("LIVE_LLM_TEMPERATURE", "0.7")),
+        ),
+        instructions=instructions,
+    ))
+
+    return live_agent
+
+
+async def build_main_agent(parent: Container) -> MainAgent:
+    container = Container(parent=parent, name="main_agent")
+
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsolePTTChat(container=container))
+
+    # 会话记录
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("main_agent_sessions")
+    session = StorageSession(storage)
+    container.set(Session, session)
+
+    # Shell
+    mini = container.force_fetch(ReachyMini)
+    moss = container.force_fetch(MossInReachyMini)
+    shell = new_ctml_shell(
+        container=container,
+        speech=get_speech(
+            mini,
+            default_speaker="zh_female_mizai_saturn_bigtts",
+            container=container,
+        ),
+        experimental=False,
+    )
+    shell.main_channel.import_channels(
+        moss.as_channel(),
+        container.force_fetch(StorageMemory).as_channel(),
+        # container.force_fetch(TodoList).as_channel(),
+        container.force_fetch(DouyinLive).as_channel(),
+    )
+    container.set(MOSSShell, shell)
+
+    # Agent
+    instructions = load_instructions(
+        container,
+        files=["ctml_enrich.md", "websearch.md", "news.md", "speech.md"],
+        storage_name="instructions",
+    )
+    main_agent = MainAgent.new(
+        container=container,
+        config=AgentConfig(
+            id="main",
+            name="main",
+            description="",
+            model=ModelConf(
+                kwargs={
+                    "extra_body": {
+                        "thinking": {
+                            "type": "disabled",
+                        },
+                        "enable_web_search": True
+                    }
+                },
+                temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
+            ),
+            instructions=instructions,
+        ),
+    )
+    main_agent.set_state_hook(moss)
+    return main_agent
+
+
+def common_dependencies(container: IoCContainer):
+    container.register(AgentFastAPIProvider())
+    # AgentHub Eventbus
+    container.set(EventBus, QueueEventBus())
+    # Agent记忆
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage(MEMORY)
+    memory = StorageMemory(storage)
+    container.set(StorageMemory, memory)
+
+    # 默认Agent输出
+    chat = ConsolePTTChat(container=container)
+    container.set(BaseChat, chat)
+
+    # DouyinLive
+    container.register(DouyinLiveProvider())
+
+    # TodoList
+    # container.register(TodoListProvider())
+
+    # Mini
+    container.set(ReachyMini, ReachyMini())
+
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())
@@ -95,76 +200,54 @@ def providers(container: IoCContainer):
     container.register(HeadTrackerProvider())
     container.register(CameraWorkerProvider())
     container.register(VideoRecorderWorkerProvider())
-    # Agent记忆
-    ws = container.force_fetch(Workspace)
-    storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
-    logger = container.get(LoggerItf)
-    if logger:
-        logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
-    storage = ws.runtime().sub_storage(storage_name)
-    memory = StorageMemory(storage)
-    container.set(StorageMemory, memory)
-    container.set(Memory, memory)
-    # TodoList
-    container.register(TodoListProvider())
-    # News
-    container.register(NewsAPIProvider())
-    # Douyin Live
-    container.register(DouyinLiveProvider())
-    # Shell
-    container.register(ShellProvider())
-    # Agent
-    instructions = load_instructions(
-        container,
-        files=["ctml_enrich.md", "websearch.md", "news.md"],
-        storage_name="reachy_mini_instructions",
-    )
-    container.register(AgentProvider(AgentConfig(
-        id="reachy_mini",
-        name="reachy_mini",
-        description="",
-        model=ModelConf(
-            kwargs={
-                "extra_body": {
-                    "thinking": {
-                        "type": "disabled",
-                        "enable_web_search": True
-                    }
-                }
-            },
-            temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
-        ),
-        instructions=instructions,
-    )))
-    # Moss
-    container.register(MossInReachyMiniProvider())
+    container.register(FrameHubProvider())
+    # Shared microphone capture (avoid multi-stream conflicts)
+    container.register(MicHubProvider())
     # Moss State
     container.register(AsleepStateProvider())
     container.register(WakenStateProvider())
     container.register(BoringStateProvider())
     container.register(LiveStateProvider())
 
+    # Moss
+    container.register(MossInReachyMiniProvider())
 
-async def run_agent(container, zmq_hub):
-    providers(container)
-    _mini = container.force_fetch(ReachyMini)
-    with _mini:
-        moss = container.force_fetch(MossInReachyMini)
-        async with moss:
-            agent = container.make(Agent)
-            chat = container.make(BaseChat)
-            agent_fastapi = container.make(AgentFastAPI)
 
-            await asyncio.gather(
-                run_agent_with_chat(agent, chat),
-                agent_fastapi.run()
-            )
+async def run(container):
+    # 公共依赖
+    common_dependencies(container)
+
+    agents = []
+    # 主Agent
+    main_agent = await build_main_agent(container)
+    agents.append(main_agent)
+
+    if os.getenv("REACHY_MINI_MODE") == "live":
+        # 旁路Live Agent
+        live_agent = build_live_agent(container)
+        agents.append(live_agent)
+
+    # AgentHub
+    eventbus = container.force_fetch(EventBus)
+    agent_hub = AgentHubImpl(
+        main_agent_id=main_agent.info().id,
+        agents=agents,
+        eventbus=eventbus,
+        logger=container.get(LoggerItf),
+    )
+
+    # HTTP API
+    agent_fastapi = container.make(AgentFastAPI)
+    await asyncio.gather(
+        agent_hub.bootstrap(),
+        setup_chat(eventbus, container.force_fetch(BaseChat)),
+        agent_fastapi.run(),
+    )
 
 
 def get_speech(
     mini: ReachyMini,
     default_speaker: str | None = None,
-    logger_: LoggerItf=None,
     container: IoCContainer=None,
 ) -> BaseTTSSpeech:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
@@ -194,16 +277,14 @@ def get_speech(
         tts=VolcengineTTS(conf=tts_conf),
         player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
     )
-    speech.commands = lambda: []
+    # speech.commands = lambda: []
     return speech
 
 
-def main():
+async def main():
     import pathlib
 
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
-    current_dir = pathlib.Path(__file__).parent
-    root_dir = str(current_dir.parent.joinpath("moss_zmq_channels").absolute())
 
     from ghoshell_moss_contrib.example_ws import workspace_container
 
@@ -211,21 +292,7 @@ def main():
         logger = setup_logger(str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),)
         container.set(LoggerItf, logger)
 
-        zmq_hub = ZMQChannelHub(
-            config=ZMQHubConfig(
-                name="hub",
-                description="可以启动指定的子通道并运行.",
-                # todo: 当前版本全部基于约定来做. 快速验证.
-                root_dir=root_dir,
-                proxies={
-                    "slide": ZMQProxyConfig(
-                        script="slide_app.py",
-                        description="可以打开你的slide studio gui，通过这个通道你可以呈现并讲述一个slide主题",
-                    ),
-                },
-            ),
-        )
-        asyncio.run(run_agent(container, zmq_hub))
+        await run(container)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

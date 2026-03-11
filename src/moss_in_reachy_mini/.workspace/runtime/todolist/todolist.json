@@ -1,0 +1,23 @@
+[
+    {
+        "key": "1",
+        "title": "开场预热",
+        "description": "按照后台建议进行开场预热，吸引潜在观众",
+        "status": "done",
+        "parent_key": ""
+    },
+    {
+        "key": "2",
+        "title": "执行直播间互动策略",
+        "description": "根据后台建议，设计专属欢迎仪式、展示实时响应能力、建立心跳式互动节奏，活跃直播间氛围",
+        "status": "done",
+        "parent_key": ""
+    },
+    {
+        "key": "3",
+        "title": "冷启动引流",
+        "description": "按照后台建议进行冷启动引流，吸引路过用户停留",
+        "status": "done",
+        "parent_key": ""
+    }
+]

@@ -1,9 +1,0 @@
-# from class: framework.apps.memory.storage_memory:MetaConfig
-autobiographical_memory_md: .autobiographical_memory.md
-behavior_preference_md: .behavior_preference.md
-current_session_id: 1fc51316-4c5b-410e-b23c-5394d3e6904f
-max_tokens: -1
-mood_base_md: .mood_base.md
-personality_md: .personality.md
-summary_memory_md: .summary_memory.md
-turn_rounds: 10

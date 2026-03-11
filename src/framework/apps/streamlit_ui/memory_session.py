@@ -5,7 +5,8 @@ import streamlit as st
 import asyncio
 from ghoshell_moss import Message, Text
 from framework.agent.response import AgentEventAddition
-from framework.apps.memory.storage_memory import TurnAddition, StorageMemory
+from framework.apps.memory.storage_memory import StorageMemory
+from framework.apps.session.storage_session import StorageSession, TurnAddition
 
 
 def run_async(coro):
@@ -20,8 +21,9 @@ def run_async(coro):
 
 # ========== Streamlit UI类 ==========
 class StorageMemoryUI:
-    def __init__(self, storage_memory: StorageMemory):
+    def __init__(self, storage_memory: StorageMemory, storage_session: StorageSession):
         self.storage_memory = storage_memory
+        self.storage_session = storage_session
 
         # 初始化页面配置
         st.set_page_config(
@@ -35,7 +37,7 @@ class StorageMemoryUI:
 
 
     def render(self):
-        st.title("🧠 Agent Memory")
+        st.title("🧠 Agent Memory & Session")
         st.text("ps:本页面所有模块的数据都是Agent可见的数据")
         st.divider()
 
@@ -58,13 +60,13 @@ class StorageMemoryUI:
         st.subheader("会话管理")
         with st.container(border=True):
             # 直接从StorageMemory获取会话ID
-            st.text(f"当前会话ID：\n{self.storage_memory.meta_config.current_session_id}")
+            st.text(f"当前会话ID：\n{self.storage_session.meta_config.current_session_id}")
 
             # 新建会话按钮：直接调用StorageMemory方法
             if st.button("📝 新建会话", type="primary"):
                 with st.spinner("正在创建新会话..."):
-                    run_async(self.storage_memory.new_session())
-                    st.success(f"新会话创建成功！ID：{self.storage_memory.meta_config.current_session_id}")
+                    run_async(self.storage_session.new_session())
+                    st.success(f"新会话创建成功！ID：{self.storage_session.meta_config.current_session_id}")
                     st.rerun()
 
     def _render_memory_limitation(self):
@@ -72,8 +74,8 @@ class StorageMemoryUI:
         st.subheader("记忆限制配置")
         with st.container(border=True):
             # 直接从StorageMemory获取当前配置
-            current_turns = self.storage_memory.meta_config.turn_rounds
-            current_tokens = self.storage_memory.meta_config.max_tokens
+            current_turns = self.storage_session.meta_config.turn_rounds
+            current_tokens = self.storage_session.meta_config.max_tokens
 
             # 输入新配置
             new_turns = st.number_input(
@@ -92,7 +94,7 @@ class StorageMemoryUI:
             # 保存配置：直接调用StorageMemory方法
             if st.button("💾 保存配置"):
                 with st.spinner("正在保存配置..."):
-                    run_async(self.storage_memory.set_limitation(new_turns, new_tokens))
+                    run_async(self.storage_session.set_limitation(new_turns, new_tokens))
                     st.success("记忆限制配置已保存")
 
     def _render_memory_editors(self):
@@ -151,7 +153,7 @@ class StorageMemoryUI:
         st.subheader("📜 对话历史（按轮次分组）")
         with st.container(border=True):
             # 直接从StorageMemory获取会话历史
-            history_msgs = run_async(self.storage_memory.get_session_history())
+            history_msgs = run_async(self.storage_session.get_session_history())
             if not history_msgs:
                 st.info("当前会话暂无对话记录")
                 return

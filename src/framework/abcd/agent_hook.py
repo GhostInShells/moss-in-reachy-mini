@@ -13,7 +13,7 @@ class AgentHook(abc.ABC):
         pass
 
 
-class AgentHookState(Protocol):
+class AgentStateHook(Protocol):
 
     def get_hook(self) -> AgentHook:
         ...

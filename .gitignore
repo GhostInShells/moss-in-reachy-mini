@@ -13,7 +13,10 @@ wheels/
 .idea
 .DS_Store
 temp.png
+*_temp.json
 temp.json
 video_records/
+
+thread_*.json
 
 known_faces.json

@@ -56,7 +56,6 @@ python scripts/train_face.py
 .env文件中添加以下内容
 ```
 REACHY_MINI_MODE="live"
-REACHY_MINI_MEMORY_STORAGE="live_memory" # 直播模式下的记忆存储位置
 ```
 运行main.py即可开启直播模式
 

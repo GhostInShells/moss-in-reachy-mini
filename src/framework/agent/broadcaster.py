@@ -3,7 +3,7 @@ from typing import Union
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Message, TextDelta, Text
+from ghoshell_moss import Message, TextDelta, Text, MessageStage
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
 from framework.abcd.agent import Broadcaster
@@ -38,7 +38,8 @@ class ChatBroadcaster(Broadcaster):
         if message.role == "assistant" and message.seq == "delta":
             chunk = TextDelta.from_delta(message.delta)
             if chunk:
-                self._chat.update_ai_response(chunk=chunk.content)
+                is_thinking = message.meta.stage == MessageStage.REASONING.value
+                self._chat.update_ai_response(chunk=chunk.content, is_thinking=is_thinking)
         if message.role == "assistant" and message.is_done():
             self._chat.finalize_ai_response()
 
@@ -59,6 +60,15 @@ class ChatBroadcasterProvider(Provider[Broadcaster]):
     def singleton(self) -> bool:
         return True
 
-    def factory(self, con: IoCContainer) -> INSTANCE:
+    def factory(self, con: IoCContainer) -> Broadcaster:
         chat = con.force_fetch(BaseChat)
         return ChatBroadcaster(chat=chat)
+
+
+class LogBroadcasterProvider(Provider[Broadcaster]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: IoCContainer) -> Broadcaster:
+        logger = con.get(LoggerItf)
+        return LogBroadcaster(logger=logger)

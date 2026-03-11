@@ -7,7 +7,7 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Text, Message, PyChannel
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import CTMLAgentEvent
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.vision import Vision
@@ -42,7 +42,7 @@ class BoringState(MiniStateHook):
         if self._idle_move_duration >= self._time_to_sleep:
             await self.eventbus.put(CTMLAgentEvent(
                 ctml='<reachy_mini:switch_state state_name="asleep" />'
-            ).to_agent_event())
+            ))
 
         loop_times_per_second = 1 / self._idle_move_elapsed  # 每秒循环的次数
         per_loop_prob = 1 - math.pow(1 - self._emotion_prob, 1 / loop_times_per_second)  # 每次循环的概率
