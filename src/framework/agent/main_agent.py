@@ -6,17 +6,17 @@ from abc import ABC, abstractmethod
 from typing import Union, Optional, Self, List
 
 from ghoshell_common.contracts.logger import LoggerItf
-from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_container import Container, Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Message, Text, MOSSShell
 
 from framework.abcd.agent import (
-    Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, EventBus, ModelConf
+    Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, ModelConf
 )
-from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, AgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent
-from framework.abcd.agent_hook import AgentHookState
-from framework.abcd.memory import Memory
+from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, \
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEventModel
+from framework.abcd.agent_hook import AgentStateHook
+from framework.abcd.agent_hub import EventBus
+from framework.abcd.session import Session
 from framework.agent.response import MOSShellResponse, CTMLResponse
 from framework.agent.utils import get_event, InterruptedContent
 
@@ -31,12 +31,12 @@ class BaseMainAgent(Agent, ABC):
             container: IoCContainer,
             config: AgentConfig,
             shell: MOSSShell,
-            memory: Memory,
-            hook_state: AgentHookState=None,
+            session: Session,
+            state_hook: AgentStateHook=None,
     ):
         self.shell = shell
-        self.memory = memory
-        self.hook_state = hook_state
+        self.session = session
+        self.state_hook = state_hook
 
         self.config = config
         self._id = config.id
@@ -52,11 +52,11 @@ class BaseMainAgent(Agent, ABC):
         self._halt_event = asyncio.Event() # 停止所有事件的运行
         self._shutdown_event = asyncio.Event() # 关闭整个 agent 运行
 
-        self._add_event_queue: asyncio.Queue[AgentEvent]= asyncio.Queue()
+        self._add_event_queue: asyncio.Queue[AgentEventModel]= asyncio.Queue()
 
-        self._preempt_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 抢占式调度的事件队列
-        self._queued_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 普通的事件队列
-        self._low_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 低优先级的事件队列
+        self._preempt_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 抢占式调度的事件队列
+        self._queued_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 普通的事件队列
+        self._low_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 低优先级的事件队列
 
         self._auto_shutdown: bool = False
 
@@ -69,6 +69,9 @@ class BaseMainAgent(Agent, ABC):
     def logger(self):
         return self._logger
 
+    def set_state_hook(self, state_hook: AgentStateHook):
+        self.state_hook = state_hook
+
     # 异步方法替代 setter，明确标识异步操作
     async def set_state(self, value: AgentStateName):
         if self._state == value:
@@ -76,13 +79,13 @@ class BaseMainAgent(Agent, ABC):
 
         self._state = value
 
-        if not self.hook_state:
+        if not self.state_hook:
             return
         # 执行异步 hook
         if value == AgentStateName.RESPONDING:
-            await self.hook_state.get_hook().on_responding()
+            await self.state_hook.get_hook().on_responding()
         if value == AgentStateName.IDLE:
-            await self.hook_state.get_hook().on_idle()
+            await self.state_hook.get_hook().on_idle()
 
     async def make_prompts(self) -> List[Message]:
         """
@@ -97,7 +100,7 @@ class BaseMainAgent(Agent, ABC):
         return [system_prompt]
 
     @abstractmethod
-    def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
+    def _parse_event(self, event: AgentEventModel) -> Union[AgentEventModel, None]:
         """
         重写这个事件, 可以做 agent 级别的拦截.
         """
@@ -142,9 +145,6 @@ class BaseMainAgent(Agent, ABC):
     def broadcaster(self) -> Broadcaster:
         return self._broadcaster
 
-    def eventbus(self) -> EventBus:
-        return self._eventbus
-
     async def _idle(self, duration: Union[float, None]) -> None:
         """
         闲置一段时间, 并且会增加闲置状态.
@@ -156,9 +156,9 @@ class BaseMainAgent(Agent, ABC):
         self._idling_time += duration
         await self.set_state(AgentStateName.IDLE)
 
-    async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
+    async def _handle_event(self, event: AgentEventModel) -> Optional[Response]:
         prompts = await self.make_prompts()
-        if user_input := UserInputAgentEvent.from_agent_event(event):
+        if user_input := UserInputAgentEvent.from_agent_event_model(event):
             now = time.time()
             # 不处理过期事件.
             if user_input.is_overdue(now):
@@ -166,6 +166,7 @@ class BaseMainAgent(Agent, ABC):
                 return None
             return MOSShellResponse(
                 shell=self.shell,
+                agent_id=self._id,
                 event=user_input,
                 inputs=[user_input.message],
                 model=self.config.model,
@@ -174,9 +175,10 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if react := ReactAgentEvent.from_agent_event(event):
+        if react := ReactAgentEvent.from_agent_event_model(event):
             return MOSShellResponse(
                 shell=self.shell,
+                agent_id=self._id,
                 event=react,
                 inputs=react.messages,
                 model=self.config.model,
@@ -185,13 +187,14 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if vision := VisionAgentEvent.from_agent_event(event):
+        if vision := VisionAgentEvent.from_agent_event_model(event):
             inputs = [Message.new(role="system").with_content(
                 Text(text=vision.content),
                 *vision.images,
             )]
             return MOSShellResponse(
                 shell=self.shell,
+                agent_id=self._id,
                 event=vision,
                 inputs=inputs,
                 model=self.config.model,
@@ -200,11 +203,13 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if ctml := CTMLAgentEvent.from_agent_event(event):
+        if ctml := CTMLAgentEvent.from_agent_event_model(event):
             return CTMLResponse(
                 shell=self.shell,
+                agent_id=self._id,
                 ctml=ctml.ctml,
                 event=ctml,
+                eventbus=self._eventbus,
                 logger=self.logger,
             )
 
@@ -243,7 +248,7 @@ class BaseMainAgent(Agent, ABC):
         outputs = response.buffered()
         # 判断 outputs 不为空, 就再次保存.
         if inputs or outputs:
-             await self.memory.save_turn(inputs, outputs)
+             await self.session.save_turn(inputs, outputs)
 
         # 如果response output里有拿到ctml执行的返回值，直接触发ReactEvent给Agent继续处理
         # if len(outputs) > 0 and outputs[-1].is_completed():
@@ -255,7 +260,7 @@ class BaseMainAgent(Agent, ABC):
         #         await self.eventbus().put(ReactAgentEvent(
         #             event_id=response.response_id,  # 保持同一个会话
         #             messages=[Message.new(role="assistant").with_content(*ctml_results)]
-        #         ).to_agent_event())
+        #         ))
 
         # if len(outputs) > 0 and outputs[-1].is_completed():
         #     ctml_results: List[CTMLResult] = []
@@ -285,8 +290,7 @@ class BaseMainAgent(Agent, ABC):
         #         await self.eventbus().put(ReactAgentEvent(
         #             event_id=response.response_id,  # 保持同一个会话
         #             messages=[Message.new(role="assistant").with_content(*reactable_results)]
-        #         ).to_agent_event())
-
+        #         ))
 
     async def _clear_running_response(self, response_id: str) -> None:
         if self._running_response and self._running_response.response_id == response_id:
@@ -352,10 +356,13 @@ class BaseMainAgent(Agent, ABC):
                 self._logger.exception(e)
                 self._error_time += 1
 
+    async def add_event(self, event: AgentEventModel):
+        await self._add_event_queue.put(event)
+
     async def _add_event_loop(self) -> None:
         while not self._shutdown_event.is_set():
             try:
-                e = await self._eventbus.get()
+                e = await self._add_event_queue.get()
                 await self._add_event(e)
             except asyncio.TimeoutError:
                 continue
@@ -364,14 +371,14 @@ class BaseMainAgent(Agent, ABC):
             except Exception as e:
                 self._logger.exception(e)
 
-    async def _add_event(self, event: AgentEvent) -> None:
+    async def _add_event(self, event: AgentEventModel) -> None:
         # 系统级别的事件, 强制关闭 agent 运行.
-        if ShutdownAgentEvent.from_agent_event(event):
+        if event.event_type == ShutdownAgentEvent.event_type:
             await self.close()
             return
 
         # 中断事件，强制中断当前响应生成
-        if InterruptAgentEvent.from_agent_event(event):
+        if event.event_type == InterruptAgentEvent.event_type:
             await self._interrupt()
             return
 
@@ -380,20 +387,20 @@ class BaseMainAgent(Agent, ABC):
         if parsed is None:
             return
 
-        if parsed["priority"] < 0:
+        if parsed.priority < 0:
             # 低优先级事件, 进入普通队列.
             await self._low_event_queue.put(parsed)
             return
 
-        elif parsed["priority"] == 0:
+        elif parsed.priority == 0:
             # 普通事件, 进入正常队列.
             await self._queued_event_queue.put(parsed)
             return
 
         _running_response = self._running_response
         if _running_response is not None:
-            # 相同级别的事件在运行, 也会触发中断.
-            if parsed["priority"] >= _running_response.event.priority:
+            # 更高级别的事件也会触发中断.
+            if parsed.priority > _running_response.event.priority:
                 await self._preempt_event_queue.put(parsed)
                 await self._interrupt()
                 return
@@ -474,82 +481,11 @@ class MainAgent(BaseMainAgent):
     主 Agent.
     """
 
-    def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
+    def _parse_event(self, event: AgentEventModel) -> Union[AgentEventModel, None]:
         return event
 
     @classmethod
     def new(cls, container: Container, config: AgentConfig) -> Self:
         shell = container.force_fetch(MOSSShell)
-        memory = container.force_fetch(Memory)
-        return cls(container=container, config=config, shell=shell, memory=memory)
-
-
-class AgentProvider(Provider[Agent]):
-    def __init__(self, config: AgentConfig, hook_state: AgentHookState=None):
-        self._config = config
-        self._hook_state = hook_state
-
-    def singleton(self) -> bool:
-        return True
-
-    def factory(self, con: IoCContainer) -> INSTANCE:
-        shell = con.force_fetch(MOSSShell)
-        memory = con.force_fetch(Memory)
-        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=self._hook_state)
-
-
-async def main(container: Container, server) -> None:
-    agent = MainAgent.new(
-        container=container,
-        config=AgentConfig(
-            id="reachy_mini",
-            name="reachy_mini",
-            description="",
-            model=ModelConf(
-                kwargs={
-                    "extra_body": {
-                        "thinking": {
-                            "type": "disabled",
-                            "enable_web_search": True
-                        }
-                    }
-                },
-                temperature=0.6
-            ),
-            instructions="",
-        ),
-    )
-
-    await agent.start(auto_shutdown=False)
-    await server.run()
-
-
-if __name__ == '__main__':
-    from ghoshell_moss import new_ctml_shell
-    from framework.apps.memory.storage_memory import StorageMemory
-    from framework.agent.broadcaster import ChatBroadcasterProvider
-    from ghoshell_moss_contrib.agent.chat.base import BaseChat
-    from ghoshell_moss_contrib.agent import ConsoleChat
-    from ghoshell_moss.speech import MockSpeech
-    from framework.agent.agent_fastapi import AgentFastAPI
-    from framework.agent.eventbus import QueueEventBus
-    from ghoshell_moss.channels.speech_channel import SpeechChannel
-
-    _container = Container()
-    _container.set(LoggerItf, logging.getLogger())
-    logging.basicConfig(level=logging.INFO)
-
-    _memory = StorageMemory(MemoryStorage(dir_=""))
-    _container.set(Memory, _memory)
-    _speech = MockSpeech(typing_sleep=0.1)
-    _shell = new_ctml_shell(container=_container, speech=_speech)
-
-    _shell.main_channel.import_channels(
-        _memory.as_channel(),
-    )
-    _container.set(MOSSShell, _shell)
-    eventbus = QueueEventBus()
-    _container.set(EventBus, eventbus)
-    _container.set(BaseChat, ConsoleChat(logger=_container.get(LoggerItf)))
-    _container.register(ChatBroadcasterProvider())
-    asyncio.run(main(container=_container, server=AgentFastAPI(eventbus=eventbus)))
+        session = container.force_fetch(Session)
+        return cls(container=container, config=config, shell=shell, session=session)

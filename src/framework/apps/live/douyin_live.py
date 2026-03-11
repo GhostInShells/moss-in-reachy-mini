@@ -3,23 +3,26 @@ import enum
 import json
 import logging
 import random
-import threading
 import time
-from collections import defaultdict
-from typing import List, Optional, Tuple, Dict
+from collections import defaultdict, deque
+from typing import List, Optional, Tuple, Dict, Set
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from ghoshell_common.contracts import YamlConfig, Storage, WorkspaceConfigs, FileStorage, Workspace, LoggerItf
 from ghoshell_container import INSTANCE, Provider, IoCContainer
 from ghoshell_moss import Message, Text, PyChannel
 from pydantic import Field, BaseModel
 
-from framework.abcd.agent import EventBus
 from framework.abcd.agent_event import UserInputAgentEvent
+from framework.abcd.agent_hub import EventBus
 from framework.apps.live.DouyinLiveWebFetcher.liveMan import DouyinLiveWebFetcher
 from framework.apps.live.DouyinLiveWebFetcher.protobuf.douyin import ChatMessage, GiftMessage, LikeMessage, \
     MemberMessage, \
     SocialMessage, RoomUserSeqMessage
+from framework.apps.live.barrage_classify.config import Priority
 from framework.apps.utils import EnumEncoder
+from framework.apps.live.barrage_classify.classifier import BarrageClassifier
 
 
 class DouyinLiveConfig(YamlConfig):
@@ -27,11 +30,23 @@ class DouyinLiveConfig(YamlConfig):
 
     live_id: str = Field(default="", description="douyin live id")
 
+    p0_prompt: str = Field(default="", description="douyin p0 prompt")
+    p0_overdue: int = Field(default=30, description="douyin p0 overdue")
     gift_prompt: str = Field(default="", description="douyin gift prompt")
-    idle_react_threshold: int = Field(default=10, description="idle threshold")
-    idle_prompts: List[str] = Field(default_factory=list, description="idle prompts")
 
     max_user_history_size: int = Field(default=10, description="max user history size")
+
+    cues_prompt: str = Field(default="", description="cues prompt")
+
+    # 快照配置
+    snapshot_interval: int = Field(default=5, description="快照生成间隔（秒）")
+    max_events_in_snapshot: int = Field(default=20, description="每次快照最多包含的事件数")
+    event_retention_seconds: int = Field(default=300, description="事件保留时间（秒）")
+
+    # 定时任务配置
+    periodic_task_interval: int = Field(default=60, description="定时任务触发间隔（秒）")
+    periodic_task_overdue: int = Field(default=30, description="定时任务触发间隔（秒）")
+    periodic_task_prompt: str = Field(default="", description="定时任务的提示词")
 
 
 class DouyinLiveEventType(enum.Enum):
@@ -42,6 +57,7 @@ class DouyinLiveEventType(enum.Enum):
     enter = "enter"
     like = "like"
     social = "social"
+    periodic = "periodic"  # 新增：定时任务事件类型
 
     def to_natural(self):
         return {
@@ -50,8 +66,9 @@ class DouyinLiveEventType(enum.Enum):
             DouyinLiveEventType.small_gift: "送出小礼物",
             DouyinLiveEventType.chat: "说",
             DouyinLiveEventType.enter: "进入直播间",
-            DouyinLiveEventType.social: "点击关注"
-        }.get(self)
+            DouyinLiveEventType.social: "点击关注",
+            DouyinLiveEventType.periodic: "定时任务触发"
+        }.get(self, self.value)
 
 
 # ========== 直播间的历史记录 ==========
@@ -65,7 +82,11 @@ class DouyinLiveEvent(BaseModel):
     content: str = Field(default_factory=str, description="user do what")
     # assistant: str = Field(default_factory=str, description="assistant response")
 
-    create_at: int = Field(default_factory=lambda :int(time.time()), description="time")
+    create_at: int = Field(default_factory=lambda: int(time.time()), description="time")
+
+    # 新增字段
+    priority: Optional[Priority] = Field(default=None, description="事件优先级")
+    bar_type: Optional[str] = Field(default=None, description="弹幕类型")
 
     def to_natural(self):
         local_time = time.localtime(self.create_at)
@@ -74,6 +95,7 @@ class DouyinLiveEvent(BaseModel):
         if self.content:
             res = f"{res} {self.content}"
         return res
+
 
 # 单个用户所有的交互历史
 class DouyinLiveUserHistory(BaseModel):
@@ -104,50 +126,141 @@ class DouyinLiveUserHistory(BaseModel):
         return res
 
 
+@dataclass
+class EventBuffer:
+    """事件缓冲区，用于存储和管理事件"""
+    events: deque = field(default_factory=deque)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def add(self, event: DouyinLiveEvent):
+        """添加事件到缓冲区"""
+        self.events.append(event)
+
+    def get_recent_events(self, max_count: int = 20) -> List[DouyinLiveEvent]:
+        """获取最近的事件"""
+        count = min(max_count, len(self.events))
+        return list(self.events)[-count:]
+
+    def clear_old_events(self, retention_seconds: int):
+        """清理过期事件"""
+        current_time = time.time()
+        cutoff_time = current_time - retention_seconds
+
+        # 找到第一个未过期的事件索引
+        first_valid_index = 0
+        for i, event in enumerate(self.events):
+            if event.create_at >= cutoff_time:
+                first_valid_index = i
+                break
+
+        # 清理过期事件
+        if first_valid_index > 0:
+            for _ in range(first_valid_index):
+                self.events.popleft()
+
+    def clear_all(self):
+        """清空所有事件"""
+        self.events.clear()
+
+
 class DouyinLive(DouyinLiveWebFetcher):
 
-    def __init__(self, eventbus: EventBus, history_storage: Storage, config: DouyinLiveConfig, logger: LoggerItf=None):
-        super().__init__(config.live_id)
+    def __init__(self, eventbus: EventBus, history_storage: Storage, config: DouyinLiveConfig,
+                 logger: LoggerItf = None):
+        super().__init__(config.live_id, logger=logger)
         self.eventbus = eventbus
         self.history_storage = history_storage.sub_storage(f"live_id_{config.live_id}")
         self.config = config
         self.logger = logger or logging.getLogger("DouyinLive")
 
-        # 抖音直播间最新的事件队列，礼物队列需要特殊处理
-        self.gift_queue: asyncio.Queue[DouyinLiveEvent] = asyncio.Queue()
-        self.event_queue: asyncio.Queue[DouyinLiveEvent] = asyncio.Queue()
+        # 分类器
+        self.classifier = BarrageClassifier()
 
-        # 已经看过的数据需要塞到save队列里保存到本地文件
+        # 事件缓冲区
+        self.event_buffer = EventBuffer()
+
+        # 实时处理队列（P0和礼物）
+        self.realtime_queue: asyncio.Queue[DouyinLiveEvent] = asyncio.Queue()
+        self._realtime_task: Optional[asyncio.Task] = None
+
+        # 快照任务
+        self._snapshot_task: Optional[asyncio.Task] = None
+
+        # 保存任务
         self.save_queue: asyncio.Queue[Tuple[str, str, List[DouyinLiveEvent]]] = asyncio.Queue()
         self.save_task: Optional[asyncio.Task] = None
 
-        # 当前直播间人数
+        # 定时任务
+        self._periodic_task: Optional[asyncio.Task] = None
+
+        # 当前直播间的人数
         self.current_users = 0
         self.total_users = 0
 
-        self._thread: Optional[threading.Thread] = None
         self._ws_task: Optional[asyncio.Task] = None
 
+        # 当前快照
+        self._current_snapshot: List[Message] = []
+        self._snapshot_lock = asyncio.Lock()
+
+        # 生命周期
+        self._start_lock = asyncio.Lock()
+        self._is_stopped = asyncio.Event()
+
     async def start(self):
-        self._ws_task = asyncio.create_task(self._connectWebSocket())
-        self.save_task = asyncio.create_task(self._run_save())
+        """
+        避免重复启动
+        """
+        async with self._start_lock:
+            if not self._ws_task:
+                self._ws_task = asyncio.create_task(self._connectWebSocket())
+            if not self.save_task:
+                self.save_task = asyncio.create_task(self._run_save())
+            if not self._realtime_task:
+                self._realtime_task = asyncio.create_task(self._run_realtime_processing())
+            if not self._snapshot_task:
+                self._snapshot_task = asyncio.create_task(self._run_snapshot_generator())
+            if not self._periodic_task:
+                self._periodic_task = asyncio.create_task(self._run_periodic_task())  # 启动定时任务
 
     async def stop(self):
+        if self._is_stopped.is_set():
+            return
+        self._is_stopped.set()
+
         if hasattr(self, "ws"):
             self.ws.close()
         if self._ws_task:
             self._ws_task.cancel()
         if self.save_task:
             self.save_task.cancel()
+        if self._realtime_task:
+            self._realtime_task.cancel()
+        if self._snapshot_task:
+            self._snapshot_task.cancel()
+        if self._periodic_task:
+            self._periodic_task.cancel()
 
     def _parseChatMsg(self, payload):
         message = ChatMessage().parse(payload)
-        self.event_queue.put_nowait(DouyinLiveEvent(
+        event = DouyinLiveEvent(
             user_id=str(message.user.id),
-            user_name= message.user.nick_name,
+            user_name=message.user.nick_name,
             event_type=DouyinLiveEventType.chat,
             content=message.content,
-        ))
+        )
+
+        # 分类弹幕
+        bar_type, priority = self.classifier.classify(message.content)
+        event.priority = priority
+        # event.bar_type = bar_type
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
+
+        # P0事件放入实时处理队列
+        if priority == Priority.P0:
+            self.realtime_queue.put_nowait(event)
 
     def _parseGiftMsg(self, payload):
         message = GiftMessage().parse(payload)
@@ -155,44 +268,63 @@ class DouyinLive(DouyinLiveWebFetcher):
         gift_cnt = message.combo_count
         diamond_count = message.diamond_count
 
-        if diamond_count <= 20: # 小礼物
+        if diamond_count <= 20:  # 小礼物
             event_type = DouyinLiveEventType.small_gift
-        elif diamond_count <= 100: # 中礼物
+        elif diamond_count <= 100:  # 中礼物
             event_type = DouyinLiveEventType.medium_gift
-        else: # 大礼物
+        else:  # 大礼物
             event_type = DouyinLiveEventType.super_gift
 
-        self.gift_queue.put_nowait(DouyinLiveEvent(
+        event = DouyinLiveEvent(
             user_id=str(message.user.id),
             user_name=message.user.nick_name,
             event_type=event_type,
-            content=f"{gift_name}（钻石={diamond_count}）x{gift_cnt}"
-        ))
+            content=f"{gift_name}（钻石={diamond_count}）x{gift_cnt}",
+            priority=Priority.P0  # 礼物都作为P0处理
+        )
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
+
+        # 放入实时处理队列
+        self.realtime_queue.put_nowait(event)
 
     def _parseLikeMsg(self, payload):
         message = LikeMessage().parse(payload)
-        self.event_queue.put_nowait(DouyinLiveEvent(
+        event = DouyinLiveEvent(
             user_id=str(message.user.id),
             user_name=message.user.nick_name,
             event_type=DouyinLiveEventType.like,
             content=f"{message.count}次",
-        ))
+            priority=Priority.P3  # 点赞作为P3
+        )
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
 
     def _parseMemberMsg(self, payload):
         message = MemberMessage().parse(payload)
-        self.event_queue.put_nowait(DouyinLiveEvent(
+        event = DouyinLiveEvent(
             user_id=str(message.user.id),
             user_name=message.user.nick_name,
             event_type=DouyinLiveEventType.enter,
-        ))
+            priority=Priority.P3  # 进入作为P3
+        )
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
 
     def _parseSocialMsg(self, payload):
         message = SocialMessage().parse(payload)
-        self.event_queue.put_nowait(DouyinLiveEvent(
+        event = DouyinLiveEvent(
             user_id=str(message.user.id),
             user_name=message.user.nick_name,
             event_type=DouyinLiveEventType.social,
-        ))
+            priority=Priority.P1  # 关注作为P1
+        )
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
 
     def _parseRoomUserSeqMsg(self, payload):
         message = RoomUserSeqMessage().parse(payload)
@@ -219,49 +351,190 @@ class DouyinLive(DouyinLiveWebFetcher):
             history_str.encode("utf8"),
         )
 
-    # ========= ModelContext =========
-    async def idle(self):
+    # ========= 实时处理 =========
+    async def _run_realtime_processing(self):
+        """处理实时事件（P0和礼物）"""
         try:
             while True:
-                try:
-                    gift_event = await asyncio.wait_for(self.gift_queue.get(), timeout=5)
-                    await self.eventbus.put(UserInputAgentEvent(
-                        message=Message.new(
-                            role="user", name="__douyin_live_gift__"
-                        ).with_content(
-                            Text(text=self.config.gift_prompt),
-                            Text(text=gift_event.to_natural())
-                        ),
-                        priority=1, # 高优队列
-                    ).to_agent_event())
-                    self.gift_queue.task_done()
-                except asyncio.TimeoutError:
-                    continue
+                event = await self.realtime_queue.get()
+
+                # 获取用户历史
+                user_history = await self.get_user_history(event.user_id, event.user_name)
+
+                # 构建消息内容
+                message_content = []
+
+                # 根据事件类型选择不同的prompt
+                if event.event_type in [DouyinLiveEventType.super_gift,
+                                        DouyinLiveEventType.medium_gift,
+                                        DouyinLiveEventType.small_gift]:
+                    prompt = self.config.gift_prompt
+                    priority = 99  # 礼物最高优先级
+                    message_content.append(Text(text=prompt))
+                else:
+                    prompt = self.config.p0_prompt
+                    priority = 0  # P0事件优先级
+                    message_content.append(Text(text=prompt))
+
+                # 添加当前事件
+                message_content.append(Text(text=event.to_natural()))
+
+                # 添加用户历史信息（如果存在）
+                if user_history.history:
+                    # 获取用户最近的历史事件（排除当前事件，最多3个）
+                    recent_history = user_history.get_history_events(max_count=3)
+                    if recent_history:
+                        message_content.append(Text(text=f"\n用户 {event.user_name} 的历史交互记录："))
+                        for hist_event in recent_history:
+                            message_content.append(Text(text=f"  - {hist_event.to_natural()}"))
+
+                # 如果是核心用户，添加综合评价
+                if user_history.assessment:
+                    message_content.append(Text(text=f"\n用户 {event.user_name} 的综合评价：{user_history.assessment}"))
+
+                # 发送到事件总线
+                await self.eventbus.put(UserInputAgentEvent(
+                    message=Message.new(
+                        role="user",
+                        name=f"__douyin_live_{event.event_type.value}__"
+                    ).with_content(*message_content),
+                    priority=priority,
+                    overdue=self.config.p0_overdue,
+                ))
+
+                # 保存用户历史
+                self.save_queue.put_nowait((event.user_id, event.user_name, [event]))
+
+                self.realtime_queue.task_done()
         except asyncio.CancelledError:
             pass
 
+    # ========= 定时任务 =========
+    async def _run_periodic_task(self):
+        """定时触发事件总线"""
+        try:
+            while True:
+
+                # 发送定时任务事件到事件总线
+                await self.eventbus.put(UserInputAgentEvent(
+                    message=Message.new(
+                        role="user",
+                        name="__douyin_live_periodic__"
+                    ).with_content(
+                        Text(text=self.config.periodic_task_prompt)
+                    ),
+                    priority=0,  # 中等优先级
+                    overdue=self.config.periodic_task_overdue,  # 30秒过期
+                    agent_id="live",
+                ))
+
+                self.logger.info(f"定时任务触发，当前观看人数：{self.current_users}")
+
+                await asyncio.sleep(self.config.periodic_task_interval)
+
+        except asyncio.CancelledError:
+            pass
+
+    # ========= 快照生成 =========
+    async def _run_snapshot_generator(self):
+        """定期生成直播间快照"""
+        try:
+            while True:
+                await asyncio.sleep(self.config.snapshot_interval)
+
+                # 清理过期事件
+                self.event_buffer.clear_old_events(self.config.event_retention_seconds)
+
+                # 生成新的快照
+                await self._generate_snapshot()
+        except asyncio.CancelledError:
+            pass
+
+    async def _generate_snapshot(self):
+        """生成直播间快照"""
+        # 获取最近的事件
+        recent_events = self.event_buffer.get_recent_events(self.config.max_events_in_snapshot)
+
+        if not recent_events:
+            # 如果没有事件，创建一个简单的快照
+            async with self._snapshot_lock:
+                self._current_snapshot = [
+                    Message.new(role="user", name="__douyin_live_overview__").with_content(
+                        Text(text=f"当前观看人数：{self.current_users}，累计观看人数：{self.total_users}")
+                    )
+                ]
+            return
+
+        # 按用户分组
+        group_by_user: Dict[tuple, List[DouyinLiveEvent]] = defaultdict(list)
+        for event in recent_events:
+            group_by_user[(event.user_id, event.user_name)].append(event)
+
+        messages = [Message.new(role="user", name="__douyin_live_overview__").with_content(
+            Text(text=f"当前观看人数：{self.current_users}，累计观看人数：{self.total_users}")
+        )]
+
+        # 添加直播间概览
+
+        # 处理每个用户的事件
+        for (user_id, user_name), events in group_by_user.items():
+            # 如果用户太多，随机忽略一些进入事件
+            if len(group_by_user) > 20 and len(events) == 1 and events[0].event_type == DouyinLiveEventType.enter:
+                if random.random() < 0.9:
+                    continue
+
+            # 创建用户交互消息
+            message = Message.new(role="user", name=f"__douyin_live_{user_name}#{user_id}_interaction__")
+
+            # 添加当前交互
+            current_contents = []
+            for event in events:
+                current_contents.append(Text(text=event.to_natural()))
+
+            message.with_content(
+                Text(text=f"以下是用户 {user_name} 在直播间的最新交互行为："),
+                *current_contents,
+            )
+
+            messages.append(message)
+
+            # 异步保存到本地文件
+            self.save_queue.put_nowait((user_id, user_name, events))
+
+        # 更新当前快照
+        async with self._snapshot_lock:
+            self._current_snapshot = messages
+
+    # ========= 保存任务 =========
     async def _run_save(self):
+        """保存用户历史"""
         try:
             while True:
                 user_id, user_name, events = await self.save_queue.get()
+
                 history = await self.get_user_history(user_id, user_name)
                 history.history.extend(events)
 
                 # 判断是否为核心用户
                 if not history.is_core_user:
-                    if len(history.get_history_events(
+                    # 检查互动次数
+                    chat_like_events = history.get_history_events(
                         DouyinLiveEventType.chat,
                         DouyinLiveEventType.like,
                         max_count=3,
-                    )) >= 3:
+                    )
+                    if len(chat_like_events) >= 3:
                         history.is_core_user = True
-                    elif len(history.get_history_events(
+
+                    # 检查是否有重要行为
+                    important_events = history.get_history_events(
                         DouyinLiveEventType.super_gift,
                         DouyinLiveEventType.medium_gift,
                         DouyinLiveEventType.small_gift,
                         DouyinLiveEventType.social,
                         max_count=1
-                    )) >= 1:
+                    )
+                    if len(important_events) >= 1:
                         history.is_core_user = True
 
                 await self.save_user_history(history)
@@ -269,80 +542,36 @@ class DouyinLive(DouyinLiveWebFetcher):
         except asyncio.CancelledError:
             pass
 
-    async def context_messages(self):
+    # ========= 上下文消息 =========
+    async def context_messages(self) -> List[Message]:
         """
-        当前直播间所有发生的事情
+        获取当前直播间的上下文消息（快照）
         """
-        all_events: List[DouyinLiveEvent] = []
-        try:
-            while not self.event_queue.empty():
-                all_events.append(self.event_queue.get_nowait())
-                self.event_queue.task_done()
-        except asyncio.QueueEmpty:
-            pass
+        async with self._snapshot_lock:
+            return self._current_snapshot.copy()
 
-        messages = [
-            Message.new(role="user", name="__douyin_live_overview__").with_content(
-                Text(text=f"当前观看人数：{self.current_users}，累计观看人数：{self.total_users}")
-            )
-        ]
+    async def give_cues(self, text__):
+        """
+        给主Agent提供直播话术建议
+        :param text__:
+        """
+        await self.eventbus.put(UserInputAgentEvent(
+            message=Message.new(role="user", name="__douyin_live_cues__").with_content(
+                Text(text=self.config.cues_prompt),
+                Text(text=text__)
+            ),
+            agent_id="",  # 默认主agent
+            priority=0,
+            overdue=30,
+        ))
 
-        # 按用户做一次聚合
-        group_by_user: Dict[tuple, List[DouyinLiveEvent]] = defaultdict(list)
-        for event in all_events:
-            group_by_user[(event.user_id, event.user_name)].append(event)
-
-        # 取出用户的历史信息
-        for key, events in group_by_user.items():
-            user_id = key[0]
-            user_name = key[1]
-
-            # 交互的用户超过20人的话 直接忽略掉进入直播间进入的事件
-            if len(group_by_user) > 20 and len(events) == 1 and events[0].event_type == DouyinLiveEventType.enter:
-                # 90%的概率忽略
-                if random.random() < 0.9:
-                    continue
-
-            # 当前最新的直播间发生的交互行为
-            message = Message.new(role="user", name=f"__douyin_live_{user_name}#{user_id}_interaction__")
-            current_contents = []
-            for event in events:
-                current_contents.append(Text(text=event.to_natural()))
-            message.with_content(
-                Text(text=f"以下是当前用户{user_name}在直播间最新的交互行为"),
-                *current_contents,
-            )
-            messages.append(message)
-
-            history_contents = []
-            history = await self.get_user_history(user_id, user_name)
-            # 只有特殊用户再拿历史对话
-            if history.is_core_user:
-                # 最近 N 条数据，配置读取，默认最多10条
-                for event in history.get_history_events(max_count=self.config.max_user_history_size):
-                    history_contents.append(Text(text=event.to_natural()))
-
-                message.with_content(
-                    Text(text=f"以下是当前用户在直播间的历史近{self.config.max_user_history_size}次的交互行为"),
-                    *history_contents,
-                )
-                # 对用户的评价，可以由旁路Agent分析并写入
-                if history.assessment:
-                    message.with_content(
-                        Text(text=f"你的视角下对当前用户的综合评价为{history.assessment}")
-                    )
-
-                messages.append(message)
-            # 异步存储到本地文件
-            self.save_queue.put_nowait((user_id, user_name, events))
-
-        return messages
-
-    def as_channel(self):
+    def as_channel(self, is_live_agent: bool = False):
         chan = PyChannel(name="douyin_live", description="抖音直播间内可操作的command和上下文获取通道", blocking=True)
 
-        chan.build.idle(self.idle)
         chan.build.context_messages(self.context_messages)
+
+        if is_live_agent:
+            chan.build.command()(self.give_cues)
 
         # 生命周期
         chan.build.start_up(self.start)

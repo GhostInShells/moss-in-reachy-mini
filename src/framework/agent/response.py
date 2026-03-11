@@ -1,18 +1,17 @@
 import asyncio
 import json
 import logging
-from typing import List, Optional, AsyncIterator, AsyncIterable, Self
+from typing import List, Optional, AsyncIterator, AsyncIterable
 
 import litellm
 from ghoshell_common.contracts import LoggerItf
-from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, ContentModel, Addition, Delta, \
-    DeltaModel, Interpretation
+from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, Addition
 from ghoshell_moss.message.adapters.openai_adapter import parse_messages_to_params
-from litellm.types.llms.openai import OpenAIWebSearchOptions
 from pydantic import Field
 
-from framework.abcd.agent import Response, ModelConf, EventBus
-from framework.abcd.agent_event import UserInputAgentEvent, AgentEventModel, ReactAgentEvent
+from framework.abcd.agent import Response, ModelConf
+from framework.abcd.agent_event import AgentEventModel, ReactAgentEvent
+from framework.abcd.agent_hub import EventBus
 
 
 class AgentEventAddition(Addition):
@@ -29,6 +28,7 @@ class MOSShellResponse(Response):
     def __init__(
             self,
             shell: MOSSShell,
+            agent_id: str,
             *,
             event: AgentEventModel,
             inputs: List[Message],
@@ -42,6 +42,7 @@ class MOSShellResponse(Response):
         self.prompts = prompts
         self.inputs = inputs
         self.eventbus = eventbus
+        self.agent_id = agent_id
 
         self._logger = logger or logging.getLogger()
         self.event = event
@@ -85,7 +86,7 @@ class MOSShellResponse(Response):
                     )
 
                     messages = parse_messages_to_params(merged)
-                    with open("temp.json", "w", encoding="utf-8") as f:
+                    with open(f"{self.agent_id}_temp.json", "w", encoding="utf-8") as f:
                         json.dump(messages, f, ensure_ascii=False, indent=4)
 
                     # 设置流式参数
@@ -165,7 +166,8 @@ class MOSShellResponse(Response):
                         await self.eventbus.put(ReactAgentEvent(
                             messages=interpretation.execution_messages(),
                             priority=1,  # 高优事件
-                        ).to_agent_event())
+                            agent_id=self.agent_id,
+                        ))
             except asyncio.CancelledError:
                 self.logger.info("Message stream generator cancelled")
             except Exception as e:
@@ -212,7 +214,7 @@ class MOSShellResponse(Response):
             ).with_additions(
                 AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type),
             ).with_content(
-                Text(text="[Interrupt] User input")
+                Text(text="[Interrupt]")
             )
             self._buffered.append(interrupt_msg)
             self._logger.info(f"MOSShellResponse {self.response_id} interrupted")
@@ -223,6 +225,7 @@ class CTMLResponse(Response):
     def __init__(
             self,
             shell: MOSSShell,
+            agent_id: str,
             *,
             ctml: str,
             event: AgentEventModel,
@@ -230,6 +233,7 @@ class CTMLResponse(Response):
             logger: Optional[LoggerItf] = None,
     ):
         self.shell = shell
+        self.agent_id = agent_id
         self.ctml = ctml
         self.eventbus = eventbus
         self.inputs = []
@@ -287,7 +291,8 @@ class CTMLResponse(Response):
                         await self.eventbus.put(ReactAgentEvent(
                             messages=interpretation.execution_messages(),
                             priority=1,  # 高优事件
-                        ).to_agent_event())
+                            agent_id=self.agent_id,
+                        ))
             except asyncio.CancelledError:
                 self.logger.info("Message stream generator cancelled")
             except Exception as e:

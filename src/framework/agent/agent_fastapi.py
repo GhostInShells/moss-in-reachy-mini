@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Message, Text
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import UserInputAgentEvent, InterruptAgentEvent, CTMLAgentEvent
 
 
@@ -35,13 +35,19 @@ class AgentFastAPI:
             """处理用户输入事件"""
             try:
                 text = data.get("text", "")
+                agent_id = data.get("agent_id", "")
                 enqueue = []
                 if text:
                     message = Message.new(role="user", name="__user__").with_content(
                         Text(text=text)
                     )
-                    event = UserInputAgentEvent(message=message, priority=0)
-                    await self._eventbus.put(event.to_agent_event())
+                    await self._eventbus.put(
+                        UserInputAgentEvent(
+                            message=message,
+                            priority=1,
+                            agent_id=agent_id,
+                        )
+                    )
                     enqueue.append("Text")
 
                 ctml = data.get("ctml", "")
@@ -50,7 +56,8 @@ class AgentFastAPI:
                         CTMLAgentEvent(
                             ctml=ctml,
                             priority=1,
-                        ).to_agent_event()
+                            agent_id=agent_id,
+                        ),
                     )
                     enqueue.append("CTML")
 
@@ -63,7 +70,7 @@ class AgentFastAPI:
             """处理中断事件"""
             try:
                 event = InterruptAgentEvent()
-                await self._eventbus.put(event.to_agent_event())
+                await self._eventbus.put(event)
                 return {"status": "success", "message": "Interrupt event queued"}
             except Exception as e:
                 raise HTTPException(status_code=400, detail=str(e))

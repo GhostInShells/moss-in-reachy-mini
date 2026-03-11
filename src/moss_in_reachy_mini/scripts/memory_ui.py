@@ -4,7 +4,8 @@ from ghoshell_common.contracts import Workspace
 from ghoshell_moss_contrib.example_ws import workspace_container
 
 from framework.apps.memory.storage_memory import StorageMemory
-from framework.apps.memory import StorageMemoryUI
+from framework.apps.session.storage_session import StorageSession
+from framework.apps.streamlit_ui.memory_session import StorageMemoryUI
 
 
 def main(storage_name: str="memory"):
@@ -13,8 +14,9 @@ def main(storage_name: str="memory"):
         ws = container.force_fetch(Workspace)
         storage = ws.runtime().sub_storage(storage_name)
         _storage_memory = StorageMemory(storage)
+        _storage_session = StorageSession(storage)
         # 启动UI
-        ui = StorageMemoryUI(_storage_memory)
+        ui = StorageMemoryUI(_storage_memory, _storage_session)
         ui.render()
 
 if __name__ == "__main__":

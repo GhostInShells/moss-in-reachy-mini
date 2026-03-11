@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 class AgentEvent(TypedDict):
     event_id: str
     event_type: str
+    agent_id: str
     priority: Optional[int]
     issuer: Optional[str]
     overdue: Optional[float]
@@ -21,6 +22,7 @@ class AgentEventModel(BaseModel):
     event_type: ClassVar[str] = ""
 
     event_id: str = Field(default_factory=uuid, description="事件的id, 也可以用于链路 trace.")
+    agent_id: str = Field(default="", description="事件处理的Agent")
     priority: int = Field(
         default=1,
         description=(
@@ -49,10 +51,11 @@ class AgentEventModel(BaseModel):
         return self.overdue > 0 and ((now - self.created) > self.overdue)
 
     def to_agent_event(self) -> AgentEvent:
-        data = self.model_dump(exclude_none=True, exclude={"event_id", "event_type", "priority", "issuer", "overdue", "created"})
+        data = self.model_dump(exclude_none=True, exclude={"event_id", "event_type", "agent_id", "priority", "issuer", "overdue", "created"})
         return AgentEvent(
             event_id=self.event_id,
             event_type=self.event_type,
+            agent_id=self.agent_id,
             priority=self.priority,
             issuer=self.issuer,
             overdue=self.overdue,
@@ -66,11 +69,20 @@ class AgentEventModel(BaseModel):
             return None
         data = agent_event.get("data", {})
         data["event_id"] = agent_event["event_id"]
+        data["agent_id"] = agent_event["agent_id"]
         data["priority"] = agent_event["priority"]
         data["issuer"] = agent_event["issuer"]
         data["overdue"] = agent_event["overdue"]
         data["created"] = agent_event["created"]
         return cls(**data)
+
+    @classmethod
+    def from_agent_event_model(cls, agent_event: "AgentEventModel") -> Optional[Self]:
+        if cls.event_type != agent_event.event_type:
+            return None
+        return cls.from_agent_event(
+            agent_event=agent_event.to_agent_event(),
+        )
 
 
 class UserInputAgentEvent(AgentEventModel):

@@ -75,7 +75,7 @@ class HeadTracker:
                             images=[self.latest_frame.to_base64_image()],
                             priority=-1,
                             issuer="HeadTracker",
-                        ).to_agent_event())
+                        ))
                 continue
 
             self.track_lost_start_at = 0

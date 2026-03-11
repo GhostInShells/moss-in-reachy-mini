@@ -1,8 +1,8 @@
 import asyncio
-from typing import Union
+from typing import Union, TypedDict
 
-from framework.abcd.agent import EventBus
-from framework.abcd.agent_event import AgentEvent
+from framework.abcd.agent_hub import EventBus
+from framework.abcd.agent_event import AgentEventModel
 
 
 class QueueEventBus(EventBus):
@@ -10,10 +10,10 @@ class QueueEventBus(EventBus):
     def __init__(self) -> None:
         self.queue = asyncio.Queue()
 
-    async def put(self, event: AgentEvent) -> None:
+    async def put(self, event: AgentEventModel) -> None:
         await self.queue.put(event)
 
-    async def get(self, timeout: Union[float, None] = None) -> Union[AgentEvent, None]:
+    async def get(self, timeout: Union[float, None] = None) -> Union[AgentEventModel, None]:
         try:
             item = await asyncio.wait_for(self.queue.get(), timeout)
             self.queue.task_done()

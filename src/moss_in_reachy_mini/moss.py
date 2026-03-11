@@ -135,21 +135,19 @@ class MossInReachyMini:
             *channels,
         )
 
+        reachy_mini.build.start_up(self.bootstrap)
+        reachy_mini.build.close(self.aclose)
+
         return reachy_mini
 
     async def bootstrap(self):
+        self.mini.__enter__()
         await self.switch_state(self._default_state)
         self._bootstrapped.set()
 
-    async def __aenter__(self):
-        await self.bootstrap()
-        return self
-
     async def aclose(self):
+        self.mini.__exit__(None, None, None)
         await self.switch_state(AsleepState.NAME)
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.aclose()
 
 
 class MossInReachyMiniProvider(Provider[MossInReachyMini]):

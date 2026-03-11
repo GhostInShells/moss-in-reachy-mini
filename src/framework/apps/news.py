@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 import trafilatura
 import os
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import ReactAgentEvent
 
 
@@ -106,7 +106,7 @@ class NewsAPI:
                         for item in news
                     ]
                 )]
-            ).to_agent_event())
+            ))
 
 
     def as_channel(self):

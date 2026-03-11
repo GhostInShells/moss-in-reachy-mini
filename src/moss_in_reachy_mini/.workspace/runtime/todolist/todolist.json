@@ -1,0 +1,100 @@
+[
+    {
+        "key": "iran_situation",
+        "title": "伊朗局势全维度播报",
+        "description": "整合最新战况、各国态度、国内视角等多维度信息进行新闻播报",
+        "status": "done",
+        "parent_key": ""
+    },
+    {
+        "key": "latest_battles",
+        "title": "最新战况追踪",
+        "description": "检索并播报伊朗局势最新的战场动态、交火情况、双方伤亡等核心信息",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "battle_updates",
+        "title": "实时战场动态",
+        "description": "获取近24小时内伊朗及相关地区的交火地点、冲突规模、武器使用等细节",
+        "status": "done",
+        "parent_key": "latest_battles"
+    },
+    {
+        "key": "casualty_stats",
+        "title": "伤亡与损失统计",
+        "description": "检索双方军方及平民的伤亡数据、基础设施损毁情况等官方或权威媒体报道",
+        "status": "done",
+        "parent_key": "latest_battles"
+    },
+    {
+        "key": "countries_attitude",
+        "title": "世界各国态度梳理",
+        "description": "整理全球主要国家及国际组织对伊朗局势的官方表态、制裁措施或调停行动",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "major_countries",
+        "title": "大国立场分析",
+        "description": "追踪美国、俄罗斯、中国、欧盟等主要力量的最新声明及行动部署",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "regional_players",
+        "title": "地区国家反应",
+        "description": "收集中东周边国家如沙特、以色列、土耳其等的态度及应对举措",
+        "status": "done",
+        "parent_key": "countries_attitude"
+    },
+    {
+        "key": "china_perspective",
+        "title": "国内关注视角解读",
+        "description": "挖掘国内媒体、专家及民众对伊朗局势的关注点、分析观点及潜在影响预判",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "media_analysis",
+        "title": "国内媒体报道重点",
+        "description": "梳理央视、新华社等主流媒体对伊朗局势的报道角度、核心观点",
+        "status": "done",
+        "parent_key": "china_perspective"
+    },
+    {
+        "key": "expert_comments",
+        "title": "专家解读与预判",
+        "description": "收集国内国际问题专家对局势走向、对中国影响等方面的分析",
+        "status": "done",
+        "parent_key": "china_perspective"
+    },
+    {
+        "key": "impact_assessment",
+        "title": "局势影响深度分析",
+        "description": "探讨伊朗局势对全球能源市场、地缘政治格局、国际航运等领域的连锁反应",
+        "status": "done",
+        "parent_key": "iran_situation"
+    },
+    {
+        "key": "energy_market",
+        "title": "全球能源价格波动",
+        "description": "检索伊朗局势对石油、天然气等能源价格的短期及长期影响预测",
+        "status": "done",
+        "parent_key": "impact_assessment"
+    },
+    {
+        "key": "geopolitical_shift",
+        "title": "地缘政治格局重构",
+        "description": "分析局势变化对中东及全球地缘政治平衡的潜在冲击",
+        "status": "done",
+        "parent_key": "impact_assessment"
+    },
+    {
+        "key": "iran_news_broadcast",
+        "title": "伊朗局势新闻播报",
+        "description": "为用户播报伊朗最新局势新闻，包含战况、各方态度、影响等多维度信息",
+        "status": "doing",
+        "parent_key": ""
+    }
+]

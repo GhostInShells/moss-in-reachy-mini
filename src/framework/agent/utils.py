@@ -5,10 +5,11 @@ from ghoshell_moss import Message, Text, ContentModel, Delta, DeltaModel
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
 from framework.abcd.agent import Agent
-from framework.abcd.agent_event import AgentEvent, UserInputAgentEvent, InterruptAgentEvent
+from framework.abcd.agent_event import AgentEvent, UserInputAgentEvent, InterruptAgentEvent, AgentEventModel
+from framework.abcd.agent_hub import EventBus
 
 
-def get_event(queue: asyncio.Queue) -> Optional[AgentEvent]:
+def get_event(queue: asyncio.Queue) -> Optional[AgentEventModel]:
     """消费单个队列的一个任务（非阻塞取任务）"""
     try:
         task = queue.get_nowait()
@@ -25,23 +26,22 @@ def clear_queue(queue: asyncio.Queue) -> None:
         except asyncio.QueueEmpty:
             break
 
-async def run_agent_with_chat(agent: Agent, chat: BaseChat) -> None:
+async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
     loop = asyncio.get_running_loop()
 
     def _callback(user_input):
-        asyncio.run_coroutine_threadsafe(agent.eventbus().put(UserInputAgentEvent(
+        asyncio.run_coroutine_threadsafe(eventbus.put(UserInputAgentEvent(
             message=Message.new(role="user").with_content(Text(text=user_input)),
-        ).to_agent_event()), loop)
+        )), loop)
 
     def _interrupt():
         asyncio.run_coroutine_threadsafe(
-            agent.eventbus().put(InterruptAgentEvent().to_agent_event()),
+            eventbus.put(InterruptAgentEvent()),
             loop
         )
 
     chat.set_input_callback(_callback)
     chat.set_interrupt_callback(_interrupt)
-    await agent.start(auto_shutdown=False)
     await chat.run()  # block
 
 

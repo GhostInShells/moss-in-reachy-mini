@@ -4,7 +4,7 @@ from typing import List
 from ghoshell_moss import Message
 
 
-class Memory(abc.ABC):
+class Session(abc.ABC):
 
     @abc.abstractmethod
     async def save_turn(self, inputs: List[Message], outputs: List[Message]):

@@ -2,25 +2,23 @@ import asyncio
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE
+from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE, Container
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
-from ghoshell_moss.transports.zmq_channel import ZMQChannelHub
-from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
-from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import AgentConfig, ModelConf, EventBus, Agent
-from framework.abcd.memory import Memory
+from framework.abcd.agent import AgentConfig, ModelConf
+from framework.abcd.agent_hub import EventBus, AgentHub
+from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
+from framework.agent.agent_hub import AgentHubImpl
 from framework.agent.broadcaster import ChatBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
-from framework.agent.utils import run_agent_with_chat
-from framework.apps.live.douyin_live import DouyinLiveProvider
+from framework.agent.utils import setup_chat
 from framework.apps.memory.storage_memory import StorageMemory
-from framework.apps.news import NewsAPIProvider
+from framework.apps.session.storage_session import StorageSession
 from framework.apps.todolist import TodoList, TodoListProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
@@ -49,10 +47,9 @@ class ShellProvider(Provider[MOSSShell]):
         moss = con.force_fetch(MossInReachyMini)
         memory = con.force_fetch(StorageMemory)
         todolist = con.force_fetch(TodoList)
-        # news = con.force_fetch(NewsAPI)
         shell = new_ctml_shell(
             container=con,
-            speech=get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", logger_=con.get(LoggerItf)),
+            speech=get_speech(mini, default_speaker="saturn_zh_female_keainvsheng_tob", container=con),
             experimental=False,
         )
         shell.main_channel.import_channels(
@@ -62,18 +59,57 @@ class ShellProvider(Provider[MOSSShell]):
         )
         return shell
 
-class AgentProvider(Provider[Agent]):
-    def __init__(self, config: AgentConfig):
-        self._config = config
 
+class MainAgentProvider(Provider[MainAgent]):
     def singleton(self) -> bool:
         return True
 
-    def factory(self, con: IoCContainer) -> INSTANCE:
-        shell = con.force_fetch(MOSSShell)
-        memory = con.force_fetch(Memory)
+    def factory(self, con: Container) -> MainAgent:
         moss = con.force_fetch(MossInReachyMini)
-        return MainAgent(container=con, config=self._config, shell=shell, memory=memory, hook_state=moss)
+        instructions = load_instructions(
+            con,
+            files=["ctml_enrich.md", "websearch.md", "news.md"],
+            storage_name="main_agent_instructions",
+        )
+        main_agent = MainAgent.new(
+            container=con,
+            config=AgentConfig(
+                id="main",
+                name="main",
+                description="",
+                model=ModelConf(
+                    kwargs={
+                        "extra_body": {
+                            "thinking": {
+                                "type": "disabled",
+                            },
+                            "enable_web_search": True
+                        }
+                    },
+                    temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
+                ),
+                instructions=instructions,
+            ),
+        )
+        main_agent.set_state_hook(moss)
+        return main_agent
+
+
+class AgentHubProvider(Provider[AgentHub]):
+    def singleton(self) -> bool:
+        return True
+
+    def factory(self, con: Container) -> AgentHub:
+        main_agent = con.force_fetch(MainAgent)
+        eventbus = con.force_fetch(EventBus)
+        agent_hub = AgentHubImpl(
+            main_agent_id=main_agent.info().id,
+            agents=[main_agent],
+            eventbus=eventbus,
+            logger=con.get(LoggerItf),
+        )
+        return agent_hub
+
 
 def providers(container: IoCContainer):
     # Mini
@@ -86,7 +122,6 @@ def providers(container: IoCContainer):
     container.set(EventBus, QueueEventBus())
     # Agent输出
     container.register(ChatBroadcasterProvider())
-    container.set(BaseChat, ConsolePTTChat(container=container))
     # dependency registry
     container.register(BodyProvider())
     container.register(HeadProvider())
@@ -97,45 +132,15 @@ def providers(container: IoCContainer):
     container.register(VideoRecorderWorkerProvider())
     # Agent记忆
     ws = container.force_fetch(Workspace)
-    storage_name = os.getenv("REACHY_MINI_MEMORY_STORAGE", "memory")
-    logger = container.get(LoggerItf)
-    if logger:
-        logger.info(f"Reachy Mini memory storage set to '{storage_name}'")
-    storage = ws.runtime().sub_storage(storage_name)
+    storage = ws.runtime().sub_storage("memory")
     memory = StorageMemory(storage)
+    session = StorageSession(storage)
     container.set(StorageMemory, memory)
-    container.set(Memory, memory)
+    container.set(Session, session)
     # TodoList
     container.register(TodoListProvider())
-    # News
-    container.register(NewsAPIProvider())
-    # Douyin Live
-    container.register(DouyinLiveProvider())
     # Shell
     container.register(ShellProvider())
-    # Agent
-    instructions = load_instructions(
-        container,
-        files=["ctml_enrich.md", "websearch.md", "news.md"],
-        storage_name="reachy_mini_instructions",
-    )
-    container.register(AgentProvider(AgentConfig(
-        id="reachy_mini",
-        name="reachy_mini",
-        description="",
-        model=ModelConf(
-            kwargs={
-                "extra_body": {
-                    "thinking": {
-                        "type": "disabled",
-                        "enable_web_search": True
-                    }
-                }
-            },
-            temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
-        ),
-        instructions=instructions,
-    )))
     # Moss
     container.register(MossInReachyMiniProvider())
     # Moss State
@@ -145,26 +150,21 @@ def providers(container: IoCContainer):
     container.register(LiveStateProvider())
 
 
-async def run_agent(container, zmq_hub):
+async def run(container):
+    container = Container(parent=container, name="main_agent")
     providers(container)
-    _mini = container.force_fetch(ReachyMini)
-    with _mini:
-        moss = container.force_fetch(MossInReachyMini)
-        async with moss:
-            agent = container.make(Agent)
-            chat = container.make(BaseChat)
-            agent_fastapi = container.make(AgentFastAPI)
-
-            await asyncio.gather(
-                run_agent_with_chat(agent, chat),
-                agent_fastapi.run()
-            )
+    agent_fastapi = container.make(AgentFastAPI)
+    agent_hub = container.make(AgentHub)
+    await asyncio.gather(
+        agent_hub.bootstrap(),
+        setup_chat(agent_hub.eventbus(), ConsolePTTChat(container=container)),
+        agent_fastapi.run(),
+    )
 
 
 def get_speech(
     mini: ReachyMini,
     default_speaker: str | None = None,
-    logger_: LoggerItf=None,
     container: IoCContainer=None,
 ) -> BaseTTSSpeech:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
@@ -198,12 +198,10 @@ def get_speech(
     return speech
 
 
-def main():
+async def main():
     import pathlib
 
     ws_dir = pathlib.Path(__file__).parent.joinpath(".workspace")
-    current_dir = pathlib.Path(__file__).parent
-    root_dir = str(current_dir.parent.joinpath("moss_zmq_channels").absolute())
 
     from ghoshell_moss_contrib.example_ws import workspace_container
 
@@ -211,21 +209,7 @@ def main():
         logger = setup_logger(str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),)
         container.set(LoggerItf, logger)
 
-        zmq_hub = ZMQChannelHub(
-            config=ZMQHubConfig(
-                name="hub",
-                description="可以启动指定的子通道并运行.",
-                # todo: 当前版本全部基于约定来做. 快速验证.
-                root_dir=root_dir,
-                proxies={
-                    "slide": ZMQProxyConfig(
-                        script="slide_app.py",
-                        description="可以打开你的slide studio gui，通过这个通道你可以呈现并讲述一个slide主题",
-                    ),
-                },
-            ),
-        )
-        asyncio.run(run_agent(container, zmq_hub))
+        await run(container)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
