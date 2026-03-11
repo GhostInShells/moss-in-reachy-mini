@@ -9,7 +9,7 @@ from ghoshell_container import Container
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
-from ghoshell_moss_contrib.example_ws import workspace_container
+from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
 
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_hub import EventBus
@@ -45,7 +45,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     douyin_live = container.force_fetch(DouyinLive)
 
     # shell
-    shell = new_ctml_shell(container=container)
+    shell = new_ctml_shell(container=container, speech=get_example_speech(container))
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),

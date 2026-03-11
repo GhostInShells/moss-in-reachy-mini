@@ -70,6 +70,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
     shell = new_ctml_shell(
         name="live_shell",
         container=container,
+        experimental=False,
     )
     shell.main_channel.import_channels(
         memory.as_channel(),
