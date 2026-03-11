@@ -366,9 +366,10 @@ class DouyinLive(DouyinLiveWebFetcher):
 
     def _parseGiftMsg(self, payload):
         message = GiftMessage().parse(payload)
+        self.logger.info(f"收到礼物：{message}")
         gift_name = message.gift.name
         gift_cnt = message.combo_count
-        diamond_count = message.diamond_count
+        diamond_count = message.gift.diamond_count
 
         if diamond_count <= 20:  # 小礼物
             event_type = DouyinLiveEventType.small_gift
