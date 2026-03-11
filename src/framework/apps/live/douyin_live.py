@@ -4,6 +4,7 @@ import json
 import logging
 import random
 import time
+import uuid
 from collections import defaultdict, deque
 from typing import List, Optional, Tuple, Dict, Set
 from dataclasses import dataclass, field
@@ -48,6 +49,16 @@ class DouyinLiveConfig(YamlConfig):
     periodic_task_overdue: int = Field(default=30, description="定时任务触发间隔（秒）")
     periodic_task_prompt: str = Field(default="", description="定时任务的提示词")
 
+    # 新增配置：去重和过滤
+    deduplication_window: int = Field(default=120, description="去重时间窗口（秒）")
+    max_enter_events_per_snapshot: int = Field(default=3, description="每个快照最多包含的进入事件数")
+    enter_event_cooldown: int = Field(default=30, description="同一用户进入事件的冷却时间（秒）")
+
+    # 新增配置：智能过滤
+    enable_smart_filtering: bool = Field(default=True, description="启用智能过滤")
+    min_chat_length_for_response: int = Field(default=3, description="需要响应的弹幕最小长度")
+    max_events_per_user: int = Field(default=2, description="同一用户在每个快照中的最大事件数")
+
 
 class DouyinLiveEventType(enum.Enum):
     super_gift = "super_gift"
@@ -72,15 +83,21 @@ class DouyinLiveEventType(enum.Enum):
 
 
 # ========== 直播间的历史记录 ==========
-# 单个用户的单条交互历史
 class DouyinLiveEvent(BaseModel):
+    # 唯一标识符，用于去重
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="事件唯一ID")
+
     # 用户id
     user_id: str = Field(default_factory=str, description="douyin user id")
     # 用户名
     user_name: str = Field(default_factory=str, description="douyin user name")
     event_type: DouyinLiveEventType = Field(description="type")
     content: str = Field(default_factory=str, description="user do what")
-    # assistant: str = Field(default_factory=str, description="assistant response")
+
+    # 是否已被处理（用于去重）
+    processed: bool = Field(default=False, description="是否已被处理")
+    processed_by: Optional[str] = Field(default=None, description="被哪个Agent处理")
+    processed_at: Optional[int] = Field(default=None, description="处理时间")
 
     create_at: int = Field(default_factory=lambda: int(time.time()), description="time")
 
@@ -96,6 +113,12 @@ class DouyinLiveEvent(BaseModel):
             res = f"{res} {self.content}"
         return res
 
+    def mark_processed(self, agent_name: str = "main"):
+        """标记为已处理"""
+        self.processed = True
+        self.processed_by = agent_name
+        self.processed_at = int(time.time())
+
 
 # 单个用户所有的交互历史
 class DouyinLiveUserHistory(BaseModel):
@@ -109,6 +132,10 @@ class DouyinLiveUserHistory(BaseModel):
     history: List[DouyinLiveEvent] = Field(default_factory=list, description="douyin user history")
     # 对该用户的综合评价
     assessment: str = Field(default_factory=str, description="assessment")
+    # 最后进入时间（用于冷却）
+    last_enter_time: Optional[int] = Field(default=None, description="最后进入时间")
+    # 最后交互时间
+    last_interaction_time: Optional[int] = Field(default=None, description="最后交互时间")
 
     def get_history_events(self, *event_types: DouyinLiveEventType, max_count=3) -> List[DouyinLiveEvent]:
         res = []
@@ -125,12 +152,25 @@ class DouyinLiveUserHistory(BaseModel):
         res.reverse()
         return res
 
+    def update_last_enter_time(self):
+        """更新最后进入时间"""
+        self.last_enter_time = int(time.time())
+
+    def update_last_interaction_time(self):
+        """更新最后交互时间"""
+        self.last_interaction_time = int(time.time())
+
 
 @dataclass
 class EventBuffer:
     """事件缓冲区，用于存储和管理事件"""
     events: deque = field(default_factory=deque)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    # 去重集合：存储最近处理过的事件ID
+    processed_events: Set[str] = field(default_factory=set)
+    # 用户冷却时间记录
+    user_cooldowns: Dict[Tuple[str, str], float] = field(default_factory=dict)
 
     def add(self, event: DouyinLiveEvent):
         """添加事件到缓冲区"""
@@ -158,9 +198,45 @@ class EventBuffer:
             for _ in range(first_valid_index):
                 self.events.popleft()
 
+        # 清理过期的去重记录
+        self.processed_events = {
+            event.event_id for event in self.events
+            if event.event_id in self.processed_events
+        }
+
+        # 清理过期的冷却记录
+        current_time = time.time()
+        self.user_cooldowns = {
+            key: cooldown for key, cooldown in self.user_cooldowns.items()
+            if cooldown > current_time
+        }
+
     def clear_all(self):
         """清空所有事件"""
         self.events.clear()
+        self.processed_events.clear()
+        self.user_cooldowns.clear()
+
+    def is_processed(self, event_id: str) -> bool:
+        """检查事件是否已被处理"""
+        return event_id in self.processed_events
+
+    def mark_processed(self, event_id: str):
+        """标记事件为已处理"""
+        self.processed_events.add(event_id)
+
+    def check_cooldown(self, user_id: str, user_name: str, cooldown_seconds: int) -> bool:
+        """检查用户是否在冷却期内"""
+        key = (user_id, user_name)
+        current_time = time.time()
+
+        if key in self.user_cooldowns:
+            if current_time < self.user_cooldowns[key]:
+                return False  # 还在冷却期
+
+        # 设置新的冷却时间
+        self.user_cooldowns[key] = current_time + cooldown_seconds
+        return True
 
 
 class DouyinLive(DouyinLiveWebFetcher):
@@ -207,6 +283,14 @@ class DouyinLive(DouyinLiveWebFetcher):
         self._start_lock = asyncio.Lock()
         self._is_stopped = asyncio.Event()
 
+        # 统计信息
+        self.stats = {
+            "total_events": 0,
+            "processed_events": 0,
+            "filtered_events": 0,
+            "last_snapshot_time": 0
+        }
+
     async def start(self):
         """
         避免重复启动
@@ -241,6 +325,18 @@ class DouyinLive(DouyinLiveWebFetcher):
         if self._periodic_task:
             self._periodic_task.cancel()
 
+    def _should_filter_enter_event(self, user_id: str, user_name: str) -> bool:
+        """判断是否应该过滤进入事件"""
+        if not self.config.enable_smart_filtering:
+            return False
+
+        # 检查冷却时间
+        if not self.event_buffer.check_cooldown(user_id, user_name, self.config.enter_event_cooldown):
+            self.logger.debug(f"过滤进入事件：{user_name} 在冷却期内")
+            return True
+
+        return False
+
     def _parseChatMsg(self, payload):
         message = ChatMessage().parse(payload)
         event = DouyinLiveEvent(
@@ -253,10 +349,16 @@ class DouyinLive(DouyinLiveWebFetcher):
         # 分类弹幕
         bar_type, priority = self.classifier.classify(message.content)
         event.priority = priority
-        # event.bar_type = bar_type
+
+        # 智能过滤：过短的弹幕不处理
+        if self.config.enable_smart_filtering and len(
+                message.content.strip()) < self.config.min_chat_length_for_response:
+            event.priority = Priority.P3
+            self.stats["filtered_events"] += 1
 
         # 添加到事件缓冲区
         self.event_buffer.add(event)
+        self.stats["total_events"] += 1
 
         # P0事件放入实时处理队列
         if priority == Priority.P0:
@@ -285,6 +387,7 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 添加到事件缓冲区
         self.event_buffer.add(event)
+        self.stats["total_events"] += 1
 
         # 放入实时处理队列
         self.realtime_queue.put_nowait(event)
@@ -301,9 +404,16 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 添加到事件缓冲区
         self.event_buffer.add(event)
+        self.stats["total_events"] += 1
 
     def _parseMemberMsg(self, payload):
         message = MemberMessage().parse(payload)
+
+        # 智能过滤：检查是否应该过滤进入事件
+        if self._should_filter_enter_event(str(message.user.id), message.user.nick_name):
+            self.stats["filtered_events"] += 1
+            return
+
         event = DouyinLiveEvent(
             user_id=str(message.user.id),
             user_name=message.user.nick_name,
@@ -313,6 +423,7 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 添加到事件缓冲区
         self.event_buffer.add(event)
+        self.stats["total_events"] += 1
 
     def _parseSocialMsg(self, payload):
         message = SocialMessage().parse(payload)
@@ -325,6 +436,7 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 添加到事件缓冲区
         self.event_buffer.add(event)
+        self.stats["total_events"] += 1
 
     def _parseRoomUserSeqMsg(self, payload):
         message = RoomUserSeqMessage().parse(payload)
@@ -357,6 +469,17 @@ class DouyinLive(DouyinLiveWebFetcher):
         try:
             while True:
                 event = await self.realtime_queue.get()
+
+                # 检查是否已被处理
+                if self.event_buffer.is_processed(event.event_id):
+                    self.logger.debug(f"跳过已处理事件: {event.event_id}")
+                    self.realtime_queue.task_done()
+                    continue
+
+                # 标记为已处理
+                event.mark_processed("main")
+                self.event_buffer.mark_processed(event.event_id)
+                self.stats["processed_events"] += 1
 
                 # 获取用户历史
                 user_history = await self.get_user_history(event.user_id, event.user_name)
@@ -414,26 +537,40 @@ class DouyinLive(DouyinLiveWebFetcher):
         """定时触发事件总线"""
         try:
             while True:
+                # 获取当前快照中的未处理事件
+                async with self._snapshot_lock:
+                    recent_events = self._get_unprocessed_events_for_snapshot()
 
-                # 发送定时任务事件到事件总线
-                await self.eventbus.put(UserInputAgentEvent(
-                    message=Message.new(
-                        role="user",
-                        name="__douyin_live_periodic__"
-                    ).with_content(
-                        Text(text=self.config.periodic_task_prompt)
-                    ),
-                    priority=0,  # 中等优先级
-                    overdue=self.config.periodic_task_overdue,  # 30秒过期
-                    agent_id="live",
-                ))
+                if recent_events:
+                    # 发送定时任务事件到事件总线
+                    await self.eventbus.put(UserInputAgentEvent(
+                        message=Message.new(
+                            role="user",
+                            name="__douyin_live_periodic__"
+                        ).with_content(
+                            Text(text=self.config.periodic_task_prompt),
+                            Text(text=f"\n最近{len(recent_events)}个未处理的交互事件："),
+                            *[Text(text=f"  - {event.to_natural()}") for event in recent_events[:5]]
+                        ),
+                        priority=0,  # 中等优先级
+                        overdue=self.config.periodic_task_overdue,  # 30秒过期
+                        agent_id="live",
+                    ))
 
-                self.logger.info(f"定时任务触发，当前观看人数：{self.current_users}")
+                self.logger.info(f"定时任务触发，当前观看人数：{self.current_users}，未处理事件：{len(recent_events)}")
 
                 await asyncio.sleep(self.config.periodic_task_interval)
 
         except asyncio.CancelledError:
             pass
+
+    def _get_unprocessed_events_for_snapshot(self) -> List[DouyinLiveEvent]:
+        """获取快照中未处理的事件"""
+        unprocessed = []
+        for event in self.event_buffer.get_recent_events(self.config.max_events_in_snapshot):
+            if not event.processed:
+                unprocessed.append(event)
+        return unprocessed
 
     # ========= 快照生成 =========
     async def _run_snapshot_generator(self):
@@ -474,22 +611,41 @@ class DouyinLive(DouyinLiveWebFetcher):
             Text(text=f"当前观看人数：{self.current_users}，累计观看人数：{self.total_users}")
         )]
 
-        # 添加直播间概览
+        # 统计信息
+        enter_count = 0
+        processed_events = []
 
         # 处理每个用户的事件
         for (user_id, user_name), events in group_by_user.items():
-            # 如果用户太多，随机忽略一些进入事件
-            if len(group_by_user) > 20 and len(events) == 1 and events[0].event_type == DouyinLiveEventType.enter:
-                if random.random() < 0.9:
-                    continue
+            # 智能过滤：限制每个用户的事件数量
+            if self.config.enable_smart_filtering and len(events) > self.config.max_events_per_user:
+                # 保留最近的事件
+                events = events[-self.config.max_events_per_user:]
+
+            # 过滤进入事件
+            filtered_events = []
+            for event in events:
+                if event.event_type == DouyinLiveEventType.enter:
+                    enter_count += 1
+                    # 限制进入事件数量
+                    if enter_count <= self.config.max_enter_events_per_snapshot:
+                        filtered_events.append(event)
+                    else:
+                        continue
+                else:
+                    filtered_events.append(event)
+
+            if not filtered_events:
+                continue
 
             # 创建用户交互消息
             message = Message.new(role="user", name=f"__douyin_live_{user_name}#{user_id}_interaction__")
 
             # 添加当前交互
             current_contents = []
-            for event in events:
+            for event in filtered_events:
                 current_contents.append(Text(text=event.to_natural()))
+                processed_events.append(event)
 
             message.with_content(
                 Text(text=f"以下是用户 {user_name} 在直播间的最新交互行为："),
@@ -499,11 +655,18 @@ class DouyinLive(DouyinLiveWebFetcher):
             messages.append(message)
 
             # 异步保存到本地文件
-            self.save_queue.put_nowait((user_id, user_name, events))
+            self.save_queue.put_nowait((user_id, user_name, filtered_events))
 
         # 更新当前快照
         async with self._snapshot_lock:
             self._current_snapshot = messages
+
+        # 标记快照中的事件为已处理（由LiveAgent处理）
+        for event in processed_events:
+            if not event.processed:
+                event.mark_processed("live")
+                self.event_buffer.mark_processed(event.event_id)
+                self.stats["processed_events"] += 1
 
     # ========= 保存任务 =========
     async def _run_save(self):
@@ -514,6 +677,16 @@ class DouyinLive(DouyinLiveWebFetcher):
 
                 history = await self.get_user_history(user_id, user_name)
                 history.history.extend(events)
+
+                # 更新最后交互时间
+                if events:
+                    history.update_last_interaction_time()
+
+                    # 如果有进入事件，更新最后进入时间
+                    for event in events:
+                        if event.event_type == DouyinLiveEventType.enter:
+                            history.update_last_enter_time()
+                            break
 
                 # 判断是否为核心用户
                 if not history.is_core_user:

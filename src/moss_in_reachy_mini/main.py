@@ -127,7 +127,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
         container=container,
         speech=get_speech(
             mini,
-            default_speaker="zh_female_mizai_saturn_bigtts",
+            default_speaker="可爱女生",
             container=container,
         ),
         experimental=False,
