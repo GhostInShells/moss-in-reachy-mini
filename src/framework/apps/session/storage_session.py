@@ -22,7 +22,7 @@ class TurnAddition(Addition):
 
 
 class MetaConfig(YamlConfig):
-    relative_path = ".conversation_meta.yaml"
+    relative_path = ".session_meta.yaml"
 
     current_session_id: str = Field(default="", description="current session id")
     turn_rounds: int = Field(default=10, description="turn rounds")

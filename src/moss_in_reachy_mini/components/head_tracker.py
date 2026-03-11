@@ -8,7 +8,7 @@ from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from reachy_mini.utils.interpolation import linear_pose_interpolation, delta_angle_between_mat_rot
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import VisionAgentEvent
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.model import CameraFrame

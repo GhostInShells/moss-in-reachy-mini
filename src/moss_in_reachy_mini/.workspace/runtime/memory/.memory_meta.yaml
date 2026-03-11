@@ -1,0 +1,6 @@
+# from class: framework.apps.memory.storage_memory:MetaConfig
+autobiographical_memory_md: autobiographical_memory.md
+behavior_preference_md: behavior_preference.md
+mood_base_md: mood_base.md
+personality_md: personality.md
+summary_memory_md: summary_memory.md

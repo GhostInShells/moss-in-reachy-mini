@@ -1,3 +1,12 @@
+import warnings
+# 抑制insightface的skimage弃用警告
+warnings.filterwarnings(
+    'ignore',
+    category=FutureWarning,
+    message='`estimate` is deprecated since version 0.26'
+)
+
+
 import json
 import logging
 import time

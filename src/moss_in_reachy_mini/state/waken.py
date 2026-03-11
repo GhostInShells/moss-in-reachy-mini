@@ -7,7 +7,7 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Text, Message, PyChannel
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import ReactAgentEvent, CTMLAgentEvent
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body

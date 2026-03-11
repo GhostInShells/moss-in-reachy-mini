@@ -6,7 +6,7 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import PyChannel, Message, Text
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.abcd.agent_event import UserInputAgentEvent
 from framework.apps.live.douyin_live import DouyinLive
 from framework.apps.todolist import TodoList
@@ -34,7 +34,7 @@ class LiveState(MiniStateHook):
             antennas: Antennas,
             vision: Vision,
             eventbus: EventBus,
-            todolist: TodoList,
+            todolist: TodoList=None,
             logger: LoggerItf=None,
     ):
         super().__init__()
@@ -55,8 +55,8 @@ class LiveState(MiniStateHook):
         pass
 
     async def _run_idle_move(self):
-        message = Message.new(role="user")
-        if self.todolist.todo_todos:
+        if self.todolist and self.todolist.todo_todos:
+            message = Message.new(role="user")
             message.with_content(
                 Text(text="按 todolist 顺序执行下一个未完成的叶子任务，并且需要用很短的话让用户知道当前在干什么"),
             )
@@ -90,7 +90,7 @@ class LiveStateProvider(Provider[LiveState]):
         antennas = con.force_fetch(Antennas)
         eventbus = con.force_fetch(EventBus)
         logger = con.get(logging.Logger)
-        todolist = con.force_fetch(TodoList)
+        todolist = con.get(TodoList)
 
         return LiveState(
             mini=mini,

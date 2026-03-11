@@ -9,7 +9,7 @@ from ghoshell_moss import MOSSShell, new_shell
 from ghoshell_moss_contrib.example_ws import workspace_container
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent import EventBus
+from framework.abcd.agent_hub import EventBus
 from framework.agent.eventbus import QueueEventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.camera.frame_hub import FrameHub, FrameHubProvider
