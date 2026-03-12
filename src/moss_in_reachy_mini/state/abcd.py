@@ -70,10 +70,6 @@ class MiniStateHook(AgentHook, abc.ABC):
     async def on_responding(self):
         await self.cancel_idle_move()
 
-    @abc.abstractmethod
-    def as_channel(self) -> PyChannel:
-        pass
-
 
 class InitialState(MiniStateHook):
     NAME = "initial"

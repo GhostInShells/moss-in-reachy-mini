@@ -12,7 +12,7 @@ from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
 
 from framework.abcd.agent import AgentConfig, ModelConf
-from framework.abcd.agent_hub import EventBus
+from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPI
 from framework.agent.agent_hub import AgentHubImpl
@@ -157,6 +157,7 @@ async def main() -> None:
             eventbus=container.force_fetch(EventBus),
             logger=container.get(LoggerItf),
         )
+        container.set(AgentHub, agent_hub)
 
         await agent_hub.bootstrap()
 

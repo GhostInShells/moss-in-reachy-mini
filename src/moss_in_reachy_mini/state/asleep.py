@@ -24,17 +24,6 @@ class AsleepState(MiniStateHook):
     async def _run_idle_move(self):
         pass
 
-    async def context_messages(self):
-        msg = Message.new(role="system").with_content(
-            Text(text="你现在处于asleep状态，你必须得先切换到其他状态才能继续和用户进行交互，比如waken"),
-        )
-        return [msg]
-
-    def as_channel(self):
-        chan = PyChannel(name=AsleepState.NAME, description=f"current state is asleep", blocking=True)
-        chan.build.context_messages(self.context_messages)
-        return chan
-
 
 class AsleepStateProvider(Provider[AsleepState]):
     def singleton(self) -> bool:

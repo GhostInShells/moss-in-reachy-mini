@@ -4,7 +4,7 @@ from typing import Dict, Optional, List
 
 from ghoshell_common.contracts import LoggerItf
 
-from framework.abcd.agent import Agent
+from framework.abcd.agent import Agent, AgentStateName
 from framework.abcd.agent_event import AgentEventModel
 from framework.abcd.agent_hub import AgentHub, EventBus
 from framework.agent.eventbus import QueueEventBus

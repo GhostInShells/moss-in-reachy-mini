@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import get_container, Provider, IoCContainer, INSTANCE, Container
+from ghoshell_container import get_container, IoCContainer, Container
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
@@ -22,8 +22,8 @@ from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
 from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
-from framework.apps.todolist import TodoList, TodoListProvider
 from framework.apps.utils import AgentConsoleChat
+from framework.moss_contrib.ctml_repo import CtmlRepoProvider, CtmlRepo
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
@@ -37,9 +37,9 @@ from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
+from moss_in_reachy_mini.state.teaching import TeachingState, TeachingStateProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
-
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
@@ -120,6 +120,9 @@ async def build_main_agent(parent: Container) -> MainAgent:
     session = StorageSession(storage)
     container.set(Session, session)
 
+    # ctml repo
+    container.register(CtmlRepoProvider())
+
     # Shell
     mini = container.force_fetch(ReachyMini)
     moss = container.force_fetch(MossInReachyMini)
@@ -132,12 +135,21 @@ async def build_main_agent(parent: Container) -> MainAgent:
         ),
         experimental=False,
     )
+    ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.import_channels(
         moss.as_channel(),
         container.force_fetch(StorageMemory).as_channel(),
         # container.force_fetch(TodoList).as_channel(),
         container.force_fetch(DouyinLive).as_channel(),
     )
+
+    shell.main_channel.build.command(
+        available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
+    )(ctml_repo.save_ctml)
+    shell.main_channel.build.command(
+        doc=ctml_repo.execute_ctml_docstring,  # 动态加载docstring
+    )(ctml_repo.execute_ctml)
+
     container.set(MOSSShell, shell)
 
     # Agent
@@ -209,6 +221,7 @@ def common_dependencies(container: IoCContainer):
     container.register(WakenStateProvider())
     container.register(BoringStateProvider())
     container.register(LiveStateProvider())
+    container.register(TeachingStateProvider())
 
     # Moss
     container.register(MossInReachyMiniProvider())
@@ -236,6 +249,7 @@ async def run(container):
         eventbus=eventbus,
         logger=container.get(LoggerItf),
     )
+    container.set(AgentHub, agent_hub)
 
     # HTTP API
     agent_fastapi = container.make(AgentFastAPI)

@@ -327,6 +327,7 @@ class DouyinLive(DouyinLiveWebFetcher):
         避免重复启动
         """
         async with self._start_lock:
+            self._is_stopped.clear()
             if not self._ws_task:
                 self._ws_task = asyncio.create_task(self._connectWebSocket())
             if not self.save_task:
@@ -344,17 +345,22 @@ class DouyinLive(DouyinLiveWebFetcher):
         self._is_stopped.set()
 
         if hasattr(self, "ws"):
-            self.ws.close()
+            await self.ws.close()
         if self._ws_task:
             self._ws_task.cancel()
+            self._ws_task = None
         if self.save_task:
             self.save_task.cancel()
+            self.save_task = None
         if self._realtime_task:
             self._realtime_task.cancel()
+            self._realtime_task = None
         if self._snapshot_task:
             self._snapshot_task.cancel()
+            self._snapshot_task = None
         if self._periodic_task:
             self._periodic_task.cancel()
+            self._periodic_task = None
 
     def _should_filter_enter_event(self, user_id: str, user_name: str) -> bool:
         """判断是否应该过滤进入事件"""
