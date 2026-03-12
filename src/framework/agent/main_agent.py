@@ -13,7 +13,7 @@ from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEventModel
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEventModel, ResumeAgentEvent
 from framework.abcd.agent_hook import AgentStateHook
 from framework.abcd.agent_hub import EventBus
 from framework.abcd.session import Session
@@ -213,6 +213,18 @@ class BaseMainAgent(Agent, ABC):
                 logger=self.logger,
             )
 
+        if resume := ResumeAgentEvent.from_agent_event_model(event):
+            return MOSShellResponse(
+                shell=self.shell,
+                agent_id=self._id,
+                event=resume,
+                inputs=[resume.message],
+                model=self.config.model,
+                prompts=prompts,
+                logger=self.logger,
+                eventbus=self._eventbus,
+            )
+
         return None
 
     def _is_running_response(self, response_id: str) -> bool:
@@ -403,6 +415,14 @@ class BaseMainAgent(Agent, ABC):
             if parsed.priority > _running_response.event.priority:
                 await self._preempt_event_queue.put(parsed)
                 await self._interrupt()
+                # 被打断了原始事件重新触发
+                await self._eventbus.put(ResumeAgentEvent(
+                    message=Message.new(name="user").with_content(
+                        Text(text="你的回复被更高优的事件打断了，结合历史消息，自然衔接回刚才的话题")
+                    ),
+                    event=_running_response.event,
+                    priority=_running_response.event.priority - 1,
+                ))
                 return
             else:
                 # 拒绝接受高优先级事件.

@@ -127,3 +127,8 @@ class CTMLAgentEvent(AgentEventModel):
 
     ctml: str = Field(description="ctml 文本")
 
+class ResumeAgentEvent(AgentEventModel):
+    event_type = "resume"
+
+    message: Message = Field(description="resume message")
+    event: AgentEventModel = Field(description="被中断的事件")
