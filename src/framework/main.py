@@ -45,7 +45,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     douyin_live = container.force_fetch(DouyinLive)
 
     # shell
-    shell = new_ctml_shell(container=container, speech=get_example_speech(container))
+    shell = new_ctml_shell(container=container, speech=get_example_speech(container, default_speaker="可爱女生"))
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
