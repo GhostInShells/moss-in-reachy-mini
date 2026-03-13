@@ -122,6 +122,7 @@ class Head:
                 await self._breathing()
         except asyncio.CancelledError:
             self._head_tracker.enabled.clear()
+            await asyncio.sleep(0.2)
             self.logger.info("Head on_idle task cancelled successfully")
 
     def as_channel(self) -> PyChannel:

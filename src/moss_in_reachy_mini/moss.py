@@ -3,7 +3,7 @@ import io
 import logging
 import os
 import time
-from typing import List
+from typing import List, Callable
 
 from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
@@ -12,9 +12,14 @@ from ghoshell_moss import PyChannel, Message, Base64Image, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
+from moss_in_reachy_mini.components.antennas import Antennas
+from moss_in_reachy_mini.components.body import Body
+from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.vision import Vision
 from moss_in_reachy_mini.state.abcd import MiniStateHook, InitialState
 from moss_in_reachy_mini.state.asleep import AsleepState
 from moss_in_reachy_mini.state.boring import BoringState
+from moss_in_reachy_mini.state.teaching import TeachingState
 from moss_in_reachy_mini.state.waken import WakenState
 
 try:
@@ -42,9 +47,19 @@ class MossInReachyMini:
             structure_img: Image.Image,
             logger: LoggerItf = None,
             recorder: VideoRecorderWorker | None = None,
+            body: Body,
+            head: Head,
+            antennas: Antennas,
+            vision: Vision,
     ):
         self.mini = mini
         self.logger = logger or logging.getLogger(__name__)
+
+        # components
+        self.body = body
+        self.head = head
+        self.antennas = antennas
+        self.vision = vision
 
         # state
         self._state_map = { state.NAME: state for state in states }
@@ -85,14 +100,19 @@ class MossInReachyMini:
         return self._state
 
     async def context_messages(self):
-        msg = Message.new(role="user", name="__reachy_mini__")
-        msg.with_content(
-            Text(text="These two images shows your appearance and structure"),
-            Base64Image.from_pil_image(self.appearance_img),
-            Base64Image.from_pil_image(self.structure_img),
-        )
+        # outlook message
+        messages = [
+            Message.new(role="user", name="__reachy_mini_outlook__").with_content(
+                Text(text="These two images shows your appearance and structure"),
+                Base64Image.from_pil_image(self.appearance_img),
+                Base64Image.from_pil_image(self.structure_img),
+            )
+        ]
 
-        contents = []
+        # state context_messages
+        state_message = Message.new(role="user", name="__reachy_mini_state__").with_content(
+            Text(text=f"You are under {self._state.NAME} state"),
+        )
         now = int(time.time())
         for state in self._state_log:
             ago = now - state.now
@@ -100,21 +120,33 @@ class MossInReachyMini:
                 text = f"Start state to {state.to_state.NAME} occurred {ago} seconds ago"
             else:
                 text = f"Switch state from {state.from_state.NAME} to {state.to_state.NAME} occurred {ago} seconds ago"
-            contents.append(Text(text=text))
+            state_message.with_content(Text(text=text))
         self._state_log.clear()
+        messages.append(state_message)
 
-        msg.with_content(*contents)
-        return [msg]
+        # components context messages
+        head_messages = await self.head.context_messages()
+        antenna_messages = await self.antennas.context_messages()
+        messages.extend(head_messages)
+        messages.extend(antenna_messages)
+
+        return messages
+
+    def is_available_fn(self, *available_states) -> Callable[[], bool]:
+        return lambda : self._state.NAME in available_states
 
     def as_channel(self, only_context_messages=False) -> PyChannel:
         self.logger.info("MossInReachyMini.as_channel()...")
 
+        # name不可改，其他地方有直接使用reach_mini作为路径的ctml事件
         reachy_mini = PyChannel(name="reachy_mini", description="reachy mini root channel", blocking=True)
 
         if only_context_messages:
+            # 只共享当前的reachy mini的全量动态上下文给旁路的Agent
             reachy_mini.build.context_messages(self.context_messages)
             return reachy_mini
 
+        # 支持大模型自主切换reachy mini的仿生状态
         reachy_mini.build.command(doc=f"""
         切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
 
@@ -122,23 +154,68 @@ class MossInReachyMini:
         :param force: 务必使用默认值False，任何情况都不能设置为True
         """)(self.switch_state)
 
-
-        channels = []
-        for name, state in self._state_map.items():
-            chan = state.as_channel()
-            chan.build.available(lambda _state=state: self._state.NAME == _state.NAME)
-            channels.append(chan)
-
+        # recorder（即vlog）独立成轨，后面可以和vision channel合并
+        sub_channels = []
         if self._recorder is not None:
             recorder_chan = VideoRecorder(self._recorder).as_channel()
-            # recorder_chan.build.with_available()(lambda: self._state.NAME != AsleepState.NAME)
-            recorder_chan.build.available(lambda: True)
-            channels.append(recorder_chan)
+            sub_channels.append(recorder_chan)
 
+        # 视觉独立成轨，不会和其他动作轨打架
+        vision_chan = self.vision.as_channel()
+        # 目前仅支持Waken和Boring状态可以使用视觉，主要是为了屏蔽掉Live直播状态下的视觉上下文分散注意力
+        vision_chan.build.available(self.is_available_fn(WakenState.NAME, BoringState.NAME))
+        sub_channels.append(vision_chan)
+
+        # 注册子轨道
         reachy_mini.import_channels(
-            *channels,
+            *sub_channels,
         )
 
+        # 注册自身command，都是动作
+        # 动作单轨化：reachy mini的可执行动作比较简单，拆多轨增加复杂度而且容易导致电机打架抽搐，单轨化的表现力已经足够了
+        reachy_mini.build.command(
+            doc=self.body.dance_docstring,
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.body.dance)
+
+        reachy_mini.build.command(
+            doc=self.body.emotion_docstring,
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.body.emotion)
+
+        reachy_mini.build.command(
+            name="head_move",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.head.move)
+
+        reachy_mini.build.command(
+            name="head_reset",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.head.reset)
+
+        reachy_mini.build.command(
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.head.start_tracking_face)
+
+        reachy_mini.build.command(
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.head.stop_tracking_face)
+
+        reachy_mini.build.command(
+            name="antennas_move",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.antennas.move)
+
+        reachy_mini.build.command(
+            name="antennas_reset",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.antennas.reset)
+
+        # 注册idle状态的默认动作
+        # 呼吸 或 人脸跟随
+        reachy_mini.build.idle(self.head.on_idle)
+
+        # 挂载启动和退出到MOSS生命周期
         reachy_mini.build.start_up(self.bootstrap)
         reachy_mini.build.close(self.aclose)
 
@@ -164,6 +241,8 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         asleep = con.force_fetch(AsleepState)
         waken = con.force_fetch(WakenState)
         boring = con.force_fetch(BoringState)
+        teaching = con.force_fetch(TeachingState)
+
         live = None
         if LiveState is not None:
             try:
@@ -182,7 +261,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
         # 桌面陪伴模式
-        states = [asleep, waken, boring]
+        states = [asleep, waken, boring, teaching]
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
@@ -192,8 +271,14 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
                     "REACHY_MINI_MODE=live requires optional dependencies. "
                     "Please install project with 'douyin_live' extras."
                 )
-            states = [asleep, live]
+            states = [asleep, live, teaching]
             default_state = LiveState.NAME  # type: ignore[union-attr]
+
+        # components
+        body = con.force_fetch(Body)
+        head = con.force_fetch(Head)
+        antennas = con.force_fetch(Antennas)
+        vision = con.force_fetch(Vision)
 
         return MossInReachyMini(
             mini, *states,
@@ -201,4 +286,8 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
             appearance_img=appearance_img, structure_img=structure_img,
             logger=logger,
             recorder=recorder,
+            body=body,
+            head=head,
+            antennas=antennas,
+            vision=vision,
         )

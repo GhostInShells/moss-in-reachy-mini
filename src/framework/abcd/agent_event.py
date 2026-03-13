@@ -76,14 +76,6 @@ class AgentEventModel(BaseModel):
         data["created"] = agent_event["created"]
         return cls(**data)
 
-    @classmethod
-    def from_agent_event_model(cls, agent_event: "AgentEventModel") -> Optional[Self]:
-        if cls.event_type != agent_event.event_type:
-            return None
-        return cls.from_agent_event(
-            agent_event=agent_event.to_agent_event(),
-        )
-
 
 class UserInputAgentEvent(AgentEventModel):
     event_type = "user_input"
@@ -127,3 +119,8 @@ class CTMLAgentEvent(AgentEventModel):
 
     ctml: str = Field(description="ctml 文本")
 
+class ResumeAgentEvent(AgentEventModel):
+    event_type = "resume"
+
+    message: Message = Field(description="resume message")
+    event: AgentEventModel = Field(description="被中断的事件")

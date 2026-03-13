@@ -4,8 +4,8 @@ from typing import Dict, Optional, List
 
 from ghoshell_common.contracts import LoggerItf
 
-from framework.abcd.agent import Agent
-from framework.abcd.agent_event import AgentEventModel
+from framework.abcd.agent import Agent, AgentStateName
+from framework.abcd.agent_event import AgentEvent
 from framework.abcd.agent_hub import AgentHub, EventBus
 from framework.agent.eventbus import QueueEventBus
 
@@ -58,15 +58,15 @@ class AgentHubImpl(AgentHub):
 
         return agent_ins
 
-    async def add_event(self, event: AgentEventModel) -> bool:
-        self._logger.info(f'AGENT HUB ADD EVENT: {event.model_dump()}')
-        agent_id = event.agent_id
+    async def add_event(self, event: AgentEvent) -> bool:
+        self._logger.info(f'AGENT HUB ADD EVENT: {event}')
+        agent_id = event["agent_id"]
         agent = self.get_agent(agent_id)
         if agent is None:
             return False
         self._logger.info(
             'add event type %s id %s to agent %s',
-            event.event_type, event.event_id, agent.info().id,
+            event["event_type"], event["event_id"], agent.info().id,
         )
         await agent.add_event(event)
         return True
@@ -80,7 +80,7 @@ class AgentHubImpl(AgentHub):
                 event = await self.eventbus.get()
                 if event is None:
                     continue
-                self._logger.info("AgentHub receive async event %s for agent %s", event.event_id, event.agent_id)
+                self._logger.info("AgentHub receive async event %s for agent %s", event["event_id"], event["agent_id"])
                 await self.add_event(event)
             except Exception as e:
                 # 记录异常但不中断.

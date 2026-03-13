@@ -30,7 +30,7 @@ def setup_logger(log_file: str) -> logging.Logger:
 
     # ========== 2. 控制台处理器：ERROR级别（只打印错误日志） ==========
     console_handler = logging.StreamHandler()  # 默认输出到控制台
-    console_handler.setLevel(logging.ERROR)  # 控制台只显示ERROR及以上
+    console_handler.setLevel(logging.DEBUG)  # 控制台只显示ERROR及以上
     # 控制台日志格式（简化，可选）
     console_formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(message)s"
