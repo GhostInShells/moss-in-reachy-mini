@@ -13,7 +13,7 @@ from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEventModel, ResumeAgentEvent
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEvent, ResumeAgentEvent
 from framework.abcd.agent_hook import AgentStateHook
 from framework.abcd.agent_hub import EventBus
 from framework.abcd.session import Session
@@ -52,11 +52,11 @@ class BaseMainAgent(Agent, ABC):
         self._halt_event = asyncio.Event() # 停止所有事件的运行
         self._shutdown_event = asyncio.Event() # 关闭整个 agent 运行
 
-        self._add_event_queue: asyncio.Queue[AgentEventModel]= asyncio.Queue()
+        self._add_event_queue: asyncio.Queue[AgentEvent]= asyncio.Queue()
 
-        self._preempt_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 抢占式调度的事件队列
-        self._queued_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 普通的事件队列
-        self._low_event_queue: asyncio.Queue[AgentEventModel] = asyncio.Queue() # 低优先级的事件队列
+        self._preempt_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 抢占式调度的事件队列
+        self._queued_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 普通的事件队列
+        self._low_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 低优先级的事件队列
 
         self._auto_shutdown: bool = False
 
@@ -100,7 +100,7 @@ class BaseMainAgent(Agent, ABC):
         return [system_prompt]
 
     @abstractmethod
-    def _parse_event(self, event: AgentEventModel) -> Union[AgentEventModel, None]:
+    def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
         """
         重写这个事件, 可以做 agent 级别的拦截.
         """
@@ -156,9 +156,9 @@ class BaseMainAgent(Agent, ABC):
         self._idling_time += duration
         await self.set_state(AgentStateName.IDLE)
 
-    async def _handle_event(self, event: AgentEventModel) -> Optional[Response]:
+    async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
         prompts = await self.make_prompts()
-        if user_input := UserInputAgentEvent.from_agent_event_model(event):
+        if user_input := UserInputAgentEvent.from_agent_event(event):
             now = time.time()
             # 不处理过期事件.
             if user_input.is_overdue(now):
@@ -175,7 +175,7 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if react := ReactAgentEvent.from_agent_event_model(event):
+        if react := ReactAgentEvent.from_agent_event(event):
             return MOSShellResponse(
                 shell=self.shell,
                 agent_id=self._id,
@@ -187,7 +187,7 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if vision := VisionAgentEvent.from_agent_event_model(event):
+        if vision := VisionAgentEvent.from_agent_event(event):
             inputs = [Message.new(role="system").with_content(
                 Text(text=vision.content),
                 *vision.images,
@@ -203,7 +203,7 @@ class BaseMainAgent(Agent, ABC):
                 eventbus=self._eventbus,
             )
 
-        if ctml := CTMLAgentEvent.from_agent_event_model(event):
+        if ctml := CTMLAgentEvent.from_agent_event(event):
             return CTMLResponse(
                 shell=self.shell,
                 agent_id=self._id,
@@ -213,7 +213,7 @@ class BaseMainAgent(Agent, ABC):
                 logger=self.logger,
             )
 
-        if resume := ResumeAgentEvent.from_agent_event_model(event):
+        if resume := ResumeAgentEvent.from_agent_event(event):
             return MOSShellResponse(
                 shell=self.shell,
                 agent_id=self._id,
@@ -368,7 +368,7 @@ class BaseMainAgent(Agent, ABC):
                 self._logger.exception(e)
                 self._error_time += 1
 
-    async def add_event(self, event: AgentEventModel):
+    async def add_event(self, event: AgentEvent):
         await self._add_event_queue.put(event)
 
     async def _add_event_loop(self) -> None:
@@ -384,14 +384,14 @@ class BaseMainAgent(Agent, ABC):
             except Exception as e:
                 self._logger.exception(e)
 
-    async def _add_event(self, event: AgentEventModel) -> None:
+    async def _add_event(self, event: AgentEvent) -> None:
         # 系统级别的事件, 强制关闭 agent 运行.
-        if event.event_type == ShutdownAgentEvent.event_type:
+        if _ := ShutdownAgentEvent.from_agent_event(event):
             await self.close()
             return
 
         # 中断事件，强制中断当前响应生成
-        if event.event_type == InterruptAgentEvent.event_type:
+        if _ := InterruptAgentEvent.from_agent_event(event):
             await self._interrupt()
             return
 
@@ -400,22 +400,22 @@ class BaseMainAgent(Agent, ABC):
         if parsed is None:
             return
 
-        if parsed.priority < 0:
+        if parsed["priority"] < 0:
             # 低优先级事件, 进入普通队列.
             await self._low_event_queue.put(parsed)
             return
 
-        elif parsed.priority == 0:
+        elif parsed["priority"] == 0:
             # 普通事件, 进入正常队列.
             await self._queued_event_queue.put(parsed)
             return
 
-        elif parsed.priority > 0:
+        elif parsed["priority"] > 0:
             await self._preempt_event_queue.put(parsed)
             _running_response = self._running_response
             if _running_response is not None:
                 # 更高级别的事件也会触发中断.
-                if parsed.priority > _running_response.event.priority:
+                if parsed["priority"] > _running_response.event.priority:
                     await self._interrupt()
                     return
         return
@@ -490,7 +490,7 @@ class MainAgent(BaseMainAgent):
     主 Agent.
     """
 
-    def _parse_event(self, event: AgentEventModel) -> Union[AgentEventModel, None]:
+    def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
         return event
 
     @classmethod

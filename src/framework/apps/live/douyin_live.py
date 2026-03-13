@@ -584,7 +584,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                     priority=priority,
                     overdue=overdue,
                     agent_id="main",  # 指定由MainAgent处理
-                ))
+                ).to_agent_event())
 
                 # 保存用户历史
                 self.save_queue.put_nowait((event.user_id, event.user_name, [event]))

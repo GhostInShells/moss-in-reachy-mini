@@ -76,14 +76,6 @@ class AgentEventModel(BaseModel):
         data["created"] = agent_event["created"]
         return cls(**data)
 
-    @classmethod
-    def from_agent_event_model(cls, agent_event: "AgentEventModel") -> Optional[Self]:
-        if cls.event_type != agent_event.event_type:
-            return None
-        return cls.from_agent_event(
-            agent_event=agent_event.to_agent_event(),
-        )
-
 
 class UserInputAgentEvent(AgentEventModel):
     event_type = "user_input"

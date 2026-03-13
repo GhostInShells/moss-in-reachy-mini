@@ -9,7 +9,7 @@ from framework.abcd.agent_event import AgentEvent, UserInputAgentEvent, Interrup
 from framework.abcd.agent_hub import EventBus
 
 
-def get_event(queue: asyncio.Queue) -> Optional[AgentEventModel]:
+def get_event(queue: asyncio.Queue) -> Optional[AgentEvent]:
     """消费单个队列的一个任务（非阻塞取任务）"""
     try:
         task = queue.get_nowait()
@@ -32,17 +32,17 @@ async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
     def _callback(user_input):
         asyncio.run_coroutine_threadsafe(eventbus.put(UserInputAgentEvent(
             message=Message.new(role="user").with_content(Text(text=user_input)),
-        )), loop)
+        ).to_agent_event()), loop)
 
     def _interrupt():
         asyncio.run_coroutine_threadsafe(
-            eventbus.put(InterruptAgentEvent()),
+            eventbus.put(InterruptAgentEvent().to_agent_event()),
             loop
         )
-    async def _on_get(event: AgentEventModel):
-        if event.agent_id not in ["main", ""]:
+    async def _on_get(event: AgentEvent):
+        if event["agent_id"] not in ["main", ""]:
             return
-        if user_input := UserInputAgentEvent.from_agent_event_model(event):
+        if user_input := UserInputAgentEvent.from_agent_event(event):
 
             message_strings = []
             for content in user_input.message.contents:
