@@ -320,6 +320,10 @@ class DouyinLive(DouyinLiveWebFetcher):
             "last_periodic_time": 0
         }
 
+        self._gift_cache: Dict[str, Dict] = {}
+        self._gift_cache_lock = asyncio.Lock()
+        self._gift_merge_task: Optional[asyncio.Task] = None
+
     async def start(self):
         """
         避免重复启动
@@ -336,6 +340,8 @@ class DouyinLive(DouyinLiveWebFetcher):
                 self._snapshot_task = asyncio.create_task(self._run_snapshot_generator())
             if not self._periodic_task:
                 self._periodic_task = asyncio.create_task(self._run_periodic_task())  # 启动定时任务
+            if not self._gift_merge_task:
+                self._gift_merge_task = asyncio.create_task(self._run_gift_merge_check())
 
     async def stop(self):
         if self._is_stopped.is_set():
@@ -359,6 +365,9 @@ class DouyinLive(DouyinLiveWebFetcher):
         if self._periodic_task:
             self._periodic_task.cancel()
             self._periodic_task = None
+        if self._gift_merge_task:
+            self._gift_merge_task.cancel()
+            self._gift_merge_task = None
 
     # pause和resume为了
     async def pause(self):
@@ -424,23 +433,129 @@ class DouyinLive(DouyinLiveWebFetcher):
     def _parseGiftMsg(self, payload):
         message = GiftMessage().parse(payload)
         self.logger.info(f"收到礼物：{message}")
+
+        user_id = str(message.user.id)
+        user_name = message.user.nick_name
         gift_name = message.gift.name
         gift_cnt = message.combo_count
         diamond_count = message.gift.diamond_count
+        current_time = time.time()
 
-        if diamond_count <= 20:  # 小礼物
+        # 异步处理礼物事件
+        asyncio.create_task(self._add_gift_to_cache(
+            user_id, user_name, gift_name, gift_cnt, diamond_count, current_time
+        ))
+
+    async def _add_gift_to_cache(self, user_id: str, user_name: str, gift_name: str,
+                                 gift_cnt: int, diamond_count: int, timestamp: float):
+        """将礼物添加到用户缓存"""
+        async with self._gift_cache_lock:
+            if user_id not in self._gift_cache:
+                # 新用户，创建缓存
+                self._gift_cache[user_id] = {
+                    'user_id': user_id,
+                    'user_name': user_name,
+                    'last_gift_time': timestamp,
+                    'gifts': [],  # 存储礼物信息列表
+                    'total_diamonds': 0,
+                    'total_count': 0
+                }
+
+            user_cache = self._gift_cache[user_id]
+
+            # 更新最后送礼时间
+            user_cache['last_gift_time'] = timestamp
+
+            # 添加礼物到缓存
+            user_cache['gifts'].append({
+                'gift_name': gift_name,
+                'count': gift_cnt,
+                'diamond_count': diamond_count,
+                'timestamp': timestamp
+            })
+
+            # 更新总数
+            user_cache['total_diamonds'] += diamond_count * gift_cnt
+            user_cache['total_count'] += gift_cnt
+
+            self.logger.debug(
+                f"用户 {user_name} 礼物缓存更新：{gift_name}x{gift_cnt}，总钻石={user_cache['total_diamonds']}")
+
+    async def _run_gift_merge_check(self):
+        """定期检查礼物缓存，发送超过3秒无更新的缓存"""
+        try:
+            while True:
+                await asyncio.sleep(0.5)  # 每0.5秒检查一次，更精确
+
+                current_time = time.time()
+                users_to_send = []
+
+                async with self._gift_cache_lock:
+                    # 找出超过3秒没有新礼物的用户
+                    for user_id, cache in self._gift_cache.items():
+                        if current_time - cache['last_gift_time'] >= 3:
+                            users_to_send.append((user_id, cache.copy()))
+                            # 从缓存中移除
+
+                    # 为每个需要发送的用户创建合并事件
+                    for user_id, cache in users_to_send:
+                        del self._gift_cache[user_id]
+                        await self._create_merged_gift_event(cache)
+
+        except asyncio.CancelledError:
+            pass
+
+    async def _create_merged_gift_event(self, cache: Dict):
+        """创建合并的礼物事件"""
+
+        user_id = cache['user_id']
+        user_name = cache['user_name']
+        gifts = cache['gifts']
+        total_diamonds = cache['total_diamonds']
+        total_count = cache['total_count']
+
+        if not gifts:
+            return
+
+        # 合并礼物描述
+        # 按礼物类型分组
+        gift_groups = {}
+        for gift in gifts:
+            name = gift['gift_name']
+            if name in gift_groups:
+                gift_groups[name]['count'] += gift['count']
+                gift_groups[name]['diamonds'] += gift['diamond_count'] * gift['count']
+            else:
+                gift_groups[name] = {
+                    'count': gift['count'],
+                    'diamonds': gift['diamond_count'] * gift['count']
+                }
+
+        # 构建礼物描述
+        gift_descriptions = []
+        for gift_name, info in gift_groups.items():
+            gift_descriptions.append(f"{gift_name}x{info['count']}")
+
+        if len(gift_descriptions) == 1:
+            content = f"{gift_descriptions[0]}（钻石={total_diamonds}）"
+        else:
+            content = f"{'、'.join(gift_descriptions)}（总钻石={total_diamonds}）"
+
+        # 判断礼物类型
+        if total_diamonds <= 20:
             event_type = DouyinLiveEventType.small_gift
-        elif diamond_count <= 100:  # 中礼物
+        elif total_diamonds <= 100:
             event_type = DouyinLiveEventType.medium_gift
-        else:  # 大礼物
+        else:
             event_type = DouyinLiveEventType.super_gift
 
+        # 创建合并事件
         event = DouyinLiveEvent(
-            user_id=str(message.user.id),
-            user_name=message.user.nick_name,
+            user_id=user_id,
+            user_name=user_name,
             event_type=event_type,
-            content=f"{gift_name}（钻石={diamond_count}）x{gift_cnt}",
-            priority=Priority.P0  # 礼物都作为P0处理
+            content=content,
+            priority=Priority.P0
         )
 
         # 添加到事件缓冲区
@@ -449,6 +564,8 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 放入实时处理队列
         self.realtime_queue.put_nowait(event)
+
+        self.logger.info(f"发送合并礼物事件：{user_name} 在3秒内送出{total_count}个礼物，{content}")
 
     def _parseLikeMsg(self, payload):
         message = LikeMessage().parse(payload)
@@ -553,11 +670,13 @@ class DouyinLive(DouyinLiveWebFetcher):
                     priority = 99  # 礼物最高优先级
                     message_content.append(Text(text=prompt))
                     overdue = 0
+                    can_resume = True
                 else:
                     prompt = self.config.p0_prompt
                     priority = 0  # P0事件优先级
                     message_content.append(Text(text=prompt))
                     overdue = self.config.p0_overdue
+                    can_resume = False
 
                 # 添加当前事件
                 message_content.append(Text(text=event.to_natural()))
@@ -584,6 +703,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                     priority=priority,
                     overdue=overdue,
                     agent_id="main",  # 指定由MainAgent处理
+                    resume_last_interrupted=can_resume,
                 ).to_agent_event())
 
                 # 保存用户历史
@@ -597,10 +717,9 @@ class DouyinLive(DouyinLiveWebFetcher):
     async def _run_periodic_task(self):
         """定时触发事件总线（由LiveAgent处理）"""
         try:
+            # 第一次开始等待定时任务间隔
+            await asyncio.sleep(5)
             while True:
-                # 等待定时任务间隔
-                await asyncio.sleep(self.config.periodic_task_interval)
-
                 # 获取最近60秒内未处理的事件
                 current_time = time.time()
                 recent_unprocessed_events = []
@@ -666,6 +785,8 @@ class DouyinLive(DouyinLiveWebFetcher):
                 self.stats["last_periodic_time"] = int(current_time)
                 self.logger.info(f"定时任务触发，当前观看人数：{self.current_users}")
 
+                # 等待定时任务间隔
+                await asyncio.sleep(self.config.periodic_task_interval)
         except asyncio.CancelledError:
             pass
 
@@ -763,6 +884,9 @@ class DouyinLive(DouyinLiveWebFetcher):
             "enter_count": 0,
             "like_count": 0,
             "gift_count": 0,
+            "super_gift_count": 0,
+            "medium_gift_count": 0,
+            "small_gift_count": 0,
             "social_count": 0,
             "unprocessed_count": 0,
             "active_users": []  # (用户名, 互动次数)
@@ -778,10 +902,15 @@ class DouyinLive(DouyinLiveWebFetcher):
                 summary["enter_count"] += 1
             elif event.event_type == DouyinLiveEventType.like:
                 summary["like_count"] += 1
-            elif event.event_type in [DouyinLiveEventType.super_gift,
-                                      DouyinLiveEventType.medium_gift,
-                                      DouyinLiveEventType.small_gift]:
+            elif event.event_type == DouyinLiveEventType.super_gift:
                 summary["gift_count"] += 1
+                summary["super_gift_count"] += 1
+            elif event.event_type == DouyinLiveEventType.medium_gift:
+                summary["gift_count"] += 1
+                summary["medium_gift_count"] += 1
+            elif event.event_type == DouyinLiveEventType.small_gift:
+                summary["gift_count"] += 1
+                summary["small_gift_count"] += 1
             elif event.event_type == DouyinLiveEventType.social:
                 summary["social_count"] += 1
 
@@ -896,9 +1025,11 @@ class DouyinLiveProvider(Provider[DouyinLive]):
         ws = con.force_fetch(Workspace)
         _storage: FileStorage | Storage = ws.configs().sub_storage("douyin_live")
         config = WorkspaceConfigs(_storage).get_or_create(DouyinLiveConfig())
+        logger = con.get(LoggerItf)
 
         return DouyinLive(
             eventbus=eventbus,
             history_storage=ws.runtime().sub_storage("live_memory"),
-            config=config
+            config=config,
+            logger=logger
         )

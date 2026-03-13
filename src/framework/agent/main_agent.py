@@ -13,7 +13,8 @@ from framework.abcd.agent import (
     Agent, Identifier, Broadcaster, AgentStateName, AgentConfig, Response, ModelConf
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, \
-    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEvent, ResumeAgentEvent
+    UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEvent, ResumeAgentEvent, \
+    AgentEventModel
 from framework.abcd.agent_hook import AgentStateHook
 from framework.abcd.agent_hub import EventBus
 from framework.abcd.session import Session
@@ -57,6 +58,7 @@ class BaseMainAgent(Agent, ABC):
         self._preempt_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 抢占式调度的事件队列
         self._queued_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 普通的事件队列
         self._low_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue() # 低优先级的事件队列
+        self._resume_event_queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
 
         self._auto_shutdown: bool = False
 
@@ -158,6 +160,7 @@ class BaseMainAgent(Agent, ABC):
 
     async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
         prompts = await self.make_prompts()
+
         if user_input := UserInputAgentEvent.from_agent_event(event):
             now = time.time()
             # 不处理过期事件.
@@ -214,15 +217,8 @@ class BaseMainAgent(Agent, ABC):
             )
 
         if resume := ResumeAgentEvent.from_agent_event(event):
-            return MOSShellResponse(
-                shell=self.shell,
-                agent_id=self._id,
-                event=resume,
-                inputs=[resume.message],
-                model=self.config.model,
-                prompts=prompts,
-                logger=self.logger,
-                eventbus=self._eventbus,
+            await self._handle_event(
+                resume.event.to_agent_event(),
             )
 
         return None
@@ -340,6 +336,9 @@ class BaseMainAgent(Agent, ABC):
                 # 高优队列里找
                 event = get_event(self._preempt_event_queue)
                 if not event:
+                    # 中断可恢复队列
+                    event = get_event(self._resume_event_queue)
+                if not event:
                     # 普通队列
                     event = get_event(self._queued_event_queue)
                 if not event:
@@ -417,6 +416,23 @@ class BaseMainAgent(Agent, ABC):
                 # 更高级别的事件也会触发中断.
                 if parsed["priority"] > _running_response.event.priority:
                     await self._interrupt()
+
+                    # 当前打断事件是否支持重新递交被打断的事件
+                    if not parsed["resume_last_interrupted"]:
+                        return
+
+                    # 当前只支持用户输入事件被打断恢复
+                    if user_input := UserInputAgentEvent.from_agent_event(
+                        _running_response.event.to_agent_event()
+                    ):
+                        user_input.message.with_content(
+                            Text(text="以上是你刚才被打断的事件，结合你的上下文，继续完成该事件")
+                        )
+                        self._resume_event_queue.put_nowait(
+                            ResumeAgentEvent(
+                                event=user_input,
+                            ).to_agent_event()
+                        )
                     return
         return
 

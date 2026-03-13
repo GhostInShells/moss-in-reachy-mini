@@ -16,9 +16,10 @@ from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPI
 from framework.agent.agent_hub import AgentHubImpl
-from framework.agent.broadcaster import ChatBroadcasterProvider
+from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
+from framework.agent.utils import setup_chat
 from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
 from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
@@ -31,7 +32,6 @@ async def build_main_agent(parent: Container) -> MainAgent:
     container = Container(parent=parent, name="main_agent")
 
     # broadcaster
-    container.set(BaseChat, AgentConsoleChat(agent_id="main"))
     container.register(ChatBroadcasterProvider())
 
     # memory
@@ -80,8 +80,8 @@ async def build_live_agent(parent: Container) -> LiveAgent:
     container = Container(parent=parent, name="live_agent")
 
     # chat
-    container.set(BaseChat, AgentConsoleChat(agent_id="live"))
-    container.register(ChatBroadcasterProvider())
+    # container.set(BaseChat, AgentConsoleChat(agent_id="live"))
+    container.register(LogBroadcasterProvider())
 
     # memory
     memory = container.force_fetch(StorageMemory)
@@ -145,6 +145,8 @@ async def main() -> None:
         container.set(EventBus, eventbus)
         container.register(DouyinLiveProvider())
 
+        container.set(BaseChat, AgentConsoleChat(agent_id="main"))
+
         main_agent = await build_main_agent(parent=container)
         live_agent = await build_live_agent(parent=container)
 
@@ -159,10 +161,13 @@ async def main() -> None:
         )
         container.set(AgentHub, agent_hub)
 
-        await agent_hub.bootstrap()
-
         server = AgentFastAPI(eventbus=eventbus)
-        await server.run()
+
+        await asyncio.gather(
+            agent_hub.bootstrap(),
+            setup_chat(eventbus, container.force_fetch(BaseChat)),
+            server.run()
+        )
 
 
 if __name__ == '__main__':

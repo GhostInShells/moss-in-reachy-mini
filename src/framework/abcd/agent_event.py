@@ -14,6 +14,7 @@ class AgentEvent(TypedDict):
     issuer: Optional[str]
     overdue: Optional[float]
     created: float
+    resume_last_interrupted: bool
 
     data: Optional[dict[str, Any]]
 
@@ -41,6 +42,10 @@ class AgentEventModel(BaseModel):
         default_factory=lambda: round(time.time(), 4),
         description="事件创建的事件."
     )
+    resume_last_interrupted: bool = Field(
+        default=False,
+        description="该事件如果打断正在运行的事件, 是否在本事件完成后继续运行打断的事件."
+    )
 
     def is_overdue(self, now: float = None) -> bool:
         """
@@ -51,7 +56,7 @@ class AgentEventModel(BaseModel):
         return self.overdue > 0 and ((now - self.created) > self.overdue)
 
     def to_agent_event(self) -> AgentEvent:
-        data = self.model_dump(exclude_none=True, exclude={"event_id", "event_type", "agent_id", "priority", "issuer", "overdue", "created"})
+        data = self.model_dump(exclude_none=True, exclude={"event_id", "event_type", "agent_id", "priority", "issuer", "overdue", "created", "resume_last_interrupted"})
         return AgentEvent(
             event_id=self.event_id,
             event_type=self.event_type,
@@ -60,6 +65,7 @@ class AgentEventModel(BaseModel):
             issuer=self.issuer,
             overdue=self.overdue,
             created=self.created,
+            resume_last_interrupted=self.resume_last_interrupted,
             data=data
         )
 
@@ -74,6 +80,7 @@ class AgentEventModel(BaseModel):
         data["issuer"] = agent_event["issuer"]
         data["overdue"] = agent_event["overdue"]
         data["created"] = agent_event["created"]
+        data["resume_last_interrupted"] = agent_event["resume_last_interrupted"]
         return cls(**data)
 
 
@@ -122,5 +129,4 @@ class CTMLAgentEvent(AgentEventModel):
 class ResumeAgentEvent(AgentEventModel):
     event_type = "resume"
 
-    message: Message = Field(description="resume message")
-    event: AgentEventModel = Field(description="被中断的事件")
+    event: UserInputAgentEvent = Field(description="被中断的用户输入事件")
