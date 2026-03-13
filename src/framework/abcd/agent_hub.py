@@ -21,6 +21,11 @@ class EventBus(ABC):
         """
         pass
 
+    @abstractmethod
+    def on_get(self, callback) -> None:
+        pass
+
+
 
 class AgentHub(ABC):
 

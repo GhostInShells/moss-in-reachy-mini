@@ -39,6 +39,19 @@ async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
             eventbus.put(InterruptAgentEvent()),
             loop
         )
+    async def _on_get(event: AgentEventModel):
+        if event.agent_id not in ["main", ""]:
+            return
+        if user_input := UserInputAgentEvent.from_agent_event_model(event):
+
+            message_strings = []
+            for content in user_input.message.contents:
+                if text := Text.from_content(content):
+                    message_strings.append(text.text)
+
+            chat.add_user_message("\n".join(message_strings))
+
+    eventbus.on_get(_on_get)
 
     chat.set_input_callback(_callback)
     chat.set_interrupt_callback(_interrupt)

@@ -38,13 +38,13 @@ class LiveState(MiniStateHook):
 
     async def on_self_enter(self):
         self.mini.enable_motors()
-        await self.douyin_live.start()
+        await self.douyin_live.resume()
         await self.eventbus.put(CTMLAgentEvent(
-            ctml="<reachy_mini:head reset />"
+            ctml="<reachy_mini:head_reset />"
         ))
 
     async def on_self_exit(self):
-        await self.douyin_live.stop()
+        await self.douyin_live.pause()
 
     async def _run_idle_move(self):
         if self.todolist and self.todolist.todo_todos:

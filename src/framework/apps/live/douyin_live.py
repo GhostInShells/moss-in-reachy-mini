@@ -2,13 +2,11 @@ import asyncio
 import enum
 import json
 import logging
-import random
 import time
 import uuid
 from collections import defaultdict, deque
-from typing import List, Optional, Tuple, Dict, Set
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from typing import List, Optional, Tuple, Dict, Set
 
 from ghoshell_common.contracts import YamlConfig, Storage, WorkspaceConfigs, FileStorage, Workspace, LoggerItf
 from ghoshell_container import INSTANCE, Provider, IoCContainer
@@ -21,9 +19,9 @@ from framework.apps.live.DouyinLiveWebFetcher.liveMan import DouyinLiveWebFetche
 from framework.apps.live.DouyinLiveWebFetcher.protobuf.douyin import ChatMessage, GiftMessage, LikeMessage, \
     MemberMessage, \
     SocialMessage, RoomUserSeqMessage
+from framework.apps.live.barrage_classify.classifier import BarrageClassifier
 from framework.apps.live.barrage_classify.config import Priority
 from framework.apps.utils import EnumEncoder
-from framework.apps.live.barrage_classify.classifier import BarrageClassifier
 
 
 class DouyinLiveConfig(YamlConfig):
@@ -40,7 +38,7 @@ class DouyinLiveConfig(YamlConfig):
     cues_prompt: str = Field(default="", description="cues prompt")
 
     # 快照配置
-    snapshot_interval: int = Field(default=5, description="快照生成间隔（秒）")
+    snapshot_interval: int = Field(default=10, description="快照生成间隔（秒）")
     max_events_in_snapshot: int = Field(default=20, description="每次快照最多包含的事件数")
     event_retention_seconds: int = Field(default=300, description="事件保留时间（秒）")
 
@@ -362,6 +360,21 @@ class DouyinLive(DouyinLiveWebFetcher):
             self._periodic_task.cancel()
             self._periodic_task = None
 
+    # pause和resume为了
+    async def pause(self):
+        if self._periodic_task:
+            self._periodic_task.cancel()
+            self._periodic_task = None
+        if self._realtime_task:
+            self._realtime_task.cancel()
+            self._realtime_task = None
+
+    async def resume(self):
+        if not self._periodic_task:
+            self._periodic_task = asyncio.create_task(self._run_periodic_task())
+        if not self._realtime_task:
+            self._realtime_task = asyncio.create_task(self._run_realtime_processing())
+
     def _should_filter_enter_event(self, user_id: str, user_name: str) -> bool:
         """判断是否应该过滤进入事件"""
         if not self.config.enable_smart_filtering:
@@ -539,20 +552,22 @@ class DouyinLive(DouyinLiveWebFetcher):
                     prompt = self.config.gift_prompt
                     priority = 99  # 礼物最高优先级
                     message_content.append(Text(text=prompt))
+                    overdue = 0
                 else:
                     prompt = self.config.p0_prompt
                     priority = 0  # P0事件优先级
                     message_content.append(Text(text=prompt))
+                    overdue = self.config.p0_overdue
 
                 # 添加当前事件
                 message_content.append(Text(text=event.to_natural()))
 
                 # 添加用户历史信息（如果存在）
                 if user_history.history:
-                    # 获取用户最近的历史事件（排除当前事件，最多3个）
-                    recent_history = user_history.get_history_events(max_count=3)
+                    # 获取用户最近的历史事件（排除当前事件，最多10个）
+                    recent_history = user_history.get_history_events(max_count=self.config.max_user_history_size)
                     if recent_history:
-                        message_content.append(Text(text=f"\n用户 {event.user_name} 的历史交互记录："))
+                        message_content.append(Text(text=f"\n以下是用户 {event.user_name} 的历史交互记录，你不需要回答历史交互的具体内容，只需要关注用户的互动行为和情感状态："))
                         for hist_event in recent_history:
                             message_content.append(Text(text=f"  - {hist_event.to_natural()}"))
 
@@ -567,7 +582,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                         name=f"__douyin_live_{event.event_type.value}__"
                     ).with_content(*message_content),
                     priority=priority,
-                    overdue=self.config.p0_overdue,
+                    overdue=overdue,
                     agent_id="main",  # 指定由MainAgent处理
                 ))
 
@@ -620,12 +635,6 @@ class DouyinLive(DouyinLiveWebFetcher):
                         agent_id="live",
                     ))
                 else:
-                    # 有未处理事件，LiveAgent分析这些事件
-                    # 标记这些事件为"已分析"（但不一定是"已处理"）
-                    for event in recent_unprocessed_events:
-                        event.mark_processed("live")  # 或者用一个新的方法 mark_analyzed
-                        self.event_buffer.mark_processed(event.event_id)
-
                     event_summary = self._summarize_events(recent_unprocessed_events)
 
                     await self.eventbus.put(UserInputAgentEvent(
@@ -646,6 +655,13 @@ class DouyinLive(DouyinLiveWebFetcher):
                         overdue=self.config.periodic_task_overdue,
                         agent_id="live",
                     ))
+
+                    # 有未处理事件，LiveAgent分析这些事件
+                    # 标记这些事件为"已分析"（但不一定是"已处理"）
+                    for event in recent_unprocessed_events:
+                        event.mark_processed("live")  # 或者用一个新的方法 mark_analyzed
+                        self.event_buffer.mark_processed(event.event_id)
+
 
                 self.stats["last_periodic_time"] = int(current_time)
                 self.logger.info(f"定时任务触发，当前观看人数：{self.current_users}")
@@ -721,9 +737,8 @@ class DouyinLive(DouyinLiveWebFetcher):
                 # 添加事件列表
                 event_contents = []
                 for event in events:
-                    status = "✓" if event.processed else "○"
-                    processor = f"({event.processed_by})" if event.processed_by else ""
-                    event_contents.append(Text(text=f"[{status}{processor}] {event.to_natural()}"))
+                    status = f"已处理 by {event.processed_by} agent" if event.processed else "未处理"
+                    event_contents.append(Text(text=f"[status={status}] {event.to_natural()}"))
 
                 user_msg.with_content(
                     Text(text=f"用户 {user_name} 的最近互动："),

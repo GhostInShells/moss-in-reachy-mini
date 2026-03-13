@@ -376,6 +376,7 @@ class BaseMainAgent(Agent, ABC):
             try:
                 e = await self._add_event_queue.get()
                 await self._add_event(e)
+                self._add_event_queue.task_done()
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -409,26 +410,14 @@ class BaseMainAgent(Agent, ABC):
             await self._queued_event_queue.put(parsed)
             return
 
-        _running_response = self._running_response
-        if _running_response is not None:
-            # 更高级别的事件也会触发中断.
-            if parsed.priority > _running_response.event.priority:
-                await self._preempt_event_queue.put(parsed)
-                await self._interrupt()
-                # 被打断了原始事件重新触发
-                await self._eventbus.put(ResumeAgentEvent(
-                    message=Message.new(name="user").with_content(
-                        Text(text="你的回复被更高优的事件打断了，结合历史消息，自然衔接回刚才的话题")
-                    ),
-                    event=_running_response.event,
-                    priority=_running_response.event.priority - 1,
-                ))
-                return
-            else:
-                # 拒绝接受高优先级事件.
-                return
-        # 高优先级事件如果优先级不够高, 会被忽略掉. 也就是 system is busy.
-        await self._preempt_event_queue.put(parsed)
+        elif parsed.priority > 0:
+            await self._preempt_event_queue.put(parsed)
+            _running_response = self._running_response
+            if _running_response is not None:
+                # 更高级别的事件也会触发中断.
+                if parsed.priority > _running_response.event.priority:
+                    await self._interrupt()
+                    return
         return
 
     async def _interrupt(self) -> None:

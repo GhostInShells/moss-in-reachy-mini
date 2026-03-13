@@ -14,7 +14,7 @@ from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
 from framework.agent.agent_hub import AgentHubImpl
-from framework.agent.broadcaster import ChatBroadcasterProvider
+from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
@@ -49,7 +49,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
 
     # chat
     container.set(BaseChat, AgentConsoleChat(agent_id="live"))
-    container.register(ChatBroadcasterProvider())
+    container.register(LogBroadcasterProvider())
 
     # memory
     memory = container.force_fetch(StorageMemory)

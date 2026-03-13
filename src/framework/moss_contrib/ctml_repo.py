@@ -2,7 +2,7 @@ import asyncio
 
 from ghoshell_common.contracts import Storage, Workspace
 from ghoshell_container import Provider, IoCContainer, INSTANCE
-from ghoshell_moss import CommandToken, ChannelCtx, MOSSShell, CommandStackResult, PyCommand, CommandTask
+from ghoshell_moss import CommandToken, ChannelCtx, MOSSShell, CommandStackResult, PyCommand, CommandTask, Message
 from ghoshell_moss.core.concepts.command import CommandTaskResult
 
 
@@ -50,8 +50,21 @@ name list: {self.list_ctml_names()}
         ctml_text = self._storage.get(f"{name}.ctml").decode()
         shell = ChannelCtx.get_contract(MOSSShell)
 
+        async def on_result(got: list[CommandTask]) -> CommandStackResult | CommandTaskResult | None:
+            for t in got:
+                await t.wait(throw=False)
+                if not t.success() or t.observe():
+                    return CommandTaskResult().join_result(t.result())
+            return CommandTaskResult(
+                observe=True,
+                messages=[
+                    Message.new(role="system").with_content("finish execute ctml {}".format(name)),
+                ],
+            )
+
         return CommandStackResult(
             shell.parse_text_to_tasks(text=ctml_text),
+            on_result,
         )
 
 
