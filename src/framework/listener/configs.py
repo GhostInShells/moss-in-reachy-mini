@@ -8,9 +8,9 @@ from ghoshell_common.contracts import LoggerItf, YamlConfig
 from pydantic import BaseModel, Field
 from typing_extensions import Self
 
-from moss_in_reachy_mini.listener.concepts.listener import ListenerStateName
-from moss_in_reachy_mini.listener.pyaudio_input_impl import PyAudioInput
-from moss_in_reachy_mini.listener.volcengine_bm_protocol import VolcanoBigModelASRConfig
+from framework.listener.concepts import ListenerStateName
+from framework.listener.pyaudio_input_impl import PyAudioInput
+from framework.listener.volcengine_bm_protocol import VolcanoBigModelASRConfig
 
 
 class PyAudioInputConfig(BaseModel):

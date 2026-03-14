@@ -9,7 +9,7 @@ import scipy.signal as signal
 from ghoshell_common.contracts import LoggerItf
 from numpy.typing import NDArray
 
-from moss_in_reachy_mini.listener.concepts.listener import AudioInput
+from framework.listener.concepts import AudioInput
 
 __all__ = ['PyAudioInput']
 

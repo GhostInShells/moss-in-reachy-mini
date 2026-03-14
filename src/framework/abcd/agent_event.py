@@ -121,10 +121,12 @@ class UnexpectedAgentEvent(AgentEventModel):
     """
     event_type = "__unexpected__"
 
+
 class CTMLAgentEvent(AgentEventModel):
     event_type = "ctml"
 
     ctml: str = Field(description="ctml 文本")
+
 
 class ResumeAgentEvent(AgentEventModel):
     event_type = "resume"

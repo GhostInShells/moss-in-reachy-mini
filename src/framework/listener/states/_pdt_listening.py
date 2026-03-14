@@ -1,6 +1,6 @@
 from typing import Callable, Optional
 
-from moss_in_reachy_mini.listener.concepts.listener import (
+from framework.listener.concepts import (
     ListenerStateName,
     Recognizer,
     ListenerCallback,

@@ -99,3 +99,16 @@ def get_position_by_track_name(positions: List[Position], track_name: str) -> Po
         if p.name == track_name:
             return p
     return None
+
+def get_closest_position(positions: List[Position]) -> Optional[Position]:
+    if not positions:
+        return None
+    if len(positions) == 1:
+        return positions[0]
+    # 按bbox面积降序排序
+    sorted_positions = sorted(
+        positions,
+        key=lambda p: (p.bbox[2] - p.bbox[0]) * (p.bbox[3] - p.bbox[1]),
+        reverse=True
+    )
+    return sorted_positions[0]

@@ -14,11 +14,11 @@ from framework.abcd.agent import (
 )
 from framework.abcd.agent_event import InterruptAgentEvent, ShutdownAgentEvent, \
     UserInputAgentEvent, ReactAgentEvent, VisionAgentEvent, CTMLAgentEvent, AgentEvent, ResumeAgentEvent, \
-    AgentEventModel
+    AgentEventModel, AsrInvokeAgentEvent
 from framework.abcd.agent_hook import AgentStateHook
 from framework.abcd.agent_hub import EventBus
 from framework.abcd.session import Session
-from framework.agent.response import MOSShellResponse, CTMLResponse
+from framework.agent.response import MOSShellResponse, CTMLResponse, QuickResponse
 from framework.agent.utils import get_event, InterruptedContent
 
 
@@ -34,10 +34,12 @@ class BaseMainAgent(Agent, ABC):
             shell: MOSSShell,
             session: Session,
             state_hook: AgentStateHook=None,
+            ctml_candidates: List[str] = None,
     ):
         self.shell = shell
         self.session = session
         self.state_hook = state_hook
+        self.ctml_candidates = ctml_candidates or []
 
         self.config = config
         self._id = config.id
@@ -219,6 +221,16 @@ class BaseMainAgent(Agent, ABC):
         if resume := ResumeAgentEvent.from_agent_event(event):
             await self._handle_event(
                 resume.event.to_agent_event(),
+            )
+
+        if asr_invoke := AsrInvokeAgentEvent.from_agent_event(event):
+            return QuickResponse(
+                shell=self.shell,
+                agent_id=self._id,
+                ctml_candidates=self.ctml_candidates,
+                event=asr_invoke,
+                eventbus=self._eventbus,
+                logger=self.logger,
             )
 
         return None

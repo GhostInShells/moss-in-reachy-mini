@@ -33,7 +33,7 @@ from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
-from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
+from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider

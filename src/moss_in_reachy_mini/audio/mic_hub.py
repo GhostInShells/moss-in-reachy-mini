@@ -10,8 +10,8 @@ import scipy.signal as signal
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import IoCContainer, Provider
 
-from moss_in_reachy_mini.listener.concepts.listener import AudioInput
-from moss_in_reachy_mini.listener.configs import ListenerConfig
+from framework.listener.concepts import AudioInput
+from framework.listener.configs import ListenerConfig
 
 logger = logging.getLogger(__name__)
 

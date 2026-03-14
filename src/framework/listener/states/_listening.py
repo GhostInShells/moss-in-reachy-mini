@@ -1,7 +1,7 @@
 import time
 from typing import Union, Callable, Optional
 
-from moss_in_reachy_mini.listener.concepts.listener import (
+from framework.listener.concepts import (
     ListenerState, ListenerStateName,
     Recognizer, RecognitionBatch, Recognition,
     ListenerCallback,

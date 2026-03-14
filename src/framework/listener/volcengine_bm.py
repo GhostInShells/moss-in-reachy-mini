@@ -12,9 +12,9 @@ from ghoshell_common.contracts import LoggerItf
 from ghoshell_common.helpers import uuid, Timeleft
 from websockets import State
 
-from moss_in_reachy_mini.listener.concepts.listener import Recognition, RecognitionCallback, RecognitionBatch, Recognizer
-from moss_in_reachy_mini.listener.concepts.trace import LoggerTracer, Tag
-from moss_in_reachy_mini.listener.callbacks import LoggerCallback
+from framework.listener.concepts import Recognition, RecognitionCallback, RecognitionBatch, Recognizer
+from framework.listener.concepts.trace import LoggerTracer, Tag
+from framework.listener.callbacks import LoggerCallback
 from .volcengine_bm_protocol import *
 
 

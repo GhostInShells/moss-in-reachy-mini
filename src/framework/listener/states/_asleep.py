@@ -6,7 +6,7 @@ from typing import Optional, Callable
 import numpy as np
 from ghoshell_common.contracts import LoggerItf
 
-from moss_in_reachy_mini.listener.concepts.listener import (
+from framework.listener.concepts import (
     ListenerState, ListenerStateName, AudioInput,
     AudioInputLoop, ListenerCallback,
 )

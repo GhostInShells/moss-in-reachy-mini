@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 from ghoshell_common.contracts import LoggerItf
 
-from moss_in_reachy_mini.listener.concepts.listener import ListenerCallback, Recognition
+from framework.listener.concepts import ListenerCallback, Recognition
 
 if TYPE_CHECKING:
     from rich.console import Console

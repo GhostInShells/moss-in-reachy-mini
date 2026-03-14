@@ -6,23 +6,23 @@ import numpy as np
 import pyaudio
 from ghoshell_common.contracts import LoggerItf
 
-from moss_in_reachy_mini.listener.concepts.listener import (
+from framework.listener.concepts import (
     ListenerService,
     ListenerState, ListenerStateName,
     ListenerCallback, RecognitionCallback,
     Recognizer, AudioInput,
 
 )
-from moss_in_reachy_mini.listener.callbacks import LoggerCallback
-from moss_in_reachy_mini.listener.configs import ListenerConfig
-from moss_in_reachy_mini.listener.states import (
+from framework.listener.callbacks import LoggerCallback
+from framework.listener.configs import ListenerConfig
+from framework.listener.states import (
     ListeningState, VAD,
     AsleepState, WakenDetector,
     DeafState,
     PdtWaitingState,
     PdtListeningState,
 )
-from moss_in_reachy_mini.listener.volcengine_bm import VocEngineBigModelASR
+from framework.listener.volcengine_bm import VocEngineBigModelASR
 
 __all__ = ['BasicListenerService', 'ListenerServiceImpl']
 
@@ -75,9 +75,9 @@ class BasicListenerService(ListenerService, ABC):
 
     def all_states(self) -> List[str]:
         return [
-            ListenerStateName.listening.value,
-            ListenerStateName.deaf.value,
-            ListenerStateName.asleep.value,
+            # ListenerStateName.listening.value,
+            # ListenerStateName.deaf.value,
+            # ListenerStateName.asleep.value,
             ListenerStateName.pdt_listening.value,
             ListenerStateName.pdt_waiting.value
         ]

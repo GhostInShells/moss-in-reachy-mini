@@ -1,7 +1,8 @@
 import asyncio
 import json
 import logging
-from typing import List, Optional, AsyncIterator, AsyncIterable
+import random
+from typing import List, Optional, AsyncIterator, AsyncIterable, Dict
 
 import litellm
 from ghoshell_common.contracts import LoggerItf
@@ -193,9 +194,6 @@ class MOSShellResponse(Response):
         # 确保中断完成事件被设置
         self._interrupted_done.set()
 
-    def inputted(self) -> List[Message]:
-        return self.inputs
-
     def buffered(self) -> List[Message]:
         """获取缓存的消息列表"""
         return self._buffered.copy()  # 返回副本，避免外部修改
@@ -220,6 +218,7 @@ class MOSShellResponse(Response):
             self._logger.info(f"MOSShellResponse {self.response_id} interrupted")
         finally:
             self._interrupted_done.set()
+
 
 class CTMLResponse(Response):
     def __init__(
@@ -318,9 +317,6 @@ class CTMLResponse(Response):
         # 确保中断完成事件被设置
         self._interrupted_done.set()
 
-    def inputted(self) -> List[Message]:
-        return self.inputs
-
     def buffered(self) -> List[Message]:
         """获取缓存的消息列表"""
         return self._buffered.copy()  # 返回副本，避免外部修改
@@ -346,3 +342,23 @@ class CTMLResponse(Response):
         finally:
             self._interrupted_done.set()
 
+
+class QuickResponse(CTMLResponse):
+    def __init__(
+            self,
+            shell: MOSSShell,
+            agent_id: str,
+            ctml_candidates: List[str],
+            *,
+            event: AgentEventModel,
+            eventbus: EventBus = None,
+            logger: Optional[LoggerItf] = None,
+    ):
+        super().__init__(
+            shell=shell,
+            agent_id=agent_id,
+            ctml=random.choice(ctml_candidates),
+            event=event,
+            eventbus=eventbus,
+            logger=logger,
+        )

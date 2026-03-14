@@ -11,6 +11,8 @@ from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_common.contracts import LoggerItf
 from reachy_mini import ReachyMini
 
+from framework.abcd.agent_event import AsrInvokeAgentEvent
+from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.audio.mic_hub import MicHub
 
 if check_agent():
@@ -18,7 +20,7 @@ if check_agent():
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Prompt
-    from moss_in_reachy_mini.listener.concepts.listener import ListenerService, ListenerStateName
+    from framework.listener.concepts import ListenerService, ListenerStateName
 
 
 class ConsolePTTChat(BaseChat):
@@ -26,11 +28,14 @@ class ConsolePTTChat(BaseChat):
         self,
         debug: bool = False,
         logger: LoggerItf | None = None,
-        mini: ReachyMini = None,
+        eventbus: EventBus=None,
         *,
         container: IoCContainer | None = None,
     ):
         super().__init__()
+
+        self.eventbus = eventbus
+
         # 存储完整的对话历史
         self.conversation_history: List[Dict] = []
 
@@ -59,6 +64,8 @@ class ConsolePTTChat(BaseChat):
 
         self.ai_response_done = asyncio.Event()
 
+        self._event_loop = asyncio.get_event_loop()
+
     def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
         """设置Enter to Talk模式"""
         try:
@@ -74,8 +81,8 @@ class ConsolePTTChat(BaseChat):
         """初始化Listener服务"""
         # 这里需要根据实际的依赖注入系统来获取ListenerService
         # 暂时使用一个简化的实现
-        from moss_in_reachy_mini.listener.lisenter_impl import ListenerServiceImpl
-        from moss_in_reachy_mini.listener.configs import ListenerConfig
+        from framework.listener.lisenter_impl import ListenerServiceImpl
+        from framework.listener.configs import ListenerConfig
 
         # 创建简单的logger实现
 
@@ -107,7 +114,7 @@ class ConsolePTTChat(BaseChat):
 
     def _create_listener_callback(self):
         """创建Listener回调"""
-        from moss_in_reachy_mini.listener.concepts.listener import ListenerCallback, Recognition
+        from framework.listener.concepts import ListenerCallback, Recognition
 
         class ConsoleListenerCallback(ListenerCallback):
             def __init__(self, console_chat):
@@ -115,6 +122,8 @@ class ConsolePTTChat(BaseChat):
 
             def on_recognition(self, result: Recognition) -> None:
                 """处理语音识别结果"""
+                if result.seq == 0:
+                    self.console_chat.handle_first_seq()
                 if result.text and result.text.strip():
                     self.console_chat.console.print(f"[green]Recognizing: {result.text}[/green]")
                     # 将识别结果作为用户输入处理
@@ -340,3 +349,12 @@ class ConsolePTTChat(BaseChat):
         # 等待输入线程结束
         if self._input_thread and self._input_thread.is_alive():
             self._input_thread.join(timeout=5.0)
+
+    def handle_first_seq(self):
+        if not self.eventbus:
+            return
+        asyncio.run_coroutine_threadsafe(self.eventbus.put(
+            AsrInvokeAgentEvent(
+                priority=99,
+            )
+        ), self._event_loop)

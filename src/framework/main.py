@@ -25,6 +25,7 @@ from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
+from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
 
 
@@ -49,7 +50,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
-        douyin_live.as_channel(),
+        # douyin_live.as_channel(),
     )
     container.set(MOSSShell, shell)
 
@@ -73,6 +74,9 @@ async def build_main_agent(parent: Container) -> MainAgent:
             instructions="不要使用memory的工具啦，直接输出互动文本",
         ),
     )
+    agent.ctml_candidates = [
+        # "<say>我正在听</say>"
+    ]
     return agent
 
 
@@ -145,16 +149,16 @@ async def main() -> None:
         container.set(EventBus, eventbus)
         container.register(DouyinLiveProvider())
 
-        container.set(BaseChat, AgentConsoleChat(agent_id="main"))
+        container.set(BaseChat, ConsolePTTChat(eventbus=eventbus))
 
         main_agent = await build_main_agent(parent=container)
-        live_agent = await build_live_agent(parent=container)
+        # live_agent = await build_live_agent(parent=container)
 
         agent_hub = AgentHubImpl(
             main_agent_id="main",
             agents=[
                 main_agent,
-                live_agent,
+                # live_agent,
             ],
             eventbus=container.force_fetch(EventBus),
             logger=container.get(LoggerItf),
