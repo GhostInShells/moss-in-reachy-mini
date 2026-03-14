@@ -2,28 +2,27 @@ import asyncio
 import os
 
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import get_container, IoCContainer, Container
-from ghoshell_moss import MOSSShell
-from ghoshell_moss import new_ctml_shell
+from ghoshell_container import Container, IoCContainer, get_container
+from ghoshell_moss import MOSSShell, new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent import AgentConfig, ModelConf
-from framework.abcd.agent_hub import EventBus, AgentHub
+from framework.abcd.agent_hub import AgentHub, EventBus
 from framework.abcd.session import Session
-from framework.agent.agent_fastapi import AgentFastAPIProvider, AgentFastAPI
+from framework.agent.agent_fastapi import AgentFastAPI, AgentFastAPIProvider
 from framework.agent.agent_hub import AgentHubImpl
 from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
-from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
+from framework.apps.live.douyin_live import DouyinLive, DouyinLiveProvider
 from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
-from framework.moss_contrib.ctml_repo import CtmlRepoProvider, CtmlRepo
+from framework.moss_contrib.ctml_repo import CtmlRepo, CtmlRepoProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
@@ -36,7 +35,8 @@ from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
-from moss_in_reachy_mini.state import AsleepStateProvider, WakenStateProvider, BoringStateProvider, LiveStateProvider
+from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider
+from moss_in_reachy_mini.state.enrolling import EnrollingStateProvider
 from moss_in_reachy_mini.state.teaching import TeachingState, TeachingStateProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
@@ -76,7 +76,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
         memory.as_channel(),
         session.as_channel(),
         douyin_live.as_channel(is_live_agent=True),
-        moss.as_channel(only_context_messages=True)
+        moss.as_channel(only_context_messages=True),
     )
     container.set(MOSSShell, shell)
     instructions = load_instructions(
@@ -84,26 +84,29 @@ def build_live_agent(parent: Container) -> LiveAgent:
         files=["ctml_enrich.md", "live_agent_persona.md"],
         storage_name="instructions",
     )
-    live_agent = LiveAgent.new(container, AgentConfig(
-        id="live",
-        name="live",
-        description="",
-        model=ModelConf(
-            base_url="$LIVE_LLM_BASE_URL",
-            model="$LIVE_LLM_MODEL",
-            api_key="$LIVE_LLM_API_KEY",
-            kwargs={
-                "extra_body": {
-                    "thinking": {
-                        "type": "enabled",
-                    },
-                    "enable_web_search": True
-                }
-            },
-            temperature=float(os.getenv("LIVE_LLM_TEMPERATURE", "0.7")),
+    live_agent = LiveAgent.new(
+        container,
+        AgentConfig(
+            id="live",
+            name="live",
+            description="",
+            model=ModelConf(
+                base_url="$LIVE_LLM_BASE_URL",
+                model="$LIVE_LLM_MODEL",
+                api_key="$LIVE_LLM_API_KEY",
+                kwargs={
+                    "extra_body": {
+                        "thinking": {
+                            "type": "enabled",
+                        },
+                        "enable_web_search": True,
+                    }
+                },
+                temperature=float(os.getenv("LIVE_LLM_TEMPERATURE", "0.7")),
+            ),
+            instructions=instructions,
         ),
-        instructions=instructions,
-    ))
+    )
 
     return live_agent
 
@@ -170,7 +173,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
                         "thinking": {
                             "type": "disabled",
                         },
-                        "enable_web_search": True
+                        "enable_web_search": True,
                     }
                 },
                 temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
@@ -222,6 +225,7 @@ def common_dependencies(container: IoCContainer):
     container.register(BoringStateProvider())
     container.register(LiveStateProvider())
     container.register(TeachingStateProvider())
+    container.register(EnrollingStateProvider())
 
     # Moss
     container.register(MossInReachyMiniProvider())
@@ -263,7 +267,7 @@ async def run(container):
 def get_speech(
     mini: ReachyMini,
     default_speaker: str | None = None,
-    container: IoCContainer=None,
+    container: IoCContainer = None,
 ) -> BaseTTSSpeech:
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
@@ -304,10 +308,13 @@ async def main():
     from ghoshell_moss_contrib.example_ws import workspace_container
 
     with workspace_container(ws_dir) as container:
-        logger = setup_logger(str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),)
+        logger = setup_logger(
+            str(ws_dir.joinpath("runtime/logs/moss_demo.log").absolute()),
+        )
         container.set(LoggerItf, logger)
 
         await run(container)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

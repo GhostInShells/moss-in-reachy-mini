@@ -31,6 +31,7 @@ class HeadTracker:
 
         self.enabled = asyncio.Event()
         self._quit = asyncio.Event()
+        self._track_lost_suppressed = asyncio.Event()
         
         # Smoothing parameters
         self.min_movement_threshold = 0.05  # Minimum movement to trigger head move
@@ -41,6 +42,15 @@ class HeadTracker:
         self.prev_face_position = None  # Previous face position for smoothing
 
         self.loop_interval = 0.02   # 50帧/秒
+
+    def suppress_track_lost(self):
+        """Suppress track_lost alerts (e.g. during agent responding)."""
+        self._track_lost_suppressed.set()
+
+    def resume_track_lost(self):
+        """Resume track_lost alerts and reset timer."""
+        self._track_lost_suppressed.clear()
+        self.track_lost_start_at = 0
 
     def set_target_track_name(self, track_name: str):
         if not track_name.isalpha() or track_name == "unknown":
@@ -59,6 +69,9 @@ class HeadTracker:
                 continue
             # 有追踪的目标且已经丢失
             if self.latest_frame.track_name and self.latest_frame.track_lost:
+                if self._track_lost_suppressed.is_set():
+                    self.track_lost_start_at = 0
+                    continue
                 if self.track_lost_start_at == 0:
                     self.track_lost_start_at = time.time()
                 # 人脸追踪丢失目标，给脑子发一个event

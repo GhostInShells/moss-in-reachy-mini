@@ -117,6 +117,8 @@ class Head:
         self.logger.info("Head on-idle entering")
         try:
             if self._tracking_event.is_set():
+                await self.reset(duration=0.3)
+                self._tracking_event.set()  # reset() clears it, re-set
                 self._head_tracker.enabled.set()
             else:
                 await self._breathing()

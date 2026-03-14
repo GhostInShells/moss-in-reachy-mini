@@ -3,12 +3,12 @@ import io
 import logging
 import os
 import time
-from typing import List, Callable
+from collections.abc import Callable
 
-from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import IoCContainer, Provider, INSTANCE
-from ghoshell_moss import PyChannel, Message, Base64Image, Text
+from ghoshell_container import INSTANCE, IoCContainer, Provider
+from ghoshell_moss import Base64Image, Message, PyChannel, Text
+from PIL import Image
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
@@ -16,9 +16,10 @@ from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.components.vision import Vision
-from moss_in_reachy_mini.state.abcd import MiniStateHook, InitialState
+from moss_in_reachy_mini.state.abcd import InitialState, MiniStateHook
 from moss_in_reachy_mini.state.asleep import AsleepState
 from moss_in_reachy_mini.state.boring import BoringState
+from moss_in_reachy_mini.state.enrolling import EnrollingState
 from moss_in_reachy_mini.state.teaching import TeachingState
 from moss_in_reachy_mini.state.waken import WakenState
 
@@ -37,20 +38,21 @@ class StateLog:
         self.to_state = to_state
         self.now = int(time.time())
 
+
 class MossInReachyMini:
     def __init__(
-            self,
-            mini: ReachyMini,
-            *states: MiniStateHook,
-            default_state: str = AsleepState.NAME,
-            appearance_img: Image.Image,
-            structure_img: Image.Image,
-            logger: LoggerItf = None,
-            recorder: VideoRecorderWorker | None = None,
-            body: Body,
-            head: Head,
-            antennas: Antennas,
-            vision: Vision,
+        self,
+        mini: ReachyMini,
+        *states: MiniStateHook,
+        default_state: str = AsleepState.NAME,
+        appearance_img: Image.Image,
+        structure_img: Image.Image,
+        logger: LoggerItf = None,
+        recorder: VideoRecorderWorker | None = None,
+        body: Body,
+        head: Head,
+        antennas: Antennas,
+        vision: Vision,
     ):
         self.mini = mini
         self.logger = logger or logging.getLogger(__name__)
@@ -62,9 +64,9 @@ class MossInReachyMini:
         self.vision = vision
 
         # state
-        self._state_map = { state.NAME: state for state in states }
+        self._state_map = {state.NAME: state for state in states}
         self._state: MiniStateHook = InitialState()
-        self._state_log: List[StateLog] = []
+        self._state_log: list[StateLog] = []
         self._default_state = default_state
 
         # img
@@ -78,19 +80,19 @@ class MossInReachyMini:
     async def switch_state(self, state_name: str, force: bool = False):
         state_name = state_name.lower()
         if state_name not in self._state_map:
-            raise ValueError(f'Invalid state name: {state_name}')
+            raise ValueError(f"Invalid state name: {state_name}")
 
         if state_name == self._state.NAME:
             return
 
         if not self._state.out_switchable and not force:
-            raise ValueError(f'Current state {self._state.NAME} is not out switchable')
+            raise ValueError(f"Current state {self._state.NAME} is not out switchable")
 
         if not self._state_map[state_name].in_switchable and not force:
-            raise ValueError(f'Current state {state_name} is not in switchable')
+            raise ValueError(f"Current state {state_name} is not in switchable")
 
         await self._state.on_self_exit()
-        self.logger.info(f'Switching state from {self._state.NAME} to {state_name}')
+        self.logger.info(f"Switching state from {self._state.NAME} to {state_name}")
         self._state_log.append(StateLog(self._state, self._state_map[state_name]))  # 记录状态切换
         self._state = self._state_map[state_name]
         await self._state.on_self_enter()
@@ -133,7 +135,7 @@ class MossInReachyMini:
         return messages
 
     def is_available_fn(self, *available_states) -> Callable[[], bool]:
-        return lambda : self._state.NAME in available_states
+        return lambda: self._state.NAME in available_states
 
     def as_channel(self, only_context_messages=False) -> PyChannel:
         self.logger.info("MossInReachyMini.as_channel()...")
@@ -147,12 +149,14 @@ class MossInReachyMini:
             return reachy_mini
 
         # 支持大模型自主切换reachy mini的仿生状态
-        reachy_mini.build.command(doc=f"""
-        切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
+        reachy_mini.build.command(
+            doc=f"""
+        切换到指定状态，当前状态为{self._state.NAME}，可选状态有{", ".join([s.NAME for s in self._state_map.values()])}
 
         :param state_name: 目标状态名称
         :param force: 务必使用默认值False，任何情况都不能设置为True
-        """)(self.switch_state)
+        """
+        )(self.switch_state)
 
         # recorder（即vlog）独立成轨，后面可以和vision channel合并
         sub_channels = []
@@ -211,6 +215,11 @@ class MossInReachyMini:
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
         )(self.antennas.reset)
 
+        reachy_mini.build.command(
+            doc="启动人脸注册流程，为新用户录入人脸信息。\n\n:param user_name: 用户称呼",
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.start_face_registration)
+
         # 注册idle状态的默认动作
         # 呼吸 或 人脸跟随
         reachy_mini.build.idle(self.head.on_idle)
@@ -220,6 +229,17 @@ class MossInReachyMini:
         reachy_mini.build.close(self.aclose)
 
         return reachy_mini
+
+    async def start_face_registration(self, user_name: str):
+        """启动人脸注册流程，仅在 waken 状态下可调用。
+
+        :param user_name: 用户称呼
+        """
+        face_reg = self._state_map.get(EnrollingState.NAME)
+        if face_reg is None:
+            raise ValueError("EnrollingState is not registered")
+        face_reg.target_name = user_name
+        await self.switch_state(EnrollingState.NAME)
 
     async def bootstrap(self):
         self.mini.__enter__()
@@ -232,7 +252,6 @@ class MossInReachyMini:
 
 
 class MossInReachyMiniProvider(Provider[MossInReachyMini]):
-
     def singleton(self) -> bool:
         return True
 
@@ -242,6 +261,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         waken = con.force_fetch(WakenState)
         boring = con.force_fetch(BoringState)
         teaching = con.force_fetch(TeachingState)
+        enrolling = con.force_fetch(EnrollingState)
 
         live = None
         if LiveState is not None:
@@ -261,7 +281,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
         # 桌面陪伴模式
-        states = [asleep, waken, boring, teaching]
+        states = [asleep, waken, boring, teaching, enrolling]
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
@@ -281,9 +301,11 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         vision = con.force_fetch(Vision)
 
         return MossInReachyMini(
-            mini, *states,
+            mini,
+            *states,
             default_state=default_state,
-            appearance_img=appearance_img, structure_img=structure_img,
+            appearance_img=appearance_img,
+            structure_img=structure_img,
             logger=logger,
             recorder=recorder,
             body=body,

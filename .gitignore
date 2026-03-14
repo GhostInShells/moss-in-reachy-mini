@@ -20,3 +20,7 @@ video_records/
 thread_*.json
 
 known_faces.json
+
+.workspace/runtime/logs/
+.workspace/runtime/agent_history/
+*.log
