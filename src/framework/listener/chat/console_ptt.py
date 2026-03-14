@@ -124,12 +124,15 @@ class ConsolePTTChat(BaseChat):
                 """处理语音识别结果"""
                 if result.seq == 0:
                     self.console_chat.handle_first_seq()
+                    self.console_chat.console.print("")
                 if result.text and result.text.strip():
-                    self.console_chat.console.print(f"[green]Recognizing: {result.text}[/green]")
                     # 将识别结果作为用户输入处理
                     if result.is_last:
+                        self.console_chat.console.print("", end="\r\033[K")
                         self.console_chat.console.print(f"[cyan]Recognized: {result.text}[/cyan]")
                         self.console_chat.handle_voice_input(result.text)
+                    else:
+                        self.console_chat.console.print(f"[green]Recognizing: {result.text}[/green]", end='\r')
 
             def on_waken(self) -> None:
                 """唤醒事件"""

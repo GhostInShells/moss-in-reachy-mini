@@ -4,8 +4,7 @@ from typing import Optional, Self
 from ghoshell_moss import Message, Text, ContentModel, Delta, DeltaModel
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 
-from framework.abcd.agent import Agent
-from framework.abcd.agent_event import AgentEvent, UserInputAgentEvent, InterruptAgentEvent, AgentEventModel
+from framework.abcd.agent_event import AgentEvent, UserInputAgentEvent, InterruptAgentEvent, ProgramInputAgentEvent
 from framework.abcd.agent_hub import EventBus
 
 
@@ -42,13 +41,11 @@ async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
     async def _on_get(event: AgentEvent):
         if event["agent_id"] not in ["main", ""]:
             return
-        if user_input := UserInputAgentEvent.from_agent_event(event):
-
+        if user_input := ProgramInputAgentEvent.from_agent_event(event):
             message_strings = []
             for content in user_input.message.contents:
                 if text := Text.from_content(content):
                     message_strings.append(text.text)
-
             chat.add_user_message("\n".join(message_strings))
 
     eventbus.on_get(_on_get)

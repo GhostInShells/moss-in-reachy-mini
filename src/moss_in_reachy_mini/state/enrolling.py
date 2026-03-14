@@ -5,7 +5,7 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Message, Text
 from reachy_mini import ReachyMini
 
-from framework.abcd.agent_event import UserInputAgentEvent, CTMLAgentEvent
+from framework.abcd.agent_event import CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.apps.live.douyin_live import DouyinLive
 from framework.apps.todolist import TodoList

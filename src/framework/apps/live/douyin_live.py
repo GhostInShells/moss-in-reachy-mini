@@ -13,7 +13,7 @@ from ghoshell_container import INSTANCE, Provider, IoCContainer
 from ghoshell_moss import Message, Text, PyChannel
 from pydantic import Field, BaseModel
 
-from framework.abcd.agent_event import UserInputAgentEvent
+from framework.abcd.agent_event import ProgramInputAgentEvent
 from framework.abcd.agent_hub import EventBus
 from framework.apps.live.DouyinLiveWebFetcher.liveMan import DouyinLiveWebFetcher
 from framework.apps.live.DouyinLiveWebFetcher.protobuf.douyin import ChatMessage, GiftMessage, LikeMessage, \
@@ -695,7 +695,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                     message_content.append(Text(text=f"\n用户 {event.user_name} 的综合评价：{user_history.assessment}"))
 
                 # 发送到事件总线
-                await self.eventbus.put(UserInputAgentEvent(
+                await self.eventbus.put(ProgramInputAgentEvent(
                     message=Message.new(
                         role="user",
                         name=f"__douyin_live_{event.event_type.value}__"
@@ -737,7 +737,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                     ]
                     event_summary = self._summarize_events(recent_events)
 
-                    await self.eventbus.put(UserInputAgentEvent(
+                    await self.eventbus.put(ProgramInputAgentEvent(
                         message=Message.new(
                             role="user",
                             name="__douyin_live_periodic__"
@@ -756,7 +756,7 @@ class DouyinLive(DouyinLiveWebFetcher):
                 else:
                     event_summary = self._summarize_events(recent_unprocessed_events)
 
-                    await self.eventbus.put(UserInputAgentEvent(
+                    await self.eventbus.put(ProgramInputAgentEvent(
                         message=Message.new(
                             role="user",
                             name="__douyin_live_periodic__"
@@ -990,7 +990,7 @@ class DouyinLive(DouyinLiveWebFetcher):
         给主Agent提供直播话术建议
         :param text__:
         """
-        await self.eventbus.put(UserInputAgentEvent(
+        await self.eventbus.put(ProgramInputAgentEvent(
             message=Message.new(role="user", name="__douyin_live_cues__").with_content(
                 Text(text=self.config.cues_prompt),
                 Text(text=text__)

@@ -90,6 +90,12 @@ class UserInputAgentEvent(AgentEventModel):
     message: Message = Field(description="input message")
 
 
+class ProgramInputAgentEvent(AgentEventModel):
+    event_type = "program_input"
+
+    message: Message = Field(description="input message")
+
+
 class InterruptAgentEvent(AgentEventModel):
     event_type = "interrupt"
 
@@ -131,4 +137,4 @@ class CTMLAgentEvent(AgentEventModel):
 class ResumeAgentEvent(AgentEventModel):
     event_type = "resume"
 
-    event: UserInputAgentEvent = Field(description="被中断的用户输入事件")
+    event: ProgramInputAgentEvent = Field(description="被中断的程序输入事件")
