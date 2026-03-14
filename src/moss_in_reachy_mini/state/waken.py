@@ -58,7 +58,6 @@ class WakenState(MiniStateHook):
         await self.eventbus.put(CTMLAgentEvent(
             ctml="<reachy_mini:stop_tracking_face /><reachy_mini:head_reset />"
         ))
-        await self.head_tracker.stop()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:

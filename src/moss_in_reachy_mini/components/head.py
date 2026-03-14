@@ -69,7 +69,6 @@ class Head:
         if name == "unknown":
             raise ValueError("unknown表示当前用户未识别，不能作为追踪目标")
         self._tracking_event.set()
-        self._head_tracker.enabled.set()
         self._head_tracker.set_target_track_name(name)
 
     async def stop_tracking_face(self):
@@ -77,7 +76,6 @@ class Head:
         停止人脸追踪
         """
         self._tracking_event.clear()
-        self._head_tracker.enabled.clear()
         self._head_tracker.set_target_track_name("")
 
     async def _breathing(self):
@@ -117,27 +115,11 @@ class Head:
         self.logger.info("Head on-idle entering")
         try:
             if self._tracking_event.is_set():
-                self._head_tracker.enabled.set()
+                await self._head_tracker.run()
             else:
                 await self._breathing()
         except asyncio.CancelledError:
-            self._head_tracker.enabled.clear()
-            await asyncio.sleep(0.2)
             self.logger.info("Head on_idle task cancelled successfully")
-
-    def as_channel(self) -> PyChannel:
-        head = PyChannel(name="head", blocking=True)
-
-        head.build.context_messages(self.context_messages)
-        head.build.idle(self.on_idle)
-
-        # move
-        head.build.command()(self.move)
-        head.build.command()(self.reset)
-        head.build.command()(self.start_tracking_face)
-        head.build.command()(self.stop_tracking_face)
-
-        return head
 
 
 class HeadProvider(Provider[Head]):
