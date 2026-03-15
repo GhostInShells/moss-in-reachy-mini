@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import logging
 import time
 from typing import Optional
 
@@ -36,6 +37,7 @@ class MiniStateHook(AgentHook, abc.ABC):
         pass
 
     async def run_idle_move(self):
+        logger = logging.getLogger(f"idle_move.{self.NAME}")
         start = int(time.time())
         try:
             while True:
@@ -43,7 +45,14 @@ class MiniStateHook(AgentHook, abc.ABC):
                 now = int(time.time())
                 self._idle_move_duration = now - start
 
-                await self._run_idle_move()
+                try:
+                    await self._run_idle_move()
+                except asyncio.CancelledError:
+                    raise
+                except QuitIdleMove:
+                    raise
+                except Exception:
+                    logger.exception("_run_idle_move error (continuing)")
 
         except asyncio.CancelledError:
             raise

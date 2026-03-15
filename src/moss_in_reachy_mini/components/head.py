@@ -20,6 +20,7 @@ class Head:
 
         self._head_tracker = head_tracker
         self._tracking_event = asyncio.Event()
+        self._idle_suppressed = False
 
     async def move(
             self,
@@ -64,10 +65,13 @@ class Head:
         启动人脸追踪，会在空闲时间一直看着指定name的用户。
 
         Args:
-            name: 根据你的视觉输入信息，选择你能看到的name填写入参，不能用中文，不能使用你当前视觉里没有的name
+            name: 根据你的视觉输入信息，选择你能看到的已注册name填写入参，只能跟随已注册的人脸
         """
         if name == "unknown":
             raise ValueError("unknown表示当前用户未识别，不能作为追踪目标")
+        known_faces = self._head_tracker._camera_worker.face_recognizer.known_faces
+        if name not in known_faces:
+            raise ValueError(f"'{name}'不在已知人脸库中，请先进行人脸录入后再开启跟随。")
         self._tracking_event.set()
         self._head_tracker.enabled.set()
         self._head_tracker.set_target_track_name(name)
@@ -92,19 +96,25 @@ class Head:
 
     async def context_messages(self):
         msg = Message.new(role="user", name="__reachy_mini_head__")
+
+        # 始终从 camera_worker 获取最新帧，确保 LLM 知道当前画面中的人
+        frame = self._head_tracker._camera_worker.get_latest_frame()
+        recognized_names = [
+            pos.name for pos in frame.face_positons
+            if pos.is_recognized and pos.name
+        ]
+        if recognized_names:
+            msg.with_content(
+                Text(text=f"当前视觉中识别到的已注册用户: {', '.join(recognized_names)}")
+            )
+
         if self._tracking_event.is_set():
             msg.with_content(
-                Text(text=f"You are keep looking user with head tracking"),
+                Text(text="You are keep looking user with head tracking"),
             )
-            if self._head_tracker.latest_frame.track_name:
+            if frame.track_name:
                 msg.with_content(
-                    Text(text=f"Current tracking {self._head_tracker.latest_frame.track_name}")
-                )
-            for pos in self._head_tracker.latest_frame.face_positons:
-                if not pos.is_recognized:
-                    continue
-                msg.with_content(
-                    Text(text=f"当前视觉里的人脸 track_id={pos.track_id} name={pos.name}")
+                    Text(text=f"Current tracking {frame.track_name}")
                 )
 
         msg.with_content(
@@ -114,18 +124,19 @@ class Head:
         return [msg]
 
     async def on_idle(self):
+        if self._idle_suppressed:
+            return
         self.logger.info("Head on-idle entering")
         try:
             if self._tracking_event.is_set():
-                await self.reset(duration=0.3)
-                self._tracking_event.set()  # reset() clears it, re-set
+                # 跟随模式下由 HeadTracker 控制头部，on_idle 不干预
                 self._head_tracker.enabled.set()
+                return
             else:
                 await self._breathing()
         except asyncio.CancelledError:
-            self._head_tracker.enabled.clear()
-            await asyncio.sleep(0.2)
-            self.logger.info("Head on_idle task cancelled successfully")
+            # 不要关闭 tracker — 跟随状态应跨 idle 周期保持
+            self.logger.info("Head on_idle task cancelled")
 
     def as_channel(self) -> PyChannel:
         head = PyChannel(name="head", blocking=True)

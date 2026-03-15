@@ -69,8 +69,21 @@ class Vision:
         msg = Message.new(role="system", name="__reachy_mini_vision__")
         frame = self.camera_worker.get_latest_frame()
         if frame.image is not None:
+            # 告诉 LLM 图上标注了哪些已识别的人
+            recognized_names = [
+                pos.name for pos in frame.face_positons
+                if pos.is_recognized and pos.name
+            ]
+            if recognized_names:
+                text = (
+                    f"This image is what you see. "
+                    f"已识别的用户（图中已标注绿框和名字）: {', '.join(recognized_names)}。"
+                    f"请用他们的名字来称呼他们。"
+                )
+            else:
+                text = "This image is what you see"
             msg.with_content(
-                Text(text="This image is what you see")
+                Text(text=text)
             ).with_content(
                 frame.to_base64_image()
             )

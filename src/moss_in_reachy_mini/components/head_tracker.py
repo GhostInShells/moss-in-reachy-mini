@@ -53,7 +53,7 @@ class HeadTracker:
         self.track_lost_start_at = 0
 
     def set_target_track_name(self, track_name: str):
-        if not track_name.isalpha() or track_name == "unknown":
+        if track_name and (not track_name.isalpha() or track_name == "unknown"):
             return
         self._camera_worker.set_target_track_name(track_name)
 
@@ -129,6 +129,7 @@ class HeadTracker:
             self._mini.set_target(head=target_pose)
 
     async def start(self):
+        self._quit.clear()
         self._camera_worker.start()
         self._run_task = asyncio.create_task(self.run())
 

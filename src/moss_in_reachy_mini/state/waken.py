@@ -1,6 +1,7 @@
 import logging
 import math
 import random
+import time
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import IoCContainer, Provider
@@ -15,6 +16,10 @@ from moss_in_reachy_mini.state.abcd import MiniStateHook
 
 # 检测到陌生人后的冷却时间（秒），避免频繁触发
 _STRANGER_COOLDOWN_SECONDS = 30
+# 需要连续多少个 idle 周期检测到陌生人才触发（0.1s/周期，15 ≈ 1.5秒）
+_STRANGER_CONFIRM_CYCLES = 15
+# 人脸检测置信度阈值，低于此值视为误检（None 视为通过）
+_STRANGER_DET_CONFIDENCE = 0.5
 
 
 class WakenState(MiniStateHook):
@@ -46,42 +51,50 @@ class WakenState(MiniStateHook):
         self._trigger_decay = 0.005  # 触发一次后，基础概率衰减值
 
         # 陌生人检测相关状态（每个 waken 周期重置）
-        self._stranger_prompt_used = False  # 本周期内是否已主动询问过
-        self._stranger_cooldown_until = 0.0  # 冷却截止时间
+        self._stranger_cooldown_until = 0.0  # 冷却截止时间（绝对时间 time.time()）
+        self._stranger_consecutive = 0  # 连续检测到陌生人的周期计数
 
     async def on_self_enter(self):
         self.mini.enable_motors()
         self.mini.wake_up()
         await self.head_tracker.start()
         self._base_proactive_prob = 0.001
-        self._stranger_prompt_used = False
         self._stranger_cooldown_until = 0.0
-        await self.eventbus.put(
-            ReactAgentEvent(
-                messages=[
-                    Message.new(role="system").with_content(Text(text="你需要选择你视觉内的认识的人开启人脸跟随"))
-                ],
-                priority=-1,
-            )
-        )
+        self._stranger_consecutive = 0
 
     async def on_self_exit(self):
-        await self.eventbus.put(CTMLAgentEvent(ctml="<reachy_mini:stop_tracking_face /><reachy_mini:head_reset />"))
+        # 直接 Python 调用，不走 CTML eventbus —— 因为 eventbus 是异步处理的，
+        # 等到 CTML 被消费时状态已经切走，stop_tracking_face 等命令不再可用。
+        self.head_tracker.enabled.clear()
+        self.head_tracker.set_target_track_name("")
         await self.head_tracker.stop()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:
             await self.eventbus.put(CTMLAgentEvent(ctml='<reachy_mini:switch_state state_name="boring" />'))
 
-        # 陌生人检测：本周期内未询问过 && 不在冷却期
-        if not self._stranger_prompt_used and self._idle_move_duration > self._stranger_cooldown_until:
+        # 自动追踪：如果追踪未激活，且看到了已识别的人脸，自动启动追踪（不依赖 LLM）
+        if not self.head_tracker.enabled.is_set():
+            known_faces = self.camera_worker.face_recognizer.known_faces
+            if known_faces:
+                frame = self.camera_worker.get_latest_frame()
+                for pos in frame.face_positons:
+                    if pos.is_recognized and pos.name in known_faces:
+                        await self.eventbus.put(
+                            CTMLAgentEvent(
+                                ctml=f'<reachy_mini:start_tracking_face name="{pos.name}"/>'
+                            )
+                        )
+                        break
+
+        # 陌生人检测：冷却期内不重复触发（使用绝对时间，不受 idle 重启影响）
+        now = time.time()
+        if now > self._stranger_cooldown_until:
             if self._has_stranger():
-                self._stranger_prompt_used = True
+                self._stranger_cooldown_until = now + _STRANGER_COOLDOWN_SECONDS
+                self._stranger_consecutive = 0  # 触发后重置计数
                 await self.eventbus.put(
-                    ReactAgentEvent(
-                        messages=[Message.new(role="system").with_content(Text(text=_STRANGER_DETECTION_PROMPT))],
-                        priority=-1,
-                    )
+                    CTMLAgentEvent(ctml=_STRANGER_DETECTION_CTML)
                 )
                 return  # 本轮不再触发普通 proactive prompt
 
@@ -107,11 +120,39 @@ class WakenState(MiniStateHook):
                 self._base_proactive_prob = max(self._base_proactive_prob, self._min_proactive_prob)
 
     def _has_stranger(self) -> bool:
-        """检查当前画面中是否存在未识别的人脸"""
+        """检查当前画面中是否持续存在未识别的人脸（需连续多帧确认）。
+
+        触发条件：存在高置信度检测到的人脸，但识别不出是谁。
+        连续多帧都检测到未识别人脸才触发，避免误触。
+        """
         frame = self.camera_worker.get_latest_frame()
         if frame.image is None or not frame.face_positons:
+            # 没看到脸 → 重置计数
+            self._stranger_consecutive = 0
             return False
-        return any(not pos.is_recognized for pos in frame.face_positons)
+
+        # 逐个检查人脸状态
+        for pos in frame.face_positons:
+            self.logger.debug(
+                "stranger check: name=%s recognized=%s conf=%s",
+                pos.name, pos.is_recognized, pos.confidence,
+            )
+
+        # 是否存在未识别的人脸（confidence 为 None 时不做过滤）
+        has_stranger_face = any(
+            not pos.is_recognized
+            and (pos.confidence is None or pos.confidence >= _STRANGER_DET_CONFIDENCE)
+            for pos in frame.face_positons
+        )
+        if has_stranger_face:
+            self._stranger_consecutive += 1
+            return self._stranger_consecutive >= _STRANGER_CONFIRM_CYCLES
+
+        # 没有未识别的人脸 → 重置
+        if self._stranger_consecutive > 0:
+            self.logger.debug("stranger check: all recognized, reset count from %d", self._stranger_consecutive)
+        self._stranger_consecutive = 0
+        return False
 
     async def start_idle_move(self):
         self.head_tracker.resume_track_lost()
@@ -155,16 +196,11 @@ Proactive_Prompts = [
 """,
 ]
 
-_STRANGER_DETECTION_PROMPT = """
-# 场景
-你注意到有陌生人出现在视野中，想要主动邀请对方进行人脸注册。
-# 任务
-生成一句邀请对方进行人脸注册的话术。如果对方同意，调用 start_face_registration 并使用对方提供的称呼作为 user_name。
-# 输出要求
-- 纯文本，友好邀请语气。
-- 字数控制在15-25字。
-- 需要先询问对方希望怎么称呼。
-"""
+_STRANGER_DETECTION_CTML = (
+    '<say>你好呀，我还不认识你呢。'
+    '如果想让我记住你，请说"开始人脸录入"，并告诉我你的名字。</say>'
+    '<reachy_mini:emotion name="welcoming1"/>'
+)
 
 
 class WakenStateProvider(Provider[WakenState]):

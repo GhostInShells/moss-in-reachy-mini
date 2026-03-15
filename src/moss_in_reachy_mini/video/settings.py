@@ -32,7 +32,9 @@ class VideoRecordSettings(BaseSettings):
     )
     video_record_audio_bitrate_kbps: int = Field(description="Audio bitrate in kbps", default=256)
 
-    video_record_frame_source: str = Field(description="Source of video frames: 'raw' or 'annotated'", default="raw")
+    video_record_frame_source: str = Field(
+        description="Source of video frames: 'raw' or 'annotated'", default="annotated"
+    )
     video_record_scale: str = Field(description="Video scaling factor (empty string for no scaling)", default="")
     video_record_max_width: int = Field(description="Maximum video width in pixels (0 for no limit)", default=1280)
     video_record_max_height: int = Field(description="Maximum video height in pixels (0 for no limit)", default=0)

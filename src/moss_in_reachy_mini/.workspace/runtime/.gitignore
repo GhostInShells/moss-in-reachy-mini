@@ -1,3 +1,6 @@
 logs
 agent_history
+video_records
+vision
+memory
 !.gitignore

@@ -139,12 +139,13 @@ async def build_main_agent(parent: Container) -> MainAgent:
         experimental=False,
     )
     ctml_repo = container.force_fetch(CtmlRepo)
-    shell.main_channel.import_channels(
+    channels = [
         moss.as_channel(),
         container.force_fetch(StorageMemory).as_channel(),
-        # container.force_fetch(TodoList).as_channel(),
-        container.force_fetch(DouyinLive).as_channel(),
-    )
+    ]
+    if os.getenv("REACHY_MINI_MODE") == "live":
+        channels.append(container.force_fetch(DouyinLive).as_channel())
+    shell.main_channel.import_channels(*channels)
 
     shell.main_channel.build.command(
         available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
