@@ -122,14 +122,20 @@ class WakenState(MiniStateHook):
     def _has_stranger(self) -> bool:
         """检查当前画面中是否持续存在未识别的人脸（需连续多帧确认）。
 
-        触发条件：存在高置信度检测到的人脸，但识别不出是谁。
-        连续多帧都检测到未识别人脸才触发，避免误触。
+        触发条件：
+        1. 没有任何已注册人脸（known_faces 为空）时，检测到人脸即视为陌生人
+        2. 有已注册人脸时，必须同时满足：
+           - 画面中有未识别的人脸
+           - 画面中也有已识别的人脸（证明识别系统正常工作）
+           这样可以避免因光线、角度等原因导致已注册的人偶尔识别失败而误触。
         """
         frame = self.camera_worker.get_latest_frame()
         if frame.image is None or not frame.face_positons:
             # 没看到脸 → 重置计数
             self._stranger_consecutive = 0
             return False
+
+        known_faces = self.camera_worker.face_recognizer.known_faces
 
         # 逐个检查人脸状态
         for pos in frame.face_positons:
@@ -138,21 +144,34 @@ class WakenState(MiniStateHook):
                 pos.name, pos.is_recognized, pos.confidence,
             )
 
-        # 是否存在未识别的人脸（confidence 为 None 时不做过滤）
-        has_stranger_face = any(
-            not pos.is_recognized
+        # 分类：已识别 vs 未识别（高置信度检测）
+        unrecognized = [
+            pos for pos in frame.face_positons
+            if not pos.is_recognized
             and (pos.confidence is None or pos.confidence >= _STRANGER_DET_CONFIDENCE)
-            for pos in frame.face_positons
-        )
-        if has_stranger_face:
-            self._stranger_consecutive += 1
-            return self._stranger_consecutive >= _STRANGER_CONFIRM_CYCLES
+        ]
+        recognized = [pos for pos in frame.face_positons if pos.is_recognized]
 
-        # 没有未识别的人脸 → 重置
-        if self._stranger_consecutive > 0:
-            self.logger.debug("stranger check: all recognized, reset count from %d", self._stranger_consecutive)
-        self._stranger_consecutive = 0
-        return False
+        if not unrecognized:
+            # 没有未识别的人脸 → 重置
+            if self._stranger_consecutive > 0:
+                self.logger.debug("stranger check: all recognized, reset count from %d", self._stranger_consecutive)
+            self._stranger_consecutive = 0
+            return False
+
+        # 有已注册人脸但当前没有任何人被识别出来 → 可能是识别系统不稳定，跳过
+        if known_faces and not recognized:
+            self.logger.debug(
+                "stranger check: %d unrecognized faces but no recognized faces present, "
+                "skipping (possible recognition instability)",
+                len(unrecognized),
+            )
+            self._stranger_consecutive = 0
+            return False
+
+        # 确认存在陌生人：要么没有注册人脸，要么有人被识别的同时还有人没被识别
+        self._stranger_consecutive += 1
+        return self._stranger_consecutive >= _STRANGER_CONFIRM_CYCLES
 
     async def start_idle_move(self):
         self.head_tracker.resume_track_lost()
