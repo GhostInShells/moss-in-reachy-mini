@@ -48,7 +48,7 @@ class WakenState(MiniStateHook):
         await self.eventbus.put(ReactAgentEvent(
             messages=[
                 Message.new(role="system").with_content(
-                    Text(text="你需要选择你视觉内的认识的人开启人脸跟随")
+                    Text(text="你需要选择你现在视觉内的认识的人开启人脸跟随，如果当前视觉没有认识的人就用你的动作打个招呼好了")
                 )
             ],
             priority=-1,

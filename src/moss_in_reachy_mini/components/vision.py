@@ -85,6 +85,8 @@ class Vision:
         if name in self.face_recognizer.get_known_faces():
             # 已认识的用户
             face_positions = [p for p in frame.face_positons if p.name == name]
+            if not face_positions:
+                face_positions = [p for p in frame.face_positons if not p.is_recognized]
         else:
             # 未认识的用户
             face_positions = [p for p in frame.face_positons if not p.is_recognized]
@@ -97,7 +99,7 @@ class Vision:
 
         storage = self.vision_storage.sub_storage("faces").sub_storage(name)
         img = Image.fromarray(img_np_data)
-        storage.put(f"enroll_face_{str(int(time.time()))}", img.tobytes())
+        storage.put(f"enroll_face_{str(int(time.time()))}.png", img.tobytes())
 
         self.face_recognizer.add_known_face(name, target.embedding)
         return f"Successfully enrolled {name}"

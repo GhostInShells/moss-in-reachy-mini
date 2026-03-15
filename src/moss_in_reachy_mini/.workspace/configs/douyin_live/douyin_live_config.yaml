@@ -1,4 +1,4 @@
-live_id: "91819894158"  # 可以从抖音直播间地址中获取，比如：https://live.douyin.com/892335786371， 892335786371就是live_id
+live_id: "892335786371"  # 可以从抖音直播间地址中获取，比如：https://live.douyin.com/892335786371， 892335786371就是live_id
 
 p0_overdue: 10
 p0_prompt: |
