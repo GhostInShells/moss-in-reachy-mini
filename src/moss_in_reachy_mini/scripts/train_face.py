@@ -44,10 +44,8 @@ def from_path(face_recognizer: FaceRecognizer, path: str):
                         if img is None:
                             continue
 
-                        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-                        # 检测人脸
-                        positions = face_recognizer.get_face_positions(img_rgb)
+                        # 检测人脸（InsightFace 使用 BGR 格式，cv2.imread 返回 BGR）
+                        positions = face_recognizer.get_face_positions(img)
 
                         if positions:
                             # 使用第一个检测到的人脸

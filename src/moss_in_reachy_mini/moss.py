@@ -3,12 +3,13 @@ import io
 import logging
 import os
 import time
-from typing import List, Callable
+from collections.abc import Callable
+from pathlib import Path
 
-from PIL import Image
 from ghoshell_common.contracts import LoggerItf, Workspace
-from ghoshell_container import IoCContainer, Provider, INSTANCE
-from ghoshell_moss import PyChannel, Message, Base64Image, Text
+from ghoshell_container import INSTANCE, IoCContainer, Provider
+from ghoshell_moss import Base64Image, Message, PyChannel, Text
+from PIL import Image
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
@@ -16,9 +17,10 @@ from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.components.vision import Vision
-from moss_in_reachy_mini.state.abcd import MiniStateHook, InitialState
+from moss_in_reachy_mini.state.abcd import InitialState, MiniStateHook
 from moss_in_reachy_mini.state.asleep import AsleepState
 from moss_in_reachy_mini.state.boring import BoringState
+from moss_in_reachy_mini.state.enrolling import EnrollingState
 from moss_in_reachy_mini.state.teaching import TeachingState
 from moss_in_reachy_mini.state.waken import WakenState
 
@@ -37,20 +39,21 @@ class StateLog:
         self.to_state = to_state
         self.now = int(time.time())
 
+
 class MossInReachyMini:
     def __init__(
-            self,
-            mini: ReachyMini,
-            *states: MiniStateHook,
-            default_state: str = AsleepState.NAME,
-            appearance_img: Image.Image,
-            structure_img: Image.Image,
-            logger: LoggerItf = None,
-            recorder: VideoRecorderWorker | None = None,
-            body: Body,
-            head: Head,
-            antennas: Antennas,
-            vision: Vision,
+        self,
+        mini: ReachyMini,
+        *states: MiniStateHook,
+        default_state: str = AsleepState.NAME,
+        appearance_img: Image.Image,
+        structure_img: Image.Image,
+        logger: LoggerItf = None,
+        recorder: VideoRecorderWorker | None = None,
+        body: Body,
+        head: Head,
+        antennas: Antennas,
+        vision: Vision,
     ):
         self.mini = mini
         self.logger = logger or logging.getLogger(__name__)
@@ -62,9 +65,9 @@ class MossInReachyMini:
         self.vision = vision
 
         # state
-        self._state_map = { state.NAME: state for state in states }
+        self._state_map = {state.NAME: state for state in states}
         self._state: MiniStateHook = InitialState()
-        self._state_log: List[StateLog] = []
+        self._state_log: list[StateLog] = []
         self._default_state = default_state
 
         # img
@@ -78,19 +81,19 @@ class MossInReachyMini:
     async def switch_state(self, state_name: str, force: bool = False):
         state_name = state_name.lower()
         if state_name not in self._state_map:
-            raise ValueError(f'Invalid state name: {state_name}')
+            raise ValueError(f"Invalid state name: {state_name}")
 
         if state_name == self._state.NAME:
             return
 
         if not self._state.out_switchable and not force:
-            raise ValueError(f'Current state {self._state.NAME} is not out switchable')
+            raise ValueError(f"Current state {self._state.NAME} is not out switchable")
 
         if not self._state_map[state_name].in_switchable and not force:
-            raise ValueError(f'Current state {state_name} is not in switchable')
+            raise ValueError(f"Current state {state_name} is not in switchable")
 
         await self._state.on_self_exit()
-        self.logger.info(f'Switching state from {self._state.NAME} to {state_name}')
+        self.logger.info(f"Switching state from {self._state.NAME} to {state_name}")
         self._state_log.append(StateLog(self._state, self._state_map[state_name]))  # 记录状态切换
         self._state = self._state_map[state_name]
         await self._state.on_self_enter()
@@ -133,7 +136,7 @@ class MossInReachyMini:
         return messages
 
     def is_available_fn(self, *available_states) -> Callable[[], bool]:
-        return lambda : self._state.NAME in available_states
+        return lambda: self._state.NAME in available_states
 
     def as_channel(self, only_context_messages=False) -> PyChannel:
         self.logger.info("MossInReachyMini.as_channel()...")
@@ -147,12 +150,14 @@ class MossInReachyMini:
             return reachy_mini
 
         # 支持大模型自主切换reachy mini的仿生状态
-        reachy_mini.build.command(doc=f"""
-        切换到指定状态，当前状态为{self._state.NAME}，可选状态有{', '.join([s.NAME for s in self._state_map.values()])}
+        reachy_mini.build.command(
+            doc=f"""
+        切换到指定状态，当前状态为{self._state.NAME}，可选状态有{", ".join([s.NAME for s in self._state_map.values()])}
 
         :param state_name: 目标状态名称
         :param force: 务必使用默认值False，任何情况都不能设置为True
-        """)(self.switch_state)
+        """
+        )(self.switch_state)
 
         # recorder（即vlog）独立成轨，后面可以和vision channel合并
         sub_channels = []
@@ -190,15 +195,17 @@ class MossInReachyMini:
 
         reachy_mini.build.command(
             name="head_reset",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(
+                WakenState.NAME, LiveState.NAME, TeachingState.NAME, EnrollingState.NAME
+            ),
         )(self.head.reset)
 
         reachy_mini.build.command(
-            available=self.is_available_fn(WakenState.NAME),
+            available=self.is_available_fn(WakenState.NAME, EnrollingState.NAME),
         )(self.head.start_tracking_face)
 
         reachy_mini.build.command(
-            available=self.is_available_fn(WakenState.NAME),
+            available=self.is_available_fn(WakenState.NAME, EnrollingState.NAME),
         )(self.head.stop_tracking_face)
 
         reachy_mini.build.command(
@@ -211,6 +218,27 @@ class MossInReachyMini:
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
         )(self.antennas.reset)
 
+        reachy_mini.build.command(
+            doc=(
+                "启动人脸注册/录入流程。当用户说'录入人脸'、'注册人脸'、或同意进行人脸注册时，"
+                "必须立即调用此指令，不要自己尝试拍照或引导。"
+                "调用后系统将全自动引导用户完成拍照和识别，你不需要再生成任何后续动作或语音。"
+                "\n\n:param user_name: 用户告诉你的称呼（必须使用用户明确说出的名字，"
+                "禁止使用代词或泛称如'用户'、'你'、'朋友'）"
+            ),
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.start_face_registration)
+
+        reachy_mini.build.command(
+            doc=(
+                "修改已注册用户的称呼。当用户说'叫我XX'、'别叫我XX叫我YY'、"
+                "'我想改个名字'时调用此指令。"
+                "\n\n:param old_name: 用户当前在人脸库中的名字"
+                "\n:param new_name: 用户想要的新称呼"
+            ),
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.rename_face)
+
         # 注册idle状态的默认动作
         # 呼吸 或 人脸跟随
         reachy_mini.build.idle(self.head.on_idle)
@@ -220,6 +248,44 @@ class MossInReachyMini:
         reachy_mini.build.close(self.aclose)
 
         return reachy_mini
+
+    async def start_face_registration(self, user_name: str):
+        """启动人脸注册流程，调用后系统将自动引导用户完成拍照和识别，你不需要再生成任何后续动作或语音。
+
+        :param user_name: 用户告诉你的称呼（必须使用用户明确说出的名字，禁止使用代词或泛称）
+        """
+        face_reg = self._state_map.get(EnrollingState.NAME)
+        if face_reg is None:
+            raise ValueError("EnrollingState is not registered")
+        face_reg.target_name = user_name
+        await self.switch_state(EnrollingState.NAME, force=True)
+
+    async def rename_face(self, old_name: str, new_name: str):
+        """修改已注册用户的称呼。当用户说"叫我XX"、"改名叫XX"、"不要叫我XX，叫我YY"时调用。
+
+        :param old_name: 用户当前在人脸库中的名字（必须是已注册的名字）
+        :param new_name: 用户想要的新称呼
+        """
+        recognizer = self.head._head_tracker._camera_worker.face_recognizer
+        if not recognizer.rename_known_face(old_name, new_name):
+            raise ValueError(f"'{old_name}'不在人脸库中，无法改名")
+
+        # 重命名磁盘上的图片文件夹
+        try:
+            ws = self._state_map.get(EnrollingState.NAME)
+            if ws and hasattr(ws, 'workspace'):
+                faces_dir = ws.workspace.runtime().sub_storage("vision").sub_storage("faces")
+                old_dir = Path(faces_dir.abspath()) / old_name
+                new_dir = Path(faces_dir.abspath()) / new_name
+                if old_dir.exists():
+                    old_dir.rename(new_dir)
+        except Exception as e:
+            self.logger.warning(f"Failed to rename face image folder: {e}")
+
+        # 如果正在追踪旧名字，切换到新名字
+        tracker = self.head._head_tracker
+        if tracker._camera_worker.get_latest_frame().track_name == old_name:
+            tracker.set_target_track_name(new_name)
 
     async def bootstrap(self):
         self.mini.__enter__()
@@ -232,7 +298,6 @@ class MossInReachyMini:
 
 
 class MossInReachyMiniProvider(Provider[MossInReachyMini]):
-
     def singleton(self) -> bool:
         return True
 
@@ -242,6 +307,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         waken = con.force_fetch(WakenState)
         boring = con.force_fetch(BoringState)
         teaching = con.force_fetch(TeachingState)
+        enrolling = con.force_fetch(EnrollingState)
 
         live = None
         if LiveState is not None:
@@ -261,7 +327,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
         # 桌面陪伴模式
-        states = [asleep, waken, boring, teaching]
+        states = [asleep, waken, boring, teaching, enrolling]
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
@@ -281,9 +347,11 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         vision = con.force_fetch(Vision)
 
         return MossInReachyMini(
-            mini, *states,
+            mini,
+            *states,
             default_state=default_state,
-            appearance_img=appearance_img, structure_img=structure_img,
+            appearance_img=appearance_img,
+            structure_img=structure_img,
             logger=logger,
             recorder=recorder,
             body=body,
