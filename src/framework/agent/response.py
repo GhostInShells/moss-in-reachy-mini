@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from typing import List, Optional, AsyncIterator, AsyncIterable
 
@@ -86,8 +85,6 @@ class MOSShellResponse(Response):
                     )
 
                     messages = parse_messages_to_params(merged)
-                    with open(f"{self.agent_id}_temp.json", "w", encoding="utf-8") as f:
-                        json.dump(messages, f, ensure_ascii=False, indent=4)
 
                     # 设置流式参数
                     params.update({
