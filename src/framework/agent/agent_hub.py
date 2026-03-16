@@ -52,7 +52,7 @@ class AgentHubImpl(AgentHub):
         if agent_id == "":
             agent_id = self._main_agent_id
 
-        agent_ins = self._agent_instances[agent_id]
+        agent_ins = self._agent_instances.get(agent_id)
         if not agent_ins:
             raise ValueError(f"agent {agent_id} not found")
 

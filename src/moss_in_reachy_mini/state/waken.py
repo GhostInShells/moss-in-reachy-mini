@@ -65,27 +65,24 @@ class WakenState(MiniStateHook):
     async def on_self_exit(self):
         # 直接 Python 调用，不走 CTML eventbus —— 因为 eventbus 是异步处理的，
         # 等到 CTML 被消费时状态已经切走，stop_tracking_face 等命令不再可用。
-        self.head_tracker.enabled.clear()
         self.head_tracker.set_target_track_name("")
-        await self.head_tracker.stop()
 
     async def _run_idle_move(self):
         if self._idle_move_duration >= self._time_to_boring:
             await self.eventbus.put(CTMLAgentEvent(ctml='<reachy_mini:switch_state state_name="boring" />'))
 
         # 自动追踪：如果追踪未激活，且看到了已识别的人脸，自动启动追踪（不依赖 LLM）
-        if not self.head_tracker.enabled.is_set():
-            known_faces = self.camera_worker.face_recognizer.known_faces
-            if known_faces:
-                frame = self.camera_worker.get_latest_frame()
-                for pos in frame.face_positons:
-                    if pos.is_recognized and pos.name in known_faces:
-                        await self.eventbus.put(
-                            CTMLAgentEvent(
-                                ctml=f'<reachy_mini:start_tracking_face name="{pos.name}"/>'
-                            )
-                        )
-                        break
+        # known_faces = self.camera_worker.face_recognizer.known_faces
+        # if known_faces:
+        #     frame = self.camera_worker.get_latest_frame()
+        #     for pos in frame.face_positons:
+        #         if pos.is_recognized and pos.name in known_faces:
+        #             await self.eventbus.put(
+        #                 CTMLAgentEvent(
+        #                     ctml=f'<reachy_mini:start_tracking_face name="{pos.name}"/>'
+        #                 )
+        #             )
+        #             break
 
         # 陌生人检测：冷却期内不重复触发（使用绝对时间，不受 idle 重启影响）
         now = time.time()

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
-from ghoshell_common.contracts import LoggerItf, Workspace
+from ghoshell_common.contracts import LoggerItf, Workspace, Storage, FileStorage
 from ghoshell_container import IoCContainer, Provider
 from reachy_mini import ReachyMini
 
@@ -12,7 +12,6 @@ from framework.abcd.agent_event import CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
-from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.state.abcd import MiniStateHook
 
 
@@ -28,19 +27,17 @@ class EnrollingState(MiniStateHook):
         mini: ReachyMini,
         camera_worker: CameraWorker,
         face_recognizer: FaceRecognizer,
-        head: Head,
         eventbus: EventBus,
-        workspace: Workspace,
+        storage: FileStorage|Storage,
         logger: LoggerItf = None,
     ):
         super().__init__()
         self.mini = mini
         self.camera_worker = camera_worker
         self.face_recognizer = face_recognizer
-        self.head = head
         self.logger = logger or logging.getLogger("EnrollingState")
         self.eventbus = eventbus
-        self.workspace = workspace
+        self.storage = storage
         self.target_name: Optional[str] = None
 
         self._max_retries = 2
@@ -53,9 +50,12 @@ class EnrollingState(MiniStateHook):
     async def on_self_enter(self):
         self._cancelled = False
         self.mini.enable_motors()
-        self.head._idle_suppressed = True
-        await self.head.stop_tracking_face()
-        await self.head.reset()
+        await self.eventbus.put(CTMLAgentEvent(
+            ctml="""
+            <reachy_mini:stop_tracking_face />
+            <reachy_mini:head_reset idle_mode="hold" />
+            """
+        ))
         self._registration_task = asyncio.create_task(self._start_registration_process())
 
     async def on_self_exit(self):
@@ -68,7 +68,6 @@ class EnrollingState(MiniStateHook):
                 pass
         self._registration_task = None
         self.target_name = None
-        self.head._idle_suppressed = False
 
     async def _run_idle_move(self):
         pass
@@ -83,7 +82,7 @@ class EnrollingState(MiniStateHook):
         except Exception:
             self.logger.exception("Registration process failed with unexpected error")
             await self._speak("录入过程出现异常，返回唤醒模式。")
-            await asyncio.sleep(3)
+            # await asyncio.sleep(3)
             await self._return_to_waken_state()
 
     async def _do_registration(self):
@@ -146,8 +145,7 @@ class EnrollingState(MiniStateHook):
     async def _capture_user_images(self) -> bool:
         """捕获用户正面、左侧、右侧图像，每张拍照前校验画面中有人脸"""
         try:
-            faces_dir = self.workspace.runtime().sub_storage("vision").sub_storage("faces")
-            user_dir = Path(faces_dir.abspath()) / self.target_name
+            user_dir = Path(self.storage.abspath()) / self.target_name
             user_dir.mkdir(parents=True, exist_ok=True)
 
             steps = [
@@ -191,9 +189,7 @@ class EnrollingState(MiniStateHook):
         """训练人脸"""
         try:
             from moss_in_reachy_mini.scripts.train_face import from_storage
-
-            faces_storage = self.workspace.runtime().sub_storage("vision").sub_storage("faces")
-            from_storage(self.face_recognizer, faces_storage)
+            from_storage(self.face_recognizer, self.storage)
             self.logger.info("Face training completed successfully")
             return True
         except Exception:
@@ -242,17 +238,16 @@ class EnrollingStateProvider(Provider[EnrollingState]):
         mini = con.force_fetch(ReachyMini)
         camera_worker = con.force_fetch(CameraWorker)
         face_recognizer = camera_worker.face_recognizer
-        head = con.force_fetch(Head)
         eventbus = con.force_fetch(EventBus)
         workspace = con.force_fetch(Workspace)
+        storage = workspace.runtime().sub_storage("vision").sub_storage("faces")
         logger = con.get(logging.Logger)
 
         return EnrollingState(
             mini=mini,
             camera_worker=camera_worker,
             face_recognizer=face_recognizer,
-            head=head,
             eventbus=eventbus,
-            workspace=workspace,
+            storage=storage,
             logger=logger,
         )

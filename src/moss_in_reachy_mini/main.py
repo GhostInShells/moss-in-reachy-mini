@@ -32,7 +32,7 @@ from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
-from moss_in_reachy_mini.listener.chat.console_ptt import ConsolePTTChat
+from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider
@@ -43,7 +43,12 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
+# 主题脑：自驱完成一个主题，记录状态
+def build_task_agent():
+    pass
 
+
+# 决策脑：分析当前所有事件然后给主脑递小纸条
 def build_live_agent(parent: Container) -> LiveAgent:
     container = Container(parent=parent, name="live_agent")
 
@@ -81,7 +86,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "live_agent_persona.md"],
+        files=["ctml_enrich.md", "live_agent/persona.md"],
         storage_name="instructions",
     )
     live_agent = LiveAgent.new(
@@ -111,6 +116,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
     return live_agent
 
 
+# 主脑：交互
 async def build_main_agent(parent: Container) -> MainAgent:
     container = Container(parent=parent, name="main_agent")
 
@@ -159,7 +165,8 @@ async def build_main_agent(parent: Container) -> MainAgent:
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "websearch.md", "news.md", "speech.md"],
+        files=["memory_rules.md","system_rules.md",
+               "ctml_enrich.md", "websearch.md", "news.md"],
         storage_name="instructions",
     )
     main_agent = MainAgent.new(

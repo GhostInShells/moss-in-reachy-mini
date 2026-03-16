@@ -16,14 +16,16 @@ from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPI
 from framework.agent.agent_hub import AgentHubImpl
-from framework.agent.broadcaster import ChatBroadcasterProvider
+from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
+from framework.agent.utils import setup_chat
 from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
 from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
+from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
 
 
@@ -31,7 +33,6 @@ async def build_main_agent(parent: Container) -> MainAgent:
     container = Container(parent=parent, name="main_agent")
 
     # broadcaster
-    container.set(BaseChat, AgentConsoleChat(agent_id="main"))
     container.register(ChatBroadcasterProvider())
 
     # memory
@@ -49,7 +50,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
-        douyin_live.as_channel(),
+        # douyin_live.as_channel(),
     )
     container.set(MOSSShell, shell)
 
@@ -73,6 +74,9 @@ async def build_main_agent(parent: Container) -> MainAgent:
             instructions="不要使用memory的工具啦，直接输出互动文本",
         ),
     )
+    agent.ctml_candidates = [
+        # "<say>我正在听</say>"
+    ]
     return agent
 
 
@@ -80,8 +84,8 @@ async def build_live_agent(parent: Container) -> LiveAgent:
     container = Container(parent=parent, name="live_agent")
 
     # chat
-    container.set(BaseChat, AgentConsoleChat(agent_id="live"))
-    container.register(ChatBroadcasterProvider())
+    # container.set(BaseChat, AgentConsoleChat(agent_id="live"))
+    container.register(LogBroadcasterProvider())
 
     # memory
     memory = container.force_fetch(StorageMemory)
@@ -145,24 +149,29 @@ async def main() -> None:
         container.set(EventBus, eventbus)
         container.register(DouyinLiveProvider())
 
+        container.set(BaseChat, ConsolePTTChat(eventbus=eventbus))
+
         main_agent = await build_main_agent(parent=container)
-        live_agent = await build_live_agent(parent=container)
+        # live_agent = await build_live_agent(parent=container)
 
         agent_hub = AgentHubImpl(
             main_agent_id="main",
             agents=[
                 main_agent,
-                live_agent,
+                # live_agent,
             ],
             eventbus=container.force_fetch(EventBus),
             logger=container.get(LoggerItf),
         )
         container.set(AgentHub, agent_hub)
 
-        await agent_hub.bootstrap()
-
         server = AgentFastAPI(eventbus=eventbus)
-        await server.run()
+
+        await asyncio.gather(
+            agent_hub.bootstrap(),
+            setup_chat(eventbus, container.force_fetch(BaseChat)),
+            server.run()
+        )
 
 
 if __name__ == '__main__':

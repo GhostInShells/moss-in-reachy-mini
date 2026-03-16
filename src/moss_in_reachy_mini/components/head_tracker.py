@@ -27,10 +27,7 @@ class HeadTracker:
         self.latest_frame: CameraFrame | None = None
         self.track_lost_start_at = 0
         self.track_lost_threshold = 10
-        self._run_task = None
 
-        self.enabled = asyncio.Event()
-        self._quit = asyncio.Event()
         self._track_lost_suppressed = asyncio.Event()
         
         # Smoothing parameters
@@ -58,12 +55,9 @@ class HeadTracker:
         self._camera_worker.set_target_track_name(track_name)
 
     async def run(self):
-        while not self._quit.is_set():
+        while True:
             # Adjust loop interval to balance responsiveness and task stability
             await asyncio.sleep(self.loop_interval)
-            if not self.enabled.is_set():
-                continue
-
             self.latest_frame = self._camera_worker.get_latest_frame()
             if self.latest_frame.image is None:
                 continue
@@ -76,8 +70,6 @@ class HeadTracker:
                     self.track_lost_start_at = time.time()
                 # 人脸追踪丢失目标，给脑子发一个event
                 if time.time() - self.track_lost_start_at > self.track_lost_threshold:
-                    # 主动关闭人脸跟随，等待大脑决策是否重新开启
-                    self.enabled.clear()
                     self.set_target_track_name("")
                     # 重置时间
                     self.track_lost_start_at = 0
@@ -89,6 +81,7 @@ class HeadTracker:
                             priority=-1,
                             issuer="HeadTracker",
                         ))
+                    return
                 continue
 
             self.track_lost_start_at = 0
@@ -129,16 +122,8 @@ class HeadTracker:
             self._mini.set_target(head=target_pose)
 
     async def start(self):
-        self._quit.clear()
         self._camera_worker.start()
-        self._run_task = asyncio.create_task(self.run())
 
-    async def stop(self):
-        self.enabled.clear()
-        self._quit.set()
-
-        if self._run_task:
-            await self._run_task
 
 
 class HeadTrackerProvider(Provider[HeadTracker]):

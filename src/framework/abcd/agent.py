@@ -14,7 +14,7 @@ from framework.abcd.agent_event import AgentEventModel, AgentEvent
 
 class Response(ABC):
     agent_id: str
-    thread_id: str
+    # thread_id: str
     response_id: str
     event: AgentEventModel
     inputs: List[Message]
@@ -44,9 +44,8 @@ class Response(ABC):
     def stream_messages(self) -> AsyncIterable[Message]:
         pass
 
-    @abstractmethod
     def inputted(self) -> List[Message]:
-        pass
+        return self.inputs
 
     @abstractmethod
     def buffered(self) -> List[Message]:
@@ -219,7 +218,7 @@ class Agent(ABC):
         pass
 
     @abstractmethod
-    async def add_event(self, event: AgentEventModel) -> None:
+    async def add_event(self, event: AgentEvent) -> None:
         pass
 
     @abstractmethod

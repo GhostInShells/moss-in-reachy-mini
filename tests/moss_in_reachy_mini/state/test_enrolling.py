@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from ghoshell_common.contracts.storage import MemoryStorage
 
 from framework.abcd.agent_event import CTMLAgentEvent
 from framework.agent.eventbus import QueueEventBus
@@ -176,14 +177,13 @@ def _build_state(
     cw = camera_worker or FakeCameraWorker()
     fr = face_recognizer or FakeFaceRecognizer()
     eb = eventbus or QueueEventBus()
-    ws = FakeWorkspace(tmp_path)
 
     state = EnrollingState(
         mini=mini,
         camera_worker=cw,
         face_recognizer=fr,
         eventbus=eb,
-        workspace=ws,
+        storage=MemoryStorage(dir_=""),
     )
     # Speed up tests: eliminate real sleeps
     state._pose_wait_seconds = 0

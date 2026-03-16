@@ -1,15 +1,23 @@
 import json
+from typing import List
 
-from ghoshell_common.contracts import Workspace, FileStorage, Storage
+from ghoshell_common.contracts import Workspace, FileStorage, Storage, YamlConfig
 from ghoshell_container import Container, IoCContainer
+from pydantic import Field
+
+
+class InstructionsConfig(YamlConfig):
+    relative_path = ".instructions_meta.yaml"
+
+    config_files: List[str] = Field(default_factory=list, description="List of paths to YAML config files")
 
 
 def load_instructions(con: Container, files: list[str], storage_name="moss_instructions") -> str:
     """
     读取 agent 的 instructions
-    TODO: 暂时先这么做. Beta 版本会做一个正式的 Agent. Alpha 版本先临时用测试的 simple agent 攒一个.
     """
     ws = con.force_fetch(Workspace)
+
     instru_storage = ws.configs().sub_storage(storage_name)
     instructions = []
     for filename in files:

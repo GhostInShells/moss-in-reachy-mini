@@ -227,17 +227,7 @@ class MossInReachyMini:
                 "禁止使用代词或泛称如'用户'、'你'、'朋友'）"
             ),
             available=self.is_available_fn(WakenState.NAME),
-        )(self.start_face_registration)
-
-        reachy_mini.build.command(
-            doc=(
-                "修改已注册用户的称呼。当用户说'叫我XX'、'别叫我XX叫我YY'、"
-                "'我想改个名字'时调用此指令。"
-                "\n\n:param old_name: 用户当前在人脸库中的名字"
-                "\n:param new_name: 用户想要的新称呼"
-            ),
-            available=self.is_available_fn(WakenState.NAME),
-        )(self.rename_face)
+        )(self.start_enrolling)
 
         # 注册idle状态的默认动作
         # 呼吸 或 人脸跟随
@@ -249,7 +239,7 @@ class MossInReachyMini:
 
         return reachy_mini
 
-    async def start_face_registration(self, user_name: str):
+    async def start_enrolling(self, user_name: str):
         """启动人脸注册流程，调用后系统将自动引导用户完成拍照和识别，你不需要再生成任何后续动作或语音。
 
         :param user_name: 用户告诉你的称呼（必须使用用户明确说出的名字，禁止使用代词或泛称）
@@ -259,33 +249,6 @@ class MossInReachyMini:
             raise ValueError("EnrollingState is not registered")
         face_reg.target_name = user_name
         await self.switch_state(EnrollingState.NAME, force=True)
-
-    async def rename_face(self, old_name: str, new_name: str):
-        """修改已注册用户的称呼。当用户说"叫我XX"、"改名叫XX"、"不要叫我XX，叫我YY"时调用。
-
-        :param old_name: 用户当前在人脸库中的名字（必须是已注册的名字）
-        :param new_name: 用户想要的新称呼
-        """
-        recognizer = self.head._head_tracker._camera_worker.face_recognizer
-        if not recognizer.rename_known_face(old_name, new_name):
-            raise ValueError(f"'{old_name}'不在人脸库中，无法改名")
-
-        # 重命名磁盘上的图片文件夹
-        try:
-            ws = self._state_map.get(EnrollingState.NAME)
-            if ws and hasattr(ws, 'workspace'):
-                faces_dir = ws.workspace.runtime().sub_storage("vision").sub_storage("faces")
-                old_dir = Path(faces_dir.abspath()) / old_name
-                new_dir = Path(faces_dir.abspath()) / new_name
-                if old_dir.exists():
-                    old_dir.rename(new_dir)
-        except Exception as e:
-            self.logger.warning(f"Failed to rename face image folder: {e}")
-
-        # 如果正在追踪旧名字，切换到新名字
-        tracker = self.head._head_tracker
-        if tracker._camera_worker.get_latest_frame().track_name == old_name:
-            tracker.set_target_track_name(new_name)
 
     async def bootstrap(self):
         self.mini.__enter__()
