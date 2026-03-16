@@ -43,7 +43,12 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
+# 主题脑：自驱完成一个主题，记录状态
+def build_task_agent():
+    pass
 
+
+# 决策脑：分析当前所有事件然后给主脑递小纸条
 def build_live_agent(parent: Container) -> LiveAgent:
     container = Container(parent=parent, name="live_agent")
 
@@ -108,6 +113,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
     return live_agent
 
 
+# 主脑：交互
 async def build_main_agent(parent: Container) -> MainAgent:
     container = Container(parent=parent, name="main_agent")
 
