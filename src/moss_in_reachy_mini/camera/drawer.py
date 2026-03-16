@@ -1,47 +1,54 @@
-from typing import List
+from pathlib import Path
 
 import cv2
 import numpy as np
 from ghoshell_common.contracts import DefaultFileStorage
+from PIL import Image, ImageDraw, ImageFont
 
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
 from moss_in_reachy_mini.camera.model import Position
 
+_FONT_PATH = Path(__file__).resolve().parents[1] / ".workspace" / "assets" / "fonts" / "chinese.otf"
+_font_cache: ImageFont.FreeTypeFont | None = None
 
-def draw_detections(frame: np.ndarray, positions: List[Position]) -> np.ndarray:
+
+def _get_font(size: int = 18) -> ImageFont.FreeTypeFont | None:
+    global _font_cache
+    if _font_cache is not None:
+        return _font_cache
+    if _FONT_PATH.exists():
+        _font_cache = ImageFont.truetype(str(_FONT_PATH), size)
+    return _font_cache
+
+
+def _put_text_pil(frame: np.ndarray, text: str, position: tuple, color: tuple) -> np.ndarray:
+    """Use PIL to draw Unicode text on an OpenCV frame."""
+    pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    font = _get_font()
+    if font:
+        draw.text(position, text, font=font, fill=color)
+    else:
+        draw.text(position, text, fill=color)
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
+def draw_detections(frame: np.ndarray, positions: list[Position]) -> np.ndarray:
     if not frame.flags.writeable:
         frame = frame.copy()
 
-    # 绘制结果
+    # 绘制结果（只标注已识别的人脸）
     for position in positions:
+        if not position.name:
+            continue
         x1, y1, x2, y2 = position.bbox.astype(int)
-
-        # 绘制边界框
         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        # 绘制ID标签
-        # label = f"ID: {position.track_id}"
-        # cv2.putText(frame, label, (x1, y1 - 10),
-        #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        # 绘制识别结果
-        if position.name:
-            cv2.putText(
-                frame,
-                position.name,
-                (x1+10, y1 + 20),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (0, 255, 0),
-            )
-        # else:
-        #     cv2.putText(
-        #         frame,
-        #         "unknown",
-        #         (x1, y1 - 30),
-        #         cv2.FONT_HERSHEY_SIMPLEX,
-        #         0.6,
-        #         (0, 0, 255),
-        #         2
-        #     )
+        frame = _put_text_pil(
+            frame,
+            position.name,
+            (x1 + 10, y1 + 4),
+            (0, 255, 0),
+        )
 
     return frame
 

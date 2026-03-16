@@ -1,14 +1,15 @@
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import List
 
 from PIL import Image
-from ghoshell_common.contracts import Storage, Workspace, LoggerItf
+from ghoshell_common.contracts import Storage, Workspace, LoggerItf, FileStorage
 from ghoshell_container import Provider, IoCContainer, INSTANCE, Container
 from ghoshell_moss import Message, Base64Image, Text, PyChannel
 
-from framework.abcd.agent_event import VisionAgentEvent
+from framework.abcd.agent_event import VisionAgentEvent, CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.model import get_closest_position
@@ -70,6 +71,7 @@ class Vision:
         event.priority = -1  # 降低优先级
         await self.eventbus.put(event)
 
+    # deprecated, using enrolling state
     async def enroll(self, name: str):
         """
         用途：通过机器人摄像头主动获取一帧视觉图片，基于该帧获取到的人脸信息，添加到人脸数据库。
@@ -104,6 +106,7 @@ class Vision:
         self.face_recognizer.add_known_face(name, target.embedding)
         return f"Successfully enrolled {name}"
 
+    # deprecated, using enrolling state
     async def unenroll(self, name: str):
         """
         用途：删除人脸数据库中的一个用户。
@@ -119,12 +122,51 @@ class Vision:
         self.face_recognizer.remove_known_face(name, save=True)
         return f"Successfully unenrolled {name}"
 
+    async def rename(self, old_name: str, new_name: str):
+        """修改已注册用户的称呼。当用户说'叫我XX'、'别叫我XX叫我YY'、'我想改个名字'时调用此指令。
+
+        :param old_name: 用户当前在人脸库中的名字（必须是已注册的名字）
+        :param new_name: 用户想要的新称呼
+        """
+        recognizer = self.face_recognizer
+        if not recognizer.rename_known_face(old_name, new_name):
+            raise ValueError(f"'{old_name}'不在人脸库中，无法改名")
+
+        # 重命名磁盘上的图片文件夹
+        try:
+            storage: FileStorage|Storage = self.vision_storage.sub_storage("faces")
+            old_dir = Path(storage.abspath()) / old_name
+            new_dir = Path(storage.abspath()) / new_name
+            if old_dir.exists():
+                old_dir.rename(new_dir)
+        except Exception as e:
+            self.logger.warning(f"Failed to rename face image folder: {e}")
+
+        # 如果正在追踪旧名字，切换到新名字
+        if self.camera_worker.get_latest_frame().track_name == old_name:
+            await self.eventbus.put(CTMLAgentEvent(
+                ctml=f"<reachy_mini:start_tracking_face name='{new_name}' />"
+            ))
+
     async def context_messages(self):
         msg = Message.new(role="system", name="__reachy_mini_vision__")
         frame = self.camera_worker.get_latest_frame()
         if frame.image is not None:
+            # 告诉 LLM 图上标注了哪些已识别的人
+            recognized_names = [
+                pos.name for pos in frame.face_positons
+                if pos.is_recognized and pos.name
+            ]
+            if recognized_names:
+                text = (
+                    f"This image is what you see. "
+                    f"已识别的用户（图中已标注绿框和名字）: {', '.join(recognized_names)}。"
+                    f"请用他们的名字来称呼他们。"
+                )
+            else:
+                text = "This image is what you see"
             msg.with_content(
-                Text(text="This image is what you see")
+                Text(text=text)
             ).with_content(
                 frame.to_base64_image()
             )
@@ -143,8 +185,10 @@ class Vision:
         chan = PyChannel(name="vision", description="use camera to look", blocking=True)
         chan.build.command()(self.look)
         chan.build.context_messages(self.context_messages)
-        chan.build.command()(self.enroll)
-        chan.build.command()(self.unenroll)
+        # chan.build.command()(self.enroll)
+        # chan.build.command()(self.unenroll)
+
+        chan.build.command()(self.rename)
         return chan
 
 

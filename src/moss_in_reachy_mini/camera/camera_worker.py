@@ -216,15 +216,17 @@ class CameraWorker:
 
                 # Thread-safe frame storage
                 with self.frame_lock:
-                    # 颜色校正
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = draw_detections(frame, positions=face_positons)
+                    raw = frame.copy()  # BGR — 保持原始格式供人脸识别使用
+                    # 颜色校正（显示/标注用 RGB）
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    annotated = draw_detections(frame_rgb, positions=face_positons)
                     self.latest_frame = CameraFrame(
                         face_tracking_offsets=face_tracking_offsets,
                         face_positons=face_positons,
                         track_name=self.target_track_name,
                         track_lost=track_lost,
-                        image=frame,
+                        image=annotated,
+                        raw_image=raw,
                     )  # .copy()
 
             except Exception as e:

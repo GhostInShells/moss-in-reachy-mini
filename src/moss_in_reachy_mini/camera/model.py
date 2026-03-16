@@ -59,6 +59,7 @@ class CameraFrame:
     track_name: str
     track_lost: bool
     image: NDArray[np.uint8] | None
+    raw_image: NDArray[np.uint8] | None = None
 
     def copy(self) -> 'CameraFrame':
         return CameraFrame(
@@ -67,6 +68,7 @@ class CameraFrame:
             track_name=self.track_name,
             image=self.image,
             track_lost=self.track_lost,
+            raw_image=self.raw_image,
         )
 
     @classmethod
@@ -84,6 +86,7 @@ class CameraFrame:
             track_name="",
             track_lost=True,
             image=None,
+            raw_image=None,
         )
 
     def to_base64_image(self) -> Base64Image:

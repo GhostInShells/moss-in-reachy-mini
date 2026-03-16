@@ -187,6 +187,7 @@ class ConsolePTTChat(BaseChat):
 
         if self.is_streaming:
             self.interrupted = True
+            self.is_streaming = False
             if self.on_interrupt_callback:
                 self.on_interrupt_callback()
                 self.console.print("\n[yellow]Output interrupted[/yellow]\n")

@@ -328,6 +328,20 @@ class FaceRecognizer:
             return True
         return False
 
+    def rename_known_face(self, old_name: str, new_name: str, save: bool = True) -> bool:
+        """重命名已知人脸"""
+        if old_name not in self.known_faces:
+            return False
+        if new_name in self.known_faces:
+            raise ValueError(f"'{new_name}'已存在，请换一个名字")
+        face = self.known_faces.pop(old_name)
+        face.name = new_name
+        self.known_faces[new_name] = face
+        logger.info(f"Renamed known face '{old_name}' -> '{new_name}'")
+        if save:
+            self.save_known_faces()
+        return True
+
     def save_known_faces(self) -> None:
         """保存已知人脸数据库到文件"""
         if not self.known_faces_storage:
