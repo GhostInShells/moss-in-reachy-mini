@@ -1,7 +1,15 @@
 import json
+from typing import List
 
-from ghoshell_common.contracts import Workspace, FileStorage, Storage
+from ghoshell_common.contracts import Workspace, FileStorage, Storage, YamlConfig
 from ghoshell_container import Container, IoCContainer
+from pydantic import Field
+
+
+class InstructionsConfig(YamlConfig):
+    relative_path = ".instructions_meta.yaml"
+
+    config_files: List[str] = Field(default_factory=list, description="List of paths to YAML config files")
 
 
 def load_instructions(con: Container, files: list[str], storage_name="moss_instructions") -> str:
@@ -9,6 +17,7 @@ def load_instructions(con: Container, files: list[str], storage_name="moss_instr
     读取 agent 的 instructions
     """
     ws = con.force_fetch(Workspace)
+
     instru_storage = ws.configs().sub_storage(storage_name)
     instructions = []
     for filename in files:

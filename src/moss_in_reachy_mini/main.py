@@ -86,7 +86,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "live_agent_persona.md"],
+        files=["ctml_enrich.md", "live_agent/persona.md"],
         storage_name="instructions",
     )
     live_agent = LiveAgent.new(
@@ -165,7 +165,8 @@ async def build_main_agent(parent: Container) -> MainAgent:
     # Agent
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "websearch.md", "news.md", "speech.md"],
+        files=["memory_rules.md","system_rules.md",
+               "ctml_enrich.md", "websearch.md", "news.md"],
         storage_name="instructions",
     )
     main_agent = MainAgent.new(
