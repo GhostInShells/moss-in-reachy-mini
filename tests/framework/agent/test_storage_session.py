@@ -3,13 +3,14 @@ from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_moss import Message, Text
 
 from framework.apps.memory.storage_memory import StorageMemory
+from framework.apps.session.storage_session import StorageSession
 
 
 @pytest.mark.asyncio
-async def test_storage_memory():
+async def test_storage_session():
     # StorageMemory是基于Storage抽象设计的记忆模块 Memory = 记忆
     # MemoryStorage是基于内存设计的Storage抽象的具体实现 Memory = 内存
-    memory = StorageMemory(storage=MemoryStorage(dir_=""))
+    memory = StorageSession(storage=MemoryStorage(dir_=""))
 
     history = await memory.get_session_history()
     assert len(history) == 0
@@ -37,13 +38,6 @@ async def test_storage_memory():
     )
     history = await memory.get_session_history()
     assert len(history) == 4
-
-    # 验证summary逻辑
-    summary = await memory.read_md(".personality.md")
-    assert summary == ""
-    await memory.refresh_personality(text__="hello3")
-    summary = await memory.read_md(".personality.md")
-    assert summary == "hello3"
 
     # 限制只拿最新的一轮。
     await memory.set_limitation(turn_rounds=1)

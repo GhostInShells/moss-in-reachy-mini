@@ -30,7 +30,7 @@ async def test_todolist():
     # 开始状态
     assert gen.get_todo("key1.1").status == TodoStatus.TODO
     assert gen.get_todo("key1").status == TodoStatus.TODO
-    await todolist.start_todo(key="key1.1")
+    await todolist.mark_as_doing(key="key1.1")
     todos = todolist.todos
     gen = TodoTreeGenerator(todos)
     assert gen.get_todo("key1.1").status == TodoStatus.DOING
@@ -38,7 +38,7 @@ async def test_todolist():
 
     # 部分子完成状态
     await todolist.append_todo(key="key1.2", title="title1.2", description="description1.2", parent_key="key1")
-    await todolist.finish_todo(key="key1.1")
+    await todolist.mark_as_done(key="key1.1")
     todos = todolist.todos
     gen = TodoTreeGenerator(todos)
     assert gen.get_todo("key1.1").status == TodoStatus.DONE
@@ -46,7 +46,7 @@ async def test_todolist():
     assert gen.get_todo("key1.2").status == TodoStatus.TODO
 
     # 全部子完成状态
-    await todolist.finish_todo(key="key1.2")
+    await todolist.mark_as_done(key="key1.2")
     todos = todolist.todos
     gen = TodoTreeGenerator(todos)
     assert gen.get_todo("key1.1").status == TodoStatus.DONE
