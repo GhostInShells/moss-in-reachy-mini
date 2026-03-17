@@ -8,6 +8,7 @@ from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_container import Container
 from ghoshell_moss import MOSSShell
 from ghoshell_moss import new_ctml_shell
+from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
 
@@ -45,12 +46,18 @@ async def build_main_agent(parent: Container) -> MainAgent:
     # douyin_live
     douyin_live = container.force_fetch(DouyinLive)
 
+    reflex_proxy = ZMQChannelProxy(
+        name="reflex",
+        address="tcp://127.0.0.1:9527",
+    )
+
     # shell
     shell = new_ctml_shell(container=container, speech=get_example_speech(container, default_speaker="可爱女生"))
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
         # douyin_live.as_channel(),
+        reflex_proxy,
     )
     container.set(MOSSShell, shell)
 

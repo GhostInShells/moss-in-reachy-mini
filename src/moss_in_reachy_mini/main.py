@@ -22,6 +22,7 @@ from framework.apps.live.live_agent import LiveAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
+from framework.listener.chat.console_ptt import ConsolePTTChat
 from framework.moss_contrib.ctml_repo import CtmlRepo, CtmlRepoProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
@@ -32,7 +33,6 @@ from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
-from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider
