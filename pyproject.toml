@@ -22,6 +22,7 @@ dependencies = [
     "mini-racer>=0.12.4",
     "pyexecjs>=1.5.1",
     "betterproto>=2.0.0b6",
+    "reflex==0.8.27",
 ]
 
 [project.optional-dependencies]
