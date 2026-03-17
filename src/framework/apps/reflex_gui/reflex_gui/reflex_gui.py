@@ -4,6 +4,7 @@ import asyncio
 import reflex as rx
 from ghoshell_moss import PyChannel
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProvider
+from reflex_gui.stream_gui_test import index as stream_gui_test_index
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -61,7 +62,7 @@ def index() -> rx.Component:
     return rx.container(
         rx.color_mode.button(position="top-right"),
         rx.vstack(
-            rx.heading("Welcome to Reflex!", size="9"),
+            rx.heading("Welcome!", size="6"),
             rx.markdown(State.markdown_content),
             spacing="5",
             justify="center",
@@ -72,4 +73,5 @@ def index() -> rx.Component:
 logger.info("start app")
 app = rx.App()
 app.add_page(index, on_load=[State.provide_channel, State.refresh_markdown])
+app.add_page(stream_gui_test_index, route="/test")
 
