@@ -56,7 +56,7 @@ name list: {self.list_ctml_names()}
                 if not t.success() or t.observe():
                     return CommandTaskResult().join_result(t.result())
             return CommandTaskResult(
-                observe=True,
+                observe=False,
                 messages=[
                     Message.new(role="system").with_content("finish execute ctml {}".format(name)),
                 ],

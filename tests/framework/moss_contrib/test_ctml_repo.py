@@ -38,5 +38,6 @@ async def test_ctml_repo():
         async with await shell.interpreter() as interpreter:
             interpreter.feed("""<loop times="3"><execute_ctml name="test" /></loop>""")
             interpreter.commit()
-            await interpreter.wait_tasks()
+            await interpreter.wait_stopped()
+            interpreter.raise_exception()
             assert count == 4
