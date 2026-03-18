@@ -7,6 +7,7 @@ from ghoshell_moss.speech.player.base_player import BaseAudioStreamPlayer
 from reachy_mini import ReachyMini
 
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
+from moss_in_reachy_mini.audio.mixer import AudioMixer
 
 
 class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
@@ -17,12 +18,14 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
         logger: LoggerItf | None = None,
         safety_delay: float = 0.5,
         recorder: VideoRecorderWorker | None = None,
+        mixer: AudioMixer | None = None,
     ):
         """
         基于 PyAudio 的异步音频播放器实现
         使用单独的线程处理阻塞的音频输出操作
         """
         self.mini = mini
+        self._mixer = mixer
         self._recorder = recorder
         self._logger = logger
         self._estimated_end_time = 0.0
@@ -32,6 +35,26 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
             logger=logger,
             safety_delay=safety_delay,
         )
+
+    def _sync_output_format(self) -> None:
+        """Align player sample_rate/channels with the actual opened output stream."""
+
+        audio = getattr(self.mini.media, "audio", None)
+        stream = None if audio is None else getattr(audio, "_output_stream", None)
+        if stream is not None:
+            try:
+                sr = getattr(stream, "samplerate", None)
+                if sr is not None:
+                    self.sample_rate = int(sr)
+            except Exception:
+                pass
+
+        try:
+            ch = int(self.mini.media.get_output_channels())
+            if ch > 0:
+                self.channels = ch
+        except Exception:
+            pass
 
     def add(
         self,
@@ -77,10 +100,16 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
         return self._estimated_end_time
 
     def _audio_stream_start(self):
-        self.mini.media.start_playing()
+        # Mixer owns the output stream. If mixer isn't provided, fallback to
+        # direct output stream control.
+        if self._mixer is None:
+            self.mini.media.start_playing()
+            # If another component forced the output stream samplerate, sync.
+            self._sync_output_format()
 
     def _audio_stream_stop(self):
-        self.mini.media.stop_playing()
+        # Don't close any shared output stream here.
+        return
 
     def _audio_stream_write(self, data: np.ndarray):
         # 1. 校验输入数据的合法性（避免格式错误）
@@ -126,4 +155,14 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
             except Exception:
                 self._logger.warning("Failed to record output audio")
 
-        self.mini.media.push_audio_sample(data)
+        if self._mixer is not None:
+            # TTS is mono duplicated to stereo in `audio_data` already.
+            # Route into mixer so it can mix with background audio.
+            self._mixer.push(
+                "tts",
+                data,
+                rate=self.sample_rate,
+                channels=int(data.shape[1]) if data.ndim == 2 else 1,
+            )
+        else:
+            self.mini.media.push_audio_sample(data)

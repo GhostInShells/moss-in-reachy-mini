@@ -26,12 +26,14 @@ from framework.listener.chat.console_ptt import ConsolePTTChat
 from framework.moss_contrib.ctml_repo import CtmlRepo, CtmlRepoProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.audio.player import ReachyMiniStreamPlayer
+from moss_in_reachy_mini.audio.mixer import AudioMixerProvider
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.camera.frame_hub import FrameHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
+from moss_in_reachy_mini.components.sound import SoundProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
@@ -222,11 +224,16 @@ def common_dependencies(container: IoCContainer):
     container.register(AntennasProvider())
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
+    container.register(SoundProvider())
     container.register(CameraWorkerProvider())
     container.register(VideoRecorderWorkerProvider())
     container.register(FrameHubProvider())
     # Shared microphone capture (avoid multi-stream conflicts)
     container.register(MicHubProvider())
+
+    # Shared audio output mixer (avoid multi-producer conflicts between TTS and play_sound)
+    # Mixer is lazy-started; safe to register at boot.
+    container.register(AudioMixerProvider())
     # Moss State
     container.register(AsleepStateProvider())
     container.register(WakenStateProvider())
@@ -281,6 +288,12 @@ def get_speech(
 
     container = container or get_container()
     try:
+        from moss_in_reachy_mini.audio.mixer import AudioMixer
+
+        mixer = container.force_fetch(AudioMixer)
+    except Exception:
+        mixer = None
+    try:
         recorder = container.get(VideoRecorderWorker)
     except Exception:
         recorder = None
@@ -302,7 +315,12 @@ def get_speech(
         tts_conf.default_speaker = default_speaker
     speech = BaseTTSSpeech(
         tts=VolcengineTTS(conf=tts_conf),
-        player=ReachyMiniStreamPlayer(mini, logger=container.get(LoggerItf), recorder=recorder),
+        player=ReachyMiniStreamPlayer(
+            mini,
+            logger=container.get(LoggerItf),
+            recorder=recorder,
+            mixer=mixer,
+        ),
     )
     # speech.commands = lambda: []
     return speech
