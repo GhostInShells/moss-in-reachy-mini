@@ -1,24 +1,19 @@
+import logging
 import threading
 from typing import List
-
-import requests
-from ghoshell_container import Provider, IoCContainer, INSTANCE
-from ghoshell_moss import PyChannel, Message, Text
-from newsapi import NewsApiClient
-from pydantic import BaseModel, Field
-import trafilatura
 import os
 
+import requests
+import trafilatura
+from ghoshell_common.contracts import LoggerItf
+from ghoshell_container import Provider, IoCContainer, INSTANCE
+from ghoshell_moss import PyChannel
+from ghoshell_moss.core.concepts.command import CommandTaskResult
+from newsapi import NewsApiClient
+from pydantic import BaseModel, Field
+from trafilatura import downloads
+
 from framework.abcd.agent_hub import EventBus
-from framework.abcd.agent_event import ReactAgentEvent
-
-
-# newsapi中国需要挂代理才可以访问
-NEWS_HTTP_PROXY = os.getenv("NEWS_HTTP_PROXY")
-NEWS_HTTPS_PROXY = os.getenv("NEWS_HTTPS_PROXY")
-
-if NEWS_HTTP_PROXY:
-    trafilatura.PROXY_URL = NEWS_HTTP_PROXY
 
 
 class NewsSource(BaseModel):
@@ -46,7 +41,14 @@ class NewsResponse(BaseModel):
 
 
 class NewsAPI:
-    def __init__(self, api_key: str, eventbus: EventBus=None):
+    def __init__(self, api_key: str, eventbus: EventBus=None, logger: LoggerItf=None):
+        # newsapi中国需要挂代理才可以访问
+        NEWS_HTTP_PROXY = os.getenv("NEWS_HTTP_PROXY")
+        NEWS_HTTPS_PROXY = os.getenv("NEWS_HTTPS_PROXY")
+
+        if NEWS_HTTP_PROXY:
+            downloads.PROXY_URL = NEWS_HTTP_PROXY
+
         self._eventbus = eventbus
         session = requests.Session()
         session.proxies = {}
@@ -58,7 +60,10 @@ class NewsAPI:
             session.proxies.update({
                 "https": NEWS_HTTPS_PROXY,
             })
+        self._session = session
         self.newsapi = NewsApiClient(api_key=api_key, session=session)
+
+        self.logger = logger or logging.getLogger("NewsAPI")
 
     async def get_news(self, q: str, page_size: int = 10, page: int = 1):
         """
@@ -68,6 +73,9 @@ class NewsAPI:
         :param page: 新闻页码
         :return:
         """
+
+        self.logger.info(f"get_news q={q} page_size={page_size} page={page}")
+
         res = self.newsapi.get_everything(q=q, page_size=page_size, page=page)
 
         status = res["status"]
@@ -75,39 +83,42 @@ class NewsAPI:
         articles = res["articles"]
 
         news: List[NewsDetails] = []
+
+        # 定义包装函数，用于在线程中执行目标函数
+        def wrapper(d: NewsDetails):
+            try:
+                response = self._session.get(d.url)
+                response.raise_for_status()
+                d.fullContent = trafilatura.extract(response.content.decode("utf-8"), output_format="markdown")
+                news.append(d)
+            except Exception as e:
+                news.append(d)
+
+        threads = []
         for item in articles:
             details = NewsDetails.model_validate(item)
+            thread = threading.Thread(target=wrapper, args=(details,))
+            threads.append(thread)
 
-            result = {"value": None, "exception": None}
-
-            # 定义包装函数，用于在线程中执行目标函数
-            def wrapper():
-                try:
-                    result["value"] = trafilatura.fetch_url(details.url)
-                except Exception as e:
-                    result["exception"] = e
-
-            thread = threading.Thread(target=wrapper)
+        for thread in threads:
             thread.daemon = True
             thread.start()
             thread.join(timeout=2)
 
-            if result["value"]:
-                # downloaded = trafilatura.fetch_url(details.url)
-                details.fullContent = trafilatura.extract(result["value"], output_format="markdown")
-                news.append(details)
-
-        if self._eventbus:
-            await self._eventbus.put(ReactAgentEvent(
-                messages=[Message.new(role="system").with_content(
-                    Text(text=f"get_news查到{page}页的相关新闻，总共有{total}条，当前页新闻详情如下，如果有和主题无关的内容，请忽略。"),
-                    *[
-                        Text(text=f"title={item.title}\nauthor={item.author}\ndescription={item.description}\ncontent={item.fullContent}")
-                        for item in news
-                    ]
-                )]
-            ))
-
+        # if self._eventbus:
+        #     await self._eventbus.put(ReactAgentEvent(
+        #         messages=[Message.new(role="system").with_content(
+        #             Text(text=f"get_news查到{page}页的相关新闻，总共有{total}条，当前页新闻详情如下，如果有和主题无关的内容，请忽略。"),
+        #             *[
+        #                 Text(text=f"title={item.title}\nauthor={item.author}\ndescription={item.description}\ncontent={item.fullContent}")
+        #                 for item in news
+        #             ]
+        #         )]
+        #     ))
+        return CommandTaskResult(
+            result=[item.fullContent for item in news],
+            observe=True
+        )
 
     def as_channel(self):
         chan = PyChannel(name="news", blocking=True)
@@ -122,21 +133,23 @@ class NewsAPIProvider(Provider[NewsAPI]):
 
     def factory(self, con: IoCContainer) -> INSTANCE:
         eventbus = con.force_fetch(EventBus)
+        logger = con.get(LoggerItf)
         return NewsAPI(
             eventbus=eventbus,
-            api_key=os.environ["NEWSAPI_API_KEY"],
+            api_key=os.environ.get("NEWSAPI_API_KEY"),
+            logger=logger,
         )
 
 
 async def main():
     newsapi = NewsAPI(api_key=os.environ["NEWSAPI_API_KEY"])
-    news_response = await newsapi.get_news(q="伊朗最新局势")
+    news_response = await newsapi.get_news(q="查询中国当前油价及近期变化")
     print(news_response)
 
 if __name__ == "__main__":
-    import os
     # 基于Shadowsocks的代理，翻墙
-    # os.environ["HTTP_PROXY"] = "http://127.0.0.1:1087"
-    # os.environ["HTTPS_PROXY"] = "http://127.0.0.1:1087"
+    os.environ["NEWS_HTTP_PROXY"] = "http://127.0.0.1:1087"
+    os.environ["NEWS_HTTPS_PROXY"] = "http://127.0.0.1:1087"
+    os.environ["NEWSAPI_API_KEY"] = "1d8d11c1d95c415a9856c1bc05836076"
     import asyncio
     asyncio.run(main())

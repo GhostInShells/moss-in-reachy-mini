@@ -10,6 +10,7 @@ from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import PyChannel, Message, Text
 from pydantic import BaseModel, Field
 
+from framework.abcd.agent_event import ProgramInputAgentEvent
 from framework.abcd.agent_hub import EventBus
 from framework.apps.utils import EnumEncoder
 
@@ -26,6 +27,7 @@ class Todo(BaseModel):
     description: str = Field(default="", description="description")
     status: TodoStatus = Field(default=TodoStatus.TODO, description="is_done")
     parent_key: str = Field(default="", description="parent_key")
+    result: str = Field(default="", description="result")
 
 
 # 树形结构生成工具类
@@ -122,7 +124,7 @@ class TodoList:
         todos = self.todos
         res = []
         for todo in todos:
-            if todo.status != TodoStatus.DONE:
+            if todo.status not in [TodoStatus.DONE, TodoStatus.DOING]:
                 res.append(todo)
         return res
 
@@ -183,8 +185,8 @@ class TodoList:
             raise ValueError(f"Task {key} has children, start it's children first")
         async with self._locker:
             todo = generator.get_todo(key)
-            if todo.status == TodoStatus.DOING:
-                raise ValueError(f"Task {key} already mark as doing, you need to execute this task now and when you finish this task, mark it as done")
+            # if todo.status == TodoStatus.DOING:
+            #     raise ValueError(f"Task {key} already mark as doing, you need to execute this task now and when you finish this task, mark it as done")
             if todo.status == TodoStatus.DONE:
                 raise ValueError(f"Task {key} already mark as done, you need to start another task")
             todo.status = TodoStatus.DOING
@@ -199,10 +201,11 @@ class TodoList:
             self._save(todos)
             return f"Task {key} marked as done, you need to execute this task with {todo.description}"
 
-    async def mark_as_done(self, key: str):
+    async def mark_as_done(self, key: str, text__):
         """
         标记一个to.do.任务已完成，且只能标记叶子节点的to.do.任务，自身会被标记为DONE状态，所有的父节点都会被检查是否所有子任务都完成
         :param key: 叶子节点的to.do任务
+        :param text__: 任务的详细执行情况，使用文本传递
         """
         todos = self.todos
         generator = TodoTreeGenerator(todos)
@@ -212,6 +215,7 @@ class TodoList:
         async with self._locker:
             todo = generator.get_todo(key)
             todo.status = TodoStatus.DONE
+            todo.result = text__
 
             parent = todo
             while parent:
@@ -228,6 +232,15 @@ class TodoList:
                     parent.status = TodoStatus.DONE
             self._save(todos)
 
+            await self.eventbus.put(ProgramInputAgentEvent(
+                message=Message.new(role="user", name="__todolist__").with_content(
+                    Text(text=f"任务 {key} 已完成，当前的任务结果是你的旁路大脑完成的，用户并不知道任务结果，你需要自然衔接之前的对话，将任务的结果告诉用户"),
+                    Text(text=f"任务名为{todo.title} 描述为{todo.description}"),
+                    Text(text=f"任务结果为{todo.result}")
+                ),
+                agent_id="", # 默认是主agent
+            ))
+
     async def context_messages(self):
         text = TodoTreeGenerator(self.todos).generate_tree_text()
         self.logger.debug(f"current todo list=\n{text}")
@@ -243,7 +256,7 @@ class TodoList:
             )
         return [msg]
 
-    def as_channel(self):
+    def as_channel(self, is_main_agent=True):
         description = """执行规则
 1. todolist作用：规划任务结构 + 标记进度，**标记后必须真正执行任务，不允许只标记不执行**。
 2. 执行顺序：
@@ -262,9 +275,10 @@ class TodoList:
 """
         chan = PyChannel(name="todolist", description=description.strip(), blocking=True)
         chan.build.command()(self.append_todo)
-        chan.build.command()(self.mark_as_doing)
-        chan.build.command()(self.mark_as_done)
-        chan.build.command()(self.clear_todo)
+        if not is_main_agent:
+            chan.build.command()(self.mark_as_doing)
+            chan.build.command()(self.mark_as_done)
+            # chan.build.command()(self.clear_todo)
         chan.build.context_messages(self.context_messages)
         return chan
 

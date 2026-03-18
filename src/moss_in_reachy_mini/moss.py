@@ -17,7 +17,7 @@ from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
 from moss_in_reachy_mini.components.vision import Vision
-from moss_in_reachy_mini.state.abcd import InitialState, MiniStateHook
+from moss_in_reachy_mini.state.abcd import InitialState, BaseAgentHook
 from moss_in_reachy_mini.state.asleep import AsleepState
 from moss_in_reachy_mini.state.boring import BoringState
 from moss_in_reachy_mini.state.enrolling import EnrollingState
@@ -34,7 +34,7 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
 
 
 class StateLog:
-    def __init__(self, from_state: MiniStateHook, to_state: MiniStateHook):
+    def __init__(self, from_state: BaseAgentHook, to_state: BaseAgentHook):
         self.from_state = from_state
         self.to_state = to_state
         self.now = int(time.time())
@@ -44,7 +44,7 @@ class MossInReachyMini:
     def __init__(
         self,
         mini: ReachyMini,
-        *states: MiniStateHook,
+        *states: BaseAgentHook,
         default_state: str = AsleepState.NAME,
         appearance_img: Image.Image,
         structure_img: Image.Image,
@@ -66,7 +66,7 @@ class MossInReachyMini:
 
         # state
         self._state_map = {state.NAME: state for state in states}
-        self._state: MiniStateHook = InitialState()
+        self._state: BaseAgentHook = InitialState()
         self._state_log: list[StateLog] = []
         self._default_state = default_state
 

@@ -2,10 +2,10 @@ from ghoshell_container import Provider, IoCContainer
 from ghoshell_moss import Text, Message, PyChannel
 from reachy_mini import ReachyMini
 
-from moss_in_reachy_mini.state.abcd import MiniStateHook
+from moss_in_reachy_mini.state.abcd import BaseAgentHook
 
 
-class AsleepState(MiniStateHook):
+class AsleepState(BaseAgentHook):
 
     NAME = "asleep"
 

@@ -18,16 +18,75 @@ from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPI
 from framework.agent.agent_hub import AgentHubImpl
 from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
+from framework.agent.cognition_agent import CognitionAgent, CognitionSession
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
 from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
-from framework.apps.live.live_agent import LiveAgent
+from framework.agent.decision_agent import DecisionAgent
 from framework.apps.memory.storage_memory import StorageMemory
+from framework.apps.news import NewsAPI, NewsAPIProvider
 from framework.apps.session.storage_session import StorageSession
-from framework.apps.utils import AgentConsoleChat
+from framework.apps.todolist import TodoList, TodoListProvider
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
+
+
+# 认知脑：自驱完成一个主题，记录状态
+def build_cognition_agent(parent: Container):
+    container = Container(parent=parent, name="cognition_agent")
+
+    # chat
+    container.register(LogBroadcasterProvider())
+
+    # memory
+    memory = container.force_fetch(StorageMemory)
+
+    # session
+    cognition_session = CognitionSession(MemoryStorage(dir_="cognition_session"))
+    container.set(CognitionSession, cognition_session)
+
+    # todolist
+    todolist = container.force_fetch(TodoList)
+    news = container.force_fetch(NewsAPI)
+
+    # shell
+    shell = new_ctml_shell(
+        name="cognition_shell",
+        container=container,
+        experimental=False,
+    )
+    shell.main_channel.import_channels(
+        memory.as_channel(),
+        cognition_session.as_channel(),
+        todolist.as_channel(is_main_agent=False),
+        news.as_channel(),
+    )
+    container.set(MOSSShell, shell)
+
+    agent = CognitionAgent.new(
+        container=container,
+        config=AgentConfig(
+            id="cognition",
+            name="cognition",
+            description="",
+            model=ModelConf(
+                base_url="$COGNITION_LLM_BASE_URL",
+                model="$COGNITION_LLM_MODEL",
+                api_key="$COGNITION_LLM_API_KEY",
+                kwargs={
+                    "extra_body": {
+                        "thinking": {
+                            "type": "enabled",
+                        },
+                    },
+                },
+                temperature=0.6
+            ),
+            instructions="你是一个旁路在运行任务的agent，你可以看到主agent的历史对话上下文，同时你也有自己独立的历史上下文，你的任务是根据todolist的任务进行处理，每次处理完后要通过mark_as_done将任务结果标记为结束同时将任务的细节告诉给主agent",
+        ),
+    )
+    return agent
 
 
 async def build_main_agent(parent: Container) -> MainAgent:
@@ -40,8 +99,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     memory = container.force_fetch(StorageMemory)
 
     # session
-    session = StorageSession(MemoryStorage(dir_="session"))
-    container.set(Session, session)
+    session = container.force_fetch(StorageSession)
 
     # douyin_live
     douyin_live = container.force_fetch(DouyinLive)
@@ -51,6 +109,9 @@ async def build_main_agent(parent: Container) -> MainAgent:
         address="tcp://127.0.0.1:9527",
     )
 
+    # todolist
+    todolist = container.force_fetch(TodoList)
+
     # shell
     shell = new_ctml_shell(container=container, speech=get_example_speech(container, default_speaker="可爱女生"))
     shell.main_channel.import_channels(
@@ -58,6 +119,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
         session.as_channel(),
         # douyin_live.as_channel(),
         reflex_proxy,
+        todolist.as_channel(is_main_agent=True),
     )
     container.set(MOSSShell, shell)
 
@@ -87,8 +149,8 @@ async def build_main_agent(parent: Container) -> MainAgent:
     return agent
 
 
-async def build_live_agent(parent: Container) -> LiveAgent:
-    container = Container(parent=parent, name="live_agent")
+async def build_decision_agent(parent: Container) -> DecisionAgent:
+    container = Container(parent=parent, name="decision_agent")
 
     # chat
     # container.set(BaseChat, AgentConsoleChat(agent_id="live"))
@@ -98,7 +160,7 @@ async def build_live_agent(parent: Container) -> LiveAgent:
     memory = container.force_fetch(StorageMemory)
 
     # session
-    session = StorageSession(MemoryStorage(dir_="live_session"))
+    session = StorageSession(MemoryStorage(dir_="decision_session"))
     container.set(Session, session)
 
     # douyin_live
@@ -106,23 +168,23 @@ async def build_live_agent(parent: Container) -> LiveAgent:
 
     # shell
     shell = new_ctml_shell(
-        name="live_shell",
+        name="decision_shell",
         container=container,
     )
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
-        douyin_live.as_channel(is_live_agent=True),
+        douyin_live.as_channel(is_main_agent=False),
     )
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "live_agent_persona.md"],
+        files=["ctml_enrich.md", "decision_agent_persona.md"],
         storage_name="instructions",
     )
-    live_agent = LiveAgent.new(container, AgentConfig(
-        id="live",
-        name="live",
+    decision_agent = DecisionAgent.new(container, AgentConfig(
+        id="decision",
+        name="decision",
         description="",
         model=ModelConf(
             base_url="$LIVE_LLM_BASE_URL",
@@ -141,7 +203,7 @@ async def build_live_agent(parent: Container) -> LiveAgent:
         instructions=instructions,
     ))
 
-    return live_agent
+    return decision_agent
 
 
 async def main() -> None:
@@ -155,17 +217,27 @@ async def main() -> None:
         eventbus = QueueEventBus()
         container.set(EventBus, eventbus)
         container.register(DouyinLiveProvider())
+        # session
+        session = StorageSession(MemoryStorage(dir_="session"))
+        container.set(StorageSession, session)
+        container.set(Session, session)
+        # todolist
+        container.register(TodoListProvider())
+        # news
+        container.register(NewsAPIProvider())
 
         container.set(BaseChat, ConsolePTTChat(eventbus=eventbus))
 
         main_agent = await build_main_agent(parent=container)
-        # live_agent = await build_live_agent(parent=container)
+        # decision_agent = await build_decision_agent(parent=container)
+        cognition_agent = build_cognition_agent(parent=container)
 
         agent_hub = AgentHubImpl(
             main_agent_id="main",
             agents=[
                 main_agent,
-                # live_agent,
+                # decision_agent,
+                cognition_agent,
             ],
             eventbus=container.force_fetch(EventBus),
             logger=container.get(LoggerItf),

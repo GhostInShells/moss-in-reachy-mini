@@ -18,7 +18,7 @@ from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
 from framework.apps.live.douyin_live import DouyinLive, DouyinLiveProvider
-from framework.apps.live.live_agent import LiveAgent
+from framework.agent.decision_agent import DecisionAgent
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
@@ -43,14 +43,9 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
-# 主题脑：自驱完成一个主题，记录状态
-def build_task_agent():
-    pass
-
-
-# 决策脑：分析当前所有事件然后给主脑递小纸条
-def build_live_agent(parent: Container) -> LiveAgent:
-    container = Container(parent=parent, name="live_agent")
+# 认知脑：自驱完成一个主题，记录状态
+def build_cognition_agent(parent: Container):
+    container = Container(parent=parent, name="cognition_agent")
 
     # chat
     container.set(BaseChat, AgentConsoleChat(agent_id="live"))
@@ -61,7 +56,41 @@ def build_live_agent(parent: Container) -> LiveAgent:
 
     # session
     ws = container.force_fetch(Workspace)
-    storage = ws.runtime().sub_storage(MEMORY).sub_storage("live_agent_sessions")
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("main_agent_sessions")
+    session = StorageSession(storage)
+    container.set(Session, session)
+
+    # moss_in_reachy_mini
+    moss = container.force_fetch(MossInReachyMini)
+
+    # shell
+    shell = new_ctml_shell(
+        name="cognition_shell",
+        container=container,
+        experimental=False,
+    )
+    shell.main_channel.import_channels(
+        memory.as_channel(),
+        session.as_channel(),
+        moss.as_channel(only_context_messages=True),
+    )
+
+
+
+# 决策脑：分析当前所有事件然后给主脑递小纸条
+def build_decision_agent(parent: Container) -> DecisionAgent:
+    container = Container(parent=parent, name="decision_agent")
+
+    # chat
+    container.set(BaseChat, AgentConsoleChat(agent_id="live"))
+    container.register(LogBroadcasterProvider())
+
+    # memory
+    memory = container.force_fetch(StorageMemory)
+
+    # session
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("decision_agent_sessions")
     session = StorageSession(storage)
     container.set(Session, session)
 
@@ -80,16 +109,16 @@ def build_live_agent(parent: Container) -> LiveAgent:
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
-        douyin_live.as_channel(is_live_agent=True),
+        douyin_live.as_channel(is_main_agent=False),
         moss.as_channel(only_context_messages=True),
     )
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "live_agent/persona.md"],
+        files=["ctml_enrich.md", "decision_agent/persona.md"],
         storage_name="instructions",
     )
-    live_agent = LiveAgent.new(
+    decision_agent = DecisionAgent.new(
         container,
         AgentConfig(
             id="live",
@@ -113,7 +142,7 @@ def build_live_agent(parent: Container) -> LiveAgent:
         ),
     )
 
-    return live_agent
+    return decision_agent
 
 
 # 主脑：交互
@@ -250,8 +279,8 @@ async def run(container):
 
     if os.getenv("REACHY_MINI_MODE") == "live":
         # 旁路Live Agent
-        live_agent = build_live_agent(container)
-        agents.append(live_agent)
+        decision_agent = build_decision_agent(container)
+        agents.append(decision_agent)
 
     # AgentHub
     eventbus = container.force_fetch(EventBus)

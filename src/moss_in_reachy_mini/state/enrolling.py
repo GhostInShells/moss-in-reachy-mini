@@ -12,10 +12,10 @@ from framework.abcd.agent_event import CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.face_recognizer import FaceRecognizer
-from moss_in_reachy_mini.state.abcd import MiniStateHook
+from moss_in_reachy_mini.state.abcd import BaseAgentHook
 
 
-class EnrollingState(MiniStateHook):
+class EnrollingState(BaseAgentHook):
     """人脸注册状态"""
 
     NAME = "enrolling"

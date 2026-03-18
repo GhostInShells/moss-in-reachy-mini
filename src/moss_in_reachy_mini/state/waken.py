@@ -12,7 +12,7 @@ from framework.abcd.agent_event import CTMLAgentEvent, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.components.head_tracker import HeadTracker
-from moss_in_reachy_mini.state.abcd import MiniStateHook
+from moss_in_reachy_mini.state.abcd import BaseAgentHook
 
 # 检测到陌生人后的冷却时间（秒），避免频繁触发
 _STRANGER_COOLDOWN_SECONDS = 30
@@ -22,7 +22,7 @@ _STRANGER_CONFIRM_CYCLES = 15
 _STRANGER_DET_CONFIDENCE = 0.5
 
 
-class WakenState(MiniStateHook):
+class WakenState(BaseAgentHook):
     NAME = "waken"
 
     def __init__(

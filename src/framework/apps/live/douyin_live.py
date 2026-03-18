@@ -1000,12 +1000,12 @@ class DouyinLive(DouyinLiveWebFetcher):
             overdue=30,
         ))
 
-    def as_channel(self, is_live_agent: bool = False):
+    def as_channel(self, is_main_agent: bool = True):
         chan = PyChannel(name="douyin_live", description="抖音直播间内可操作的command和上下文获取通道", blocking=True)
 
         chan.build.context_messages(self.context_messages)
 
-        if is_live_agent:
+        if not is_main_agent:
             chan.build.command()(self.give_cues)
 
         # 生命周期

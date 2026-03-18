@@ -101,7 +101,8 @@ class BaseMainAgent(Agent, ABC):
             # env datetime
             Text(text=f"Current datetime: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",),
         )
-        return [system_prompt]
+        session_prompts = await self.session.get_session_history()
+        return [system_prompt] + session_prompts
 
     @abstractmethod
     def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:

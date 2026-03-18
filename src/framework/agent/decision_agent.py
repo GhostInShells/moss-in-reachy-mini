@@ -5,13 +5,14 @@ from ghoshell_moss import MOSSShell
 
 from framework.abcd.agent import AgentConfig
 from framework.abcd.agent_event import AgentEvent
+from framework.abcd.agent_hook import AgentHook
 from framework.abcd.session import Session
 from framework.agent.main_agent import BaseMainAgent
 
 
-class LiveAgent(BaseMainAgent):
+class DecisionAgent(BaseMainAgent):
     """
-    Live Agent.
+    Decision Agent.
     """
     def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
         return event

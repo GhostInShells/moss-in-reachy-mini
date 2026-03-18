@@ -12,6 +12,7 @@ from pydantic import Field
 from framework.abcd.agent import Response, ModelConf
 from framework.abcd.agent_event import AgentEventModel, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
+from openai import OpenAI
 
 
 class AgentEventAddition(Addition):

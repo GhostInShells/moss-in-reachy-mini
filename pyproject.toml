@@ -23,6 +23,8 @@ dependencies = [
     "pyexecjs>=1.5.1",
     "betterproto>=2.0.0b6",
     "reflex==0.8.27",
+    "claude-agent-sdk==0.1.49",
+    "pysocks==1.7.1",
 ]
 
 [project.optional-dependencies]
