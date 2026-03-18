@@ -40,7 +40,7 @@ class LiveState(MiniStateHook):
         self.mini.enable_motors()
         await self.douyin_live.resume()
         await self.eventbus.put(CTMLAgentEvent(
-            ctml="<reachy_mini:head_reset />"
+            ctml="<reachy_mini:head_reset idle_mode=\"breathing\" />"
         ))
 
     async def on_self_exit(self):
