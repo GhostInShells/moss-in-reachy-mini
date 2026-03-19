@@ -16,13 +16,10 @@ dependencies = [
     "trafilatura==2.0.0",
     "ghoshell-moss",
     "ghoshell-moss[audio,contrib,zmq]",
-    "websocket-client>=1.7.0",
     "pydantic-settings>=2.0.0",
     "python-proxy>=0.0.1",
-    "mini-racer>=0.12.4",
-    "pyexecjs>=1.5.1",
-    "betterproto>=2.0.0b6",
     "reflex==0.8.27",
+    "av>=14.0.0",
 ]
 
 [project.optional-dependencies]

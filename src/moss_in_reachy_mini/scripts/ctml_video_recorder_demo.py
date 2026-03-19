@@ -5,21 +5,30 @@ import traceback
 from pathlib import Path
 
 from ghoshell_container import IoCContainer
-from ghoshell_moss import MOSSShell, new_shell
+from ghoshell_moss import MOSSShell
+from ghoshell_moss.core.ctml.shell import new_ctml_shell
 from ghoshell_moss_contrib.example_ws import workspace_container
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hub import EventBus
 from framework.agent.eventbus import QueueEventBus
+from moss_in_reachy_mini.audio.mixer import AudioMixerProvider
 from moss_in_reachy_mini.camera.camera_worker import CameraWorkerProvider
 from moss_in_reachy_mini.camera.frame_hub import FrameHub, FrameHubProvider
 from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
+from moss_in_reachy_mini.components.sound import SoundProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
-from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, WakenStateProvider
+from moss_in_reachy_mini.state import (
+    AsleepStateProvider,
+    BoringStateProvider,
+    EnrollingStateProvider,
+    TeachingStateProvider,
+    WakenStateProvider,
+)
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorkerProvider
 
 logging.getLogger("mosshell").propagate = False
@@ -55,17 +64,38 @@ def _register_providers(
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
 
+    # Shared audio output mixer + sound component (MossInReachyMiniProvider depends on it).
+    container.register(AudioMixerProvider())
+    container.register(SoundProvider())
+
     container.register(AsleepStateProvider())
     container.register(WakenStateProvider())
     container.register(BoringStateProvider())
+    container.register(TeachingStateProvider())
+    container.register(EnrollingStateProvider())
     container.register(MossInReachyMiniProvider())
 
 
 async def _run_ctml(shell: MOSSShell, ctml: str) -> dict[str, str]:
-    async with shell.interpreter_in_ctx() as interpreter:
+    interpreter = await shell.interpreter(kind="clear")
+    async with interpreter:
         interpreter.feed(ctml)
         interpreter.commit()
-        return await interpreter.results()
+        tasks = await interpreter.wait_tasks(throw=False)
+
+    if not tasks:
+        exp = interpreter.exception()
+        if exp is not None:
+            raise RuntimeError(f"CTML interpreter failed: {type(exp).__name__}: {exp}")
+
+    results: dict[str, str] = {}
+    for cid, task in tasks.items():
+        try:
+            res = task.result(throw=False)
+        except Exception as e:
+            res = f"{type(e).__name__}: {e}"
+        results[cid] = "" if res is None else str(res)
+    return results
 
 
 async def _amain(
@@ -101,45 +131,50 @@ async def _amain(
                 "Make sure the Reachy Mini daemon is running and accessible, "
             ) from e
 
-        mini = container.force_fetch(ReachyMini)
-        with mini:
-            try:
-                # Ensure the single camera capture loop is running.
-                frame_hub = container.force_fetch(FrameHub)
-                frame_hub.start()
-                shell = new_shell(container=container)
-                await shell.start()
-                moss = container.force_fetch(MossInReachyMini)
-                async with moss:
-                    shell.main_channel.import_channels(moss.as_channel())
+        # NOTE: Do not use `with mini:` here.
+        # `MossInReachyMini.as_channel()` registers lifecycle hooks that close the robot
+        # connection on shell shutdown. Using `with mini:` would cause double-close.
+        _ = container.force_fetch(ReachyMini)
 
-                # Switch to waken state, then recording.
-                await _run_ctml(shell, '<reachy_mini:switch_state state_name="waken" />')
-                start_ctml = f'<reachy_mini.video_recorder:start_recording note="{note}"/>'
-                status_ctml = "<reachy_mini.video_recorder:status/>"
-                stop_ctml = "<reachy_mini.video_recorder:stop_recording/>"
+        # Ensure the single camera capture loop is running.
+        frame_hub = container.force_fetch(FrameHub)
+        frame_hub.start()
 
-                start_results = await _run_ctml(shell, start_ctml)
-                print("====> CTML:", start_ctml)
-                for k, v in start_results.items():
-                    print("  result:", k, "->", v)
+        shell = new_ctml_shell(container=container)
+        moss = container.force_fetch(MossInReachyMini)
+        # Import channels before starting the shell so channel lifecycle hooks
+        # (start_up/close) run in the expected order.
+        shell.main_channel.import_channels(moss.as_channel())
 
-                await _run_ctml(shell, '<reachy_mini:switch_state state_name="boring" />')
+        await shell.start()
+        try:
+            # Switch to waken state, then recording.
+            await _run_ctml(shell, '<reachy_mini:switch_state state_name="waken" />')
+            start_ctml = f'<reachy_mini.video_recorder:start_recording note="{note}"/>'
+            status_ctml = "<reachy_mini.video_recorder:status/>"
+            stop_ctml = "<reachy_mini.video_recorder:stop_recording/>"
 
-                if sleep_s > 0:
-                    await asyncio.sleep(sleep_s)
+            start_results = await _run_ctml(shell, start_ctml)
+            print("====> CTML:", start_ctml)
+            for k, v in start_results.items():
+                print("  result:", k, "->", v)
 
-                status_results = await _run_ctml(shell, status_ctml)
-                print("====> CTML:", status_ctml)
-                for k, v in status_results.items():
-                    print("  result:", k, "->", v)
+            await _run_ctml(shell, '<reachy_mini:switch_state state_name="boring" />')
 
-                stop_results = await _run_ctml(shell, stop_ctml)
-                print("====> CTML:", stop_ctml)
-                for k, v in stop_results.items():
-                    print("  result:", k, "->", v)
-            finally:
-                await shell.close()
+            if sleep_s > 0:
+                await asyncio.sleep(sleep_s)
+
+            status_results = await _run_ctml(shell, status_ctml)
+            print("====> CTML:", status_ctml)
+            for k, v in status_results.items():
+                print("  result:", k, "->", v)
+
+            stop_results = await _run_ctml(shell, stop_ctml)
+            print("====> CTML:", stop_ctml)
+            for k, v in stop_results.items():
+                print("  result:", k, "->", v)
+        finally:
+            await shell.close()
 
     return 0
 

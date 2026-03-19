@@ -24,3 +24,4 @@ known_faces.json
 .workspace/runtime/logs/
 .workspace/runtime/agent_history/
 *.log
+src/moss_in_reachy_mini/.workspace/assets/audio/
