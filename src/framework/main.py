@@ -28,6 +28,7 @@ from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.news import NewsAPI, NewsAPIProvider
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.todolist import TodoList, TodoListProvider
+from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
 
@@ -37,7 +38,7 @@ def build_cognition_agent(parent: Container):
     container = Container(parent=parent, name="cognition_agent")
 
     # chat
-    container.register(LogBroadcasterProvider())
+    container.register(ChatBroadcasterProvider())
 
     # memory
     memory = container.force_fetch(StorageMemory)
@@ -48,7 +49,13 @@ def build_cognition_agent(parent: Container):
 
     # todolist
     todolist = container.force_fetch(TodoList)
-    news = container.force_fetch(NewsAPI)
+
+    # websearch
+    websearch_chan = VolcWebsearchChannel(
+        name="volc_websearch",
+        description="火山引擎的网络搜索工具",
+        api_key=os.environ["VOLC_WEBSEARCH_API_KEY"],
+    )
 
     # shell
     shell = new_ctml_shell(
@@ -60,7 +67,7 @@ def build_cognition_agent(parent: Container):
         memory.as_channel(),
         cognition_session.as_channel(),
         todolist.as_channel(is_main_agent=False),
-        news.as_channel(),
+        websearch_chan,
     )
     container.set(MOSSShell, shell)
 
@@ -83,7 +90,7 @@ def build_cognition_agent(parent: Container):
                 },
                 temperature=0.6
             ),
-            instructions="你是一个旁路在运行任务的agent，你可以看到主agent的历史对话上下文，同时你也有自己独立的历史上下文，你的任务是根据todolist的任务进行处理，每次处理完后要通过mark_as_done将任务结果标记为结束同时将任务的细节告诉给主agent",
+            instructions="你是一个旁路在运行任务的agent，你可以看到主agent的历史对话上下文，同时你也有自己独立的历史上下文，你的任务是根据todolist的任务进行处理，每个任务最好能拆解出子任务（使用append_todo拆解，比如写一篇小说，你可以先完成章节设计，再给每个子章节append_todo些新任务），每个任务处理完要通过mark_as_done将任务结果标记为结束同时将任务的细节告诉给主agent",
         ),
     )
     return agent
@@ -223,8 +230,6 @@ async def main() -> None:
         container.set(Session, session)
         # todolist
         container.register(TodoListProvider())
-        # news
-        container.register(NewsAPIProvider())
 
         container.set(BaseChat, ConsolePTTChat(eventbus=eventbus))
 

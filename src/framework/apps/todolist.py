@@ -77,7 +77,7 @@ class TodoTreeGenerator:
         tree_text = ""
         children = self.parent_children_map.get(parent_key, [])
 
-        for index, child in enumerate(children):
+        for index, child in enumerate(children[:10]):
             # 判断是最后一个子节点（用└──）还是中间节点（用├──）
             is_last = index == len(children) - 1
             prefix = indent + (prefix_symbols[1] if is_last else prefix_symbols[0]) if level > 0 else ""
@@ -143,7 +143,7 @@ class TodoList:
         self._save([])
         return "already clear todolist"
 
-    async def append_todo(self, key: str, title: str, description: str, parent_key=""):
+    async def append_todo(self, key: str, title: str, description: str, parent_key: str=""):
         """
         给任务列表追加一个to.do.任务
         :param key: 任务的唯一标识
@@ -158,9 +158,7 @@ class TodoList:
             raise ValueError(f"key {key} already exists")
 
         if parent_key:
-            parent = generator.get_todo(parent_key, raise_error=False)
-            if not parent:
-                raise ValueError(f"parent_key {parent_key} not found")
+            generator.get_todo(parent_key, raise_error=True)
 
         async with self._locker:
             todos.append(
@@ -257,23 +255,11 @@ class TodoList:
         return [msg]
 
     def as_channel(self, is_main_agent=True):
-        description = """执行规则
-1. todolist作用：规划任务结构 + 标记进度，**标记后必须真正执行任务，不允许只标记不执行**。
-2. 执行顺序：
-   - 只执行【叶子节点】任务
-   - 从上到下取第一个【未开始/执行中】的叶子任务
-3. 单轮必须完整执行：
-   ① 调用 mark_as_doing 标记当前任务
-   ② 用1句短话说明：当前正在做什么
-   ③ 真正执行并输出该任务的内容/结果
-   ④ 执行完立刻调用 mark_as_done 标记完成
-4. 禁止行为：
-   - 禁止重复标记同一个任务
-   - 禁止无限循环输出同一句指令
-   - 禁止只输出标记、不执行任务
-5. 输出风格：简洁、清晰、符合当前使用场景。
-"""
-        chan = PyChannel(name="todolist", description=description.strip(), blocking=True)
+        chan = PyChannel(
+            name="todolist",
+            description="规划任务，标记进度",
+            blocking=True,
+        )
         chan.build.command()(self.append_todo)
         if not is_main_agent:
             chan.build.command()(self.mark_as_doing)
