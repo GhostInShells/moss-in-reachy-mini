@@ -4,7 +4,7 @@ from typing import Optional
 
 import aiohttp
 from ghoshell_common.helpers import uuid
-from ghoshell_container import IoCContainer
+from ghoshell_container import IoCContainer, Provider, INSTANCE
 from ghoshell_moss import Channel, ChannelRuntime, PyChannel
 from ghoshell_moss.core.concepts.command import CommandTaskResult
 
@@ -14,6 +14,7 @@ class VolcWebsearchChannel(Channel):
         self._name = name
         self._description = description
         self._api_key = api_key
+        self._id = uuid()
 
         self._runtime: Optional[ChannelRuntime] = None
 
@@ -21,7 +22,7 @@ class VolcWebsearchChannel(Channel):
         return self._name
 
     def id(self) -> str:
-        return uuid()
+        return self._id
 
     def description(self) -> str:
         return self._description
@@ -88,23 +89,11 @@ class VolcWebsearchChannel(Channel):
                 raise Exception(f"请求异常: {str(e)}")
 
     def bootstrap(self, container: Optional[IoCContainer] = None) -> "ChannelRuntime":
-        if self._runtime is not None and self._runtime.is_available():
+        if self._runtime is not None and self._runtime.is_running():
             return self._runtime
 
-        chan = PyChannel(name=self.name(), description=self.description())
+        chan = PyChannel(name=self.name(), description=self.description(), blocking=False)
         chan.build.command()(self.websearch)
 
         self._runtime = chan.bootstrap(container=container)
         return self._runtime
-
-
-async def main():
-    chan = VolcWebsearchChannel(
-        name="volc_websearch",
-        description="火山云搜索",
-        api_key="ZD9InVAsVKTUcWWnQaTR2VRChxxN2fQL"
-    )
-    result = await chan.websearch("伊朗局势")
-
-if __name__ == "__main__":
-    asyncio.run(main())

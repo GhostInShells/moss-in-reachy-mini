@@ -150,7 +150,10 @@ class DecisionAgentHook(BaseAgentHook):
             latest = session_history[-1]
             now_turn = TurnAddition.read(latest)
             latest_turn = TurnAddition.read(self.latest_message)
-            if not latest_turn or now_turn.turn_id != latest_turn.turn_id:
+            if not latest_turn:
+                # 更新最新的上下文锚点
+                self.latest_message = latest
+            elif now_turn.turn_id != latest_turn.turn_id:
                 # 更新最新的上下文锚点
                 self.latest_message = latest
                 message.with_content(

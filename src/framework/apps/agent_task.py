@@ -261,7 +261,7 @@ class AgentTaskChannel(Channel):
         self._update_tasks(*updated)
 
     def bootstrap(self, container: Optional[IoCContainer] = None) -> "ChannelRuntime":
-        if self._runtime is not None and self._runtime.is_available():
+        if self._runtime is not None and self._runtime.is_running():
             return self._runtime
 
         chan = PyChannel(name=self.name(), description=self.description())
@@ -279,7 +279,9 @@ class AgentTaskChannel(Channel):
 
 class AgentTaskChannelProvider(Provider[AgentTaskChannel]):
 
-    def __init__(self, instructions: str, agent_id: str):
+    def __init__(self, name: str, description: str, instructions: str, agent_id: str):
+        self._name = name
+        self._description = description
         self._instructions = instructions
         self._agent_id = agent_id
 
@@ -290,11 +292,7 @@ class AgentTaskChannelProvider(Provider[AgentTaskChannel]):
         ws = con.force_fetch(Workspace)
         storage: FileStorage|Storage = ws.runtime().sub_storage("agent_tasks")
 
-        websearch_chan = VolcWebsearchChannel(
-            name="websearch",
-            description="A channel for web search",
-            api_key=os.environ["VOLC_WEBSEARCH_API_KEY"],
-        )
+        websearch_chan = con.force_fetch(VolcWebsearchChannel)
 
         async def websearch(ctx: RunContext, query: str) -> CommandTaskResult:
             """Get the latitude and longitude of a location.
@@ -329,8 +327,8 @@ class AgentTaskChannelProvider(Provider[AgentTaskChannel]):
 
         logger = con.get(LoggerItf)
         return AgentTaskChannel(
-            name="agent_task",
-            description="A channel for agent task",
+            name=self._name,
+            description=self._description,
             instructions=self._instructions,
             tools=[tool],
             storage=storage,

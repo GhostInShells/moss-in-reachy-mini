@@ -27,6 +27,7 @@ from framework.agent.decision_agent import DecisionAgent, DecisionSession, Decis
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
+from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
 
@@ -46,6 +47,9 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # douyin_live
     douyin_live = container.force_fetch(DouyinLive)
 
+    # websearch
+    websearch_chan = container.force_fetch(VolcWebsearchChannel)
+
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
@@ -59,6 +63,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         memory.as_channel(read_only=True),
         session.as_channel(),
         douyin_live.as_channel(),
+        websearch_chan,
         agent_task_chan
     )
     container.set(MOSSShell, shell)
@@ -111,6 +116,9 @@ async def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgen
     # douyin_live
     douyin_live = container.force_fetch(DouyinLive)
 
+    # websearch
+    websearch_chan = container.force_fetch(VolcWebsearchChannel)
+
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
@@ -132,6 +140,7 @@ async def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgen
         memory.as_channel(),
         decision_session.as_channel(),
         douyin_live.as_channel(),
+        websearch_chan,
         agent_task_chan,
         reflex_proxy,
     )
@@ -185,8 +194,17 @@ async def main() -> None:
         container.set(StorageSession, session)
         container.set(Session, session)
 
+        # websearch
+        container.set(VolcWebsearchChannel, VolcWebsearchChannel(
+            name="websearch",
+            description="A channel for web search",
+            api_key=os.environ["VOLC_WEBSEARCH_API_KEY"],
+        ))
+
         # agent task
         container.register(AgentTaskChannelProvider(
+            name="task",
+            description="擅长处理复杂任务，所有复杂任务都可以代理给这个channel来异步完成",
             instructions="你是一个任务助手，你需要通过给你的目标，规划路径并拆解子任务，最终完成这个目标，你的每个任务内容都需要用文件存储起来",
             agent_id=decision_agent_id,
         ))

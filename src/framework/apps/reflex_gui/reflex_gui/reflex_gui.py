@@ -39,7 +39,7 @@ class State(rx.State):
         if provided.is_set():
             return
         provided.set()
-        chan = PyChannel(name="reflex")
+        chan = PyChannel(name="gui")
 
         async def append_markdown(chunks__):
             async for chunk in chunks__:
