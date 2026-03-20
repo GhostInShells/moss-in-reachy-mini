@@ -26,7 +26,7 @@ class VolcWebsearchChannel(Channel):
     def description(self) -> str:
         return self._description
 
-    async def websearch(self, query: str):
+    async def websearch(self, query: str) -> CommandTaskResult:
         """
         异步调用 feedcoopapi 的 web_search 接口
 

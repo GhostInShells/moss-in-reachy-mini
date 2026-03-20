@@ -12,13 +12,13 @@ from pydantic import Field
 from framework.abcd.agent import Response, ModelConf
 from framework.abcd.agent_event import AgentEventModel, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
-from openai import OpenAI
 
 
 class AgentEventAddition(Addition):
 
     event_id: str = Field(description="event id")
     event_type: str = Field(description="event type")
+    agent_id: str = Field(description="agent id")
 
     @classmethod
     def keyword(cls) -> str:
@@ -50,6 +50,7 @@ class MOSShellResponse(Response):
         self._event_addition = AgentEventAddition(
             event_id=event.event_id,
             event_type=event.event_type,
+            agent_id=agent_id,
         )
         self.response_id = event.event_id
 
@@ -148,7 +149,7 @@ class MOSShellResponse(Response):
                     completed_msg = Message(
                         meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
                     ).with_content(
-                        Text(text=interpreter.executed_tokens()),
+                        Text(text="".join(interpretation.feed_inputs)),
                     ).with_additions(
                         self._event_addition,
                     ).as_completed()
@@ -208,7 +209,7 @@ class MOSShellResponse(Response):
             interrupt_msg = Message.new(
                 role="system"
             ).with_additions(
-                AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type),
+                AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type, agent_id=self.agent_id),
             ).with_content(
                 Text(text="[Interrupt]")
             )

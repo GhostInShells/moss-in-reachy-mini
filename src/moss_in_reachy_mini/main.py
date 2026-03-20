@@ -109,13 +109,13 @@ def build_decision_agent(parent: Container) -> DecisionAgent:
     shell.main_channel.import_channels(
         memory.as_channel(),
         session.as_channel(),
-        douyin_live.as_channel(is_main_agent=False),
+        douyin_live.as_channel(),
         moss.as_channel(only_context_messages=True),
     )
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "decision_agent/persona.md"],
+        files=["ctml_enrich.md", "decision_agent/instructions.md"],
         storage_name="instructions",
     )
     decision_agent = DecisionAgent.new(
@@ -125,9 +125,9 @@ def build_decision_agent(parent: Container) -> DecisionAgent:
             name="live",
             description="",
             model=ModelConf(
-                base_url="$LIVE_LLM_BASE_URL",
-                model="$LIVE_LLM_MODEL",
-                api_key="$LIVE_LLM_API_KEY",
+                base_url="$DECISION_LLM_BASE_URL",
+                model="$DECISION_LLM_MODEL",
+                api_key="$DECISION_LLM_API_KEY",
                 kwargs={
                     "extra_body": {
                         "thinking": {
@@ -136,7 +136,7 @@ def build_decision_agent(parent: Container) -> DecisionAgent:
                         "enable_web_search": True,
                     }
                 },
-                temperature=float(os.getenv("LIVE_LLM_TEMPERATURE", "0.7")),
+                temperature=float(os.getenv("DECISION_LLM_TEMPERATURE", "0.7")),
             ),
             instructions=instructions,
         ),
@@ -194,8 +194,7 @@ async def build_main_agent(parent: Container) -> MainAgent:
     # Agent
     instructions = load_instructions(
         container,
-        files=["memory_rules.md","system_rules.md",
-               "ctml_enrich.md", "websearch.md", "news.md"],
+        files=["memory_rules.md", "system_rules.md", "main_agent/instructions.md"],
         storage_name="instructions",
     )
     main_agent = MainAgent.new(
