@@ -5,6 +5,7 @@ from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import Container, IoCContainer, get_container
 from ghoshell_moss import MOSSShell, new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
+from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
@@ -17,11 +18,13 @@ from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterP
 from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
+from framework.apps.agent_task import AgentTaskChannel, AgentTaskChannelProvider
 from framework.apps.live.douyin_live import DouyinLive, DouyinLiveProvider
-from framework.apps.live.live_agent import LiveAgent
+from framework.agent.decision_agent import DecisionAgent, DecisionSession, DecisionAgentHookProvider
 from framework.apps.memory.storage_memory import StorageMemory
 from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
+from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from framework.moss_contrib.ctml_repo import CtmlRepo, CtmlRepoProvider
 from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
@@ -45,94 +48,117 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 
-# 主题脑：自驱完成一个主题，记录状态
-def build_task_agent():
-    pass
-
 
 # 决策脑：分析当前所有事件然后给主脑递小纸条
-def build_live_agent(parent: Container) -> LiveAgent:
-    container = Container(parent=parent, name="live_agent")
+def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgent:
+    container = Container(parent=parent, name=agent_id)
 
     # chat
-    container.set(BaseChat, AgentConsoleChat(agent_id="live"))
-    container.register(LogBroadcasterProvider())
+    container.set(BaseChat, AgentConsoleChat(agent_id=agent_id))
+    container.register(ChatBroadcasterProvider())
 
     # memory
     memory = container.force_fetch(StorageMemory)
 
     # session
     ws = container.force_fetch(Workspace)
-    storage = ws.runtime().sub_storage(MEMORY).sub_storage("live_agent_sessions")
-    session = StorageSession(storage)
-    container.set(Session, session)
-
-    # douyin_live
-    douyin_live = container.force_fetch(DouyinLive)
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("decision_agent_sessions")
+    decision_session = DecisionSession(storage)
+    container.set(DecisionSession, decision_session)
 
     # moss_in_reachy_mini
     moss = container.force_fetch(MossInReachyMini)
 
+    # agent task
+    agent_task_chan = container.force_fetch(AgentTaskChannel)
+
+    # decision agent hook
+    container.register(DecisionAgentHookProvider(decision_agent_id=agent_id))
+
+    # reflex proxy
+    reflex_gui_proxy = ZMQChannelProxy(
+        name="gui",
+        address="tcp://127.0.0.1:9527",
+        recv_timeout=3,
+        send_timeout=3,
+    )
+
+    # websearch
+    websearch_chan = container.force_fetch(VolcWebsearchChannel)
+
     # shell
     shell = new_ctml_shell(
-        name="live_shell",
+        name=f"{agent_id}_shell",
         container=container,
         experimental=False,
     )
     shell.main_channel.import_channels(
         memory.as_channel(),
-        session.as_channel(),
-        douyin_live.as_channel(is_live_agent=True),
-        moss.as_channel(only_context_messages=True),
+        decision_session.as_channel(),
+        # moss.as_channel(only_context_messages=True),
+        agent_task_chan,
+        reflex_gui_proxy,
+        websearch_chan,
     )
+    if os.getenv("REACHY_MINI_MODE") == "live":
+        # douyin_live
+        douyin_live = container.force_fetch(DouyinLive)
+        shell.main_channel.import_channels(douyin_live.as_channel())
+
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["ctml_enrich.md", "live_agent/persona.md"],
+        files=[
+            "decision_agent/instructions.md",
+            "decision_agent/give_cues_ctml_guideline.md",
+            "decision_agent/gui_ctml_guideline.md",
+        ],
         storage_name="instructions",
     )
-    live_agent = LiveAgent.new(
+    decision_agent = DecisionAgent.new(
         container,
         AgentConfig(
-            id="live",
-            name="live",
+            id=agent_id,
+            name=agent_id,
             description="",
             model=ModelConf(
-                base_url="$LIVE_LLM_BASE_URL",
-                model="$LIVE_LLM_MODEL",
-                api_key="$LIVE_LLM_API_KEY",
+                base_url="$DECISION_LLM_BASE_URL",
+                model="$DECISION_LLM_MODEL",
+                api_key="$DECISION_LLM_API_KEY",
                 kwargs={
                     "extra_body": {
                         "thinking": {
                             "type": "enabled",
                         },
-                        "enable_web_search": True,
                     }
                 },
-                temperature=float(os.getenv("LIVE_LLM_TEMPERATURE", "0.7")),
+                temperature=float(os.getenv("DECISION_LLM_TEMPERATURE", "0.7")),
             ),
             instructions=instructions,
         ),
     )
 
-    return live_agent
+    return decision_agent
 
 
 # 主脑：交互
-async def build_main_agent(parent: Container) -> MainAgent:
-    container = Container(parent=parent, name="main_agent")
+async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
+    container = Container(parent=parent, name=agent_id)
 
     # Agent输出
     container.register(ChatBroadcasterProvider())
 
-    # 会话记录
-    ws = container.force_fetch(Workspace)
-    storage = ws.runtime().sub_storage(MEMORY).sub_storage("main_agent_sessions")
-    session = StorageSession(storage)
-    container.set(Session, session)
+    # Agent记忆
+    memory = container.force_fetch(StorageMemory)
 
-    # ctml repo
-    container.register(CtmlRepoProvider())
+    # 会话记录
+    session = container.force_fetch(StorageSession)
+
+    # websearch
+    websearch_chan = container.force_fetch(VolcWebsearchChannel)
+
+    # agent task
+    agent_task_chan = container.force_fetch(AgentTaskChannel)
 
     # Shell
     mini = container.force_fetch(ReachyMini)
@@ -146,15 +172,20 @@ async def build_main_agent(parent: Container) -> MainAgent:
         ),
         experimental=False,
     )
-    ctml_repo = container.force_fetch(CtmlRepo)
-    channels = [
-        moss.as_channel(),
-        container.force_fetch(StorageMemory).as_channel(),
-    ]
-    if os.getenv("REACHY_MINI_MODE") == "live":
-        channels.append(container.force_fetch(DouyinLive).as_channel())
-    shell.main_channel.import_channels(*channels)
 
+    shell.main_channel.import_channels(
+        moss.as_channel(),
+        memory.as_channel(),
+        session.as_channel(),
+        websearch_chan,
+        agent_task_chan,
+    )
+    if os.getenv("REACHY_MINI_MODE") == "live":
+        # douyin_live
+        douyin_live = container.force_fetch(DouyinLive)
+        shell.main_channel.import_channels(douyin_live.as_channel())
+
+    ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(
         available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
     )(ctml_repo.save_ctml)
@@ -167,15 +198,14 @@ async def build_main_agent(parent: Container) -> MainAgent:
     # Agent
     instructions = load_instructions(
         container,
-        files=["memory_rules.md","system_rules.md",
-               "ctml_enrich.md", "websearch.md", "news.md"],
+        files=["memory_rules.md", "system_rules.md", "main_agent/instructions.md"],
         storage_name="instructions",
     )
     main_agent = MainAgent.new(
         container=container,
         config=AgentConfig(
-            id="main",
-            name="main",
+            id=agent_id,
+            name=agent_id,
             description="",
             model=ModelConf(
                 kwargs={
@@ -183,7 +213,6 @@ async def build_main_agent(parent: Container) -> MainAgent:
                         "thinking": {
                             "type": "disabled",
                         },
-                        "enable_web_search": True,
                     }
                 },
                 temperature=float(os.getenv("MOSS_LLM_TEMPERATURE", "0.7")),
@@ -199,11 +228,18 @@ def common_dependencies(container: IoCContainer):
     container.register(AgentFastAPIProvider())
     # AgentHub Eventbus
     container.set(EventBus, QueueEventBus())
-    # Agent记忆
+    # Agent共同记忆
     ws = container.force_fetch(Workspace)
     storage = ws.runtime().sub_storage(MEMORY)
     memory = StorageMemory(storage)
     container.set(StorageMemory, memory)
+
+    # 主Agent会话
+    ws = container.force_fetch(Workspace)
+    storage = ws.runtime().sub_storage(MEMORY).sub_storage("main_agent_sessions")
+    session = StorageSession(storage)
+    container.set(StorageSession, session)
+    container.set(Session, session)
 
     # 默认Agent输出
     chat = ConsolePTTChat(container=container)
@@ -212,8 +248,23 @@ def common_dependencies(container: IoCContainer):
     # DouyinLive
     container.register(DouyinLiveProvider())
 
-    # TodoList
-    # container.register(TodoListProvider())
+    # Websearch
+    container.set(VolcWebsearchChannel, VolcWebsearchChannel(
+        name="websearch",
+        description="A channel for web search",
+        api_key=os.environ["VOLC_WEBSEARCH_API_KEY"],
+    ))
+
+    # agent task
+    container.register(AgentTaskChannelProvider(
+        name="task",
+        description="擅长处理复杂任务，所有复杂任务都可以代理给这个channel来异步完成",
+        instructions="你是一个任务助手，你需要通过给你的目标，规划路径并拆解子任务，最终完成这个目标，你的每个任务内容都需要用文件存储起来",
+        agent_id="decision",
+    ))
+
+    # ctml repo
+    container.register(CtmlRepoProvider())
 
     # Mini
     container.set(ReachyMini, ReachyMini())
@@ -252,13 +303,12 @@ async def run(container):
 
     agents = []
     # 主Agent
-    main_agent = await build_main_agent(container)
+    main_agent = await build_main_agent(container, "main")
     agents.append(main_agent)
 
-    if os.getenv("REACHY_MINI_MODE") == "live":
-        # 旁路Live Agent
-        live_agent = build_live_agent(container)
-        agents.append(live_agent)
+    # 决策Agent
+    decision_agent = build_decision_agent(container, "decision")
+    agents.append(decision_agent)
 
     # AgentHub
     eventbus = container.force_fetch(EventBus)

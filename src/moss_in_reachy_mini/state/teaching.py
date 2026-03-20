@@ -6,10 +6,10 @@ from reachy_mini import ReachyMini
 
 from framework.abcd.agent_event import CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus
-from moss_in_reachy_mini.state.abcd import MiniStateHook
+from moss_in_reachy_mini.state.abcd import BaseAgentHook
 
 
-class TeachingState(MiniStateHook):
+class TeachingState(BaseAgentHook):
 
     NAME = "teaching"
 

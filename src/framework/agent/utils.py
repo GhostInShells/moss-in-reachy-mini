@@ -31,13 +31,17 @@ async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
     def _callback(user_input):
         asyncio.run_coroutine_threadsafe(eventbus.put(UserInputAgentEvent(
             message=Message.new(role="user").with_content(Text(text=user_input)),
+            priority=99,
         ).to_agent_event()), loop)
 
     def _interrupt():
         asyncio.run_coroutine_threadsafe(
-            eventbus.put(InterruptAgentEvent().to_agent_event()),
+            eventbus.put(InterruptAgentEvent(
+                priority=100,
+            ).to_agent_event()),
             loop
         )
+
     async def _on_get(event: AgentEvent):
         if event["agent_id"] not in ["main", ""]:
             return

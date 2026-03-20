@@ -130,17 +130,18 @@ class StorageMemory:
         ))
         return msgs
 
-    def as_channel(self) -> PyChannel:
+    def as_channel(self, read_only: bool = False) -> PyChannel:
         memory = PyChannel(
             name="memory",
-            description="refresh相关的command请放置在你的回答结束末尾调用，并且请提前告知用户你要更新你自己的人格和记忆了",
+            description="你的记忆存储和读取通道",
         )
 
-        memory.build.command()(self.refresh_personality)
-        memory.build.command()(self.refresh_behavior_preference)
-        memory.build.command()(self.refresh_mood_base)
-        memory.build.command()(self.refresh_autobiographical_memory)
-        memory.build.command()(self.refresh_summary_memory)
+        if read_only:
+            memory.build.command()(self.refresh_personality)
+            memory.build.command()(self.refresh_behavior_preference)
+            memory.build.command()(self.refresh_mood_base)
+            memory.build.command()(self.refresh_autobiographical_memory)
+            memory.build.command()(self.refresh_summary_memory)
         memory.build.context_messages(self.context_messages)
 
         return memory

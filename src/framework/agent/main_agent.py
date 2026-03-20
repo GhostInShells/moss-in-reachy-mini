@@ -101,7 +101,8 @@ class BaseMainAgent(Agent, ABC):
             # env datetime
             Text(text=f"Current datetime: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",),
         )
-        return [system_prompt]
+        session_prompts = await self.session.get_session_history()
+        return [system_prompt] + session_prompts
 
     @abstractmethod
     def _parse_event(self, event: AgentEvent) -> Union[AgentEvent, None]:
@@ -435,7 +436,7 @@ class BaseMainAgent(Agent, ABC):
                     if not parsed["resume_last_interrupted"]:
                         return
 
-                    # 当前只支持用户输入事件被打断恢复
+                    # 当前只支持程序输入事件被打断恢复
                     if program_input := ProgramInputAgentEvent.from_agent_event(
                         _running_response.event.to_agent_event()
                     ):
@@ -445,6 +446,7 @@ class BaseMainAgent(Agent, ABC):
                         self._resume_event_queue.put_nowait(
                             ResumeAgentEvent(
                                 event=program_input,
+                                priority=0,
                             ).to_agent_event()
                         )
                     return

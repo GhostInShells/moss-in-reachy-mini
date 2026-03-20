@@ -10,6 +10,7 @@ from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import PyChannel, Message, Text
 from pydantic import BaseModel, Field
 
+from framework.abcd.agent_event import ProgramInputAgentEvent
 from framework.abcd.agent_hub import EventBus
 from framework.apps.utils import EnumEncoder
 
@@ -26,6 +27,7 @@ class Todo(BaseModel):
     description: str = Field(default="", description="description")
     status: TodoStatus = Field(default=TodoStatus.TODO, description="is_done")
     parent_key: str = Field(default="", description="parent_key")
+    result: str = Field(default="", description="result")
 
 
 # 树形结构生成工具类
@@ -75,7 +77,7 @@ class TodoTreeGenerator:
         tree_text = ""
         children = self.parent_children_map.get(parent_key, [])
 
-        for index, child in enumerate(children):
+        for index, child in enumerate(children[:10]):
             # 判断是最后一个子节点（用└──）还是中间节点（用├──）
             is_last = index == len(children) - 1
             prefix = indent + (prefix_symbols[1] if is_last else prefix_symbols[0]) if level > 0 else ""
@@ -122,7 +124,7 @@ class TodoList:
         todos = self.todos
         res = []
         for todo in todos:
-            if todo.status != TodoStatus.DONE:
+            if todo.status not in [TodoStatus.DONE, TodoStatus.DOING]:
                 res.append(todo)
         return res
 
@@ -141,7 +143,7 @@ class TodoList:
         self._save([])
         return "already clear todolist"
 
-    async def append_todo(self, key: str, title: str, description: str, parent_key=""):
+    async def append_todo(self, key: str, title: str, description: str, parent_key: str=""):
         """
         给任务列表追加一个to.do.任务
         :param key: 任务的唯一标识
@@ -156,9 +158,7 @@ class TodoList:
             raise ValueError(f"key {key} already exists")
 
         if parent_key:
-            parent = generator.get_todo(parent_key, raise_error=False)
-            if not parent:
-                raise ValueError(f"parent_key {parent_key} not found")
+            generator.get_todo(parent_key, raise_error=True)
 
         async with self._locker:
             todos.append(
@@ -183,8 +183,8 @@ class TodoList:
             raise ValueError(f"Task {key} has children, start it's children first")
         async with self._locker:
             todo = generator.get_todo(key)
-            if todo.status == TodoStatus.DOING:
-                raise ValueError(f"Task {key} already mark as doing, you need to execute this task now and when you finish this task, mark it as done")
+            # if todo.status == TodoStatus.DOING:
+            #     raise ValueError(f"Task {key} already mark as doing, you need to execute this task now and when you finish this task, mark it as done")
             if todo.status == TodoStatus.DONE:
                 raise ValueError(f"Task {key} already mark as done, you need to start another task")
             todo.status = TodoStatus.DOING
@@ -199,10 +199,11 @@ class TodoList:
             self._save(todos)
             return f"Task {key} marked as done, you need to execute this task with {todo.description}"
 
-    async def mark_as_done(self, key: str):
+    async def mark_as_done(self, key: str, text__):
         """
         标记一个to.do.任务已完成，且只能标记叶子节点的to.do.任务，自身会被标记为DONE状态，所有的父节点都会被检查是否所有子任务都完成
         :param key: 叶子节点的to.do任务
+        :param text__: 任务的详细执行情况，使用文本传递
         """
         todos = self.todos
         generator = TodoTreeGenerator(todos)
@@ -212,6 +213,7 @@ class TodoList:
         async with self._locker:
             todo = generator.get_todo(key)
             todo.status = TodoStatus.DONE
+            todo.result = text__
 
             parent = todo
             while parent:
@@ -228,6 +230,15 @@ class TodoList:
                     parent.status = TodoStatus.DONE
             self._save(todos)
 
+            await self.eventbus.put(ProgramInputAgentEvent(
+                message=Message.new(role="user", name="__todolist__").with_content(
+                    Text(text=f"任务 {key} 已完成，当前的任务结果是你的旁路大脑完成的，用户并不知道任务结果，你需要自然衔接之前的对话，将任务的结果告诉用户"),
+                    Text(text=f"任务名为{todo.title} 描述为{todo.description}"),
+                    Text(text=f"任务结果为{todo.result}")
+                ),
+                agent_id="", # 默认是主agent
+            ))
+
     async def context_messages(self):
         text = TodoTreeGenerator(self.todos).generate_tree_text()
         self.logger.debug(f"current todo list=\n{text}")
@@ -243,28 +254,17 @@ class TodoList:
             )
         return [msg]
 
-    def as_channel(self):
-        description = """执行规则
-1. todolist作用：规划任务结构 + 标记进度，**标记后必须真正执行任务，不允许只标记不执行**。
-2. 执行顺序：
-   - 只执行【叶子节点】任务
-   - 从上到下取第一个【未开始/执行中】的叶子任务
-3. 单轮必须完整执行：
-   ① 调用 mark_as_doing 标记当前任务
-   ② 用1句短话说明：当前正在做什么
-   ③ 真正执行并输出该任务的内容/结果
-   ④ 执行完立刻调用 mark_as_done 标记完成
-4. 禁止行为：
-   - 禁止重复标记同一个任务
-   - 禁止无限循环输出同一句指令
-   - 禁止只输出标记、不执行任务
-5. 输出风格：简洁、清晰、符合当前使用场景。
-"""
-        chan = PyChannel(name="todolist", description=description.strip(), blocking=True)
+    def as_channel(self, is_main_agent=True):
+        chan = PyChannel(
+            name="todolist",
+            description="规划任务，标记进度",
+            blocking=True,
+        )
         chan.build.command()(self.append_todo)
-        chan.build.command()(self.mark_as_doing)
-        chan.build.command()(self.mark_as_done)
-        chan.build.command()(self.clear_todo)
+        if not is_main_agent:
+            chan.build.command()(self.mark_as_doing)
+            chan.build.command()(self.mark_as_done)
+            # chan.build.command()(self.clear_todo)
         chan.build.context_messages(self.context_messages)
         return chan
 

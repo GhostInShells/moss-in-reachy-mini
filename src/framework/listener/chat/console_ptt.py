@@ -158,7 +158,7 @@ class ConsolePTTChat(BaseChat):
                     # 显示提示信息
                     state = self.listener_service.current_state().name() if self.listener_service else "unknown"
 
-                    if state == ListenerStateName.pdt_listening.value or state == ListenerStateName.listening.value:
+                    if state == ListenerStateName.pdt_listening.value:
                         prompt = "[bold green]正在录音... (再次按下Enter键结束录音)"
                     else:
                         prompt = f"[bold green]按下Enter键开始录音 (输入q退出){state}"
@@ -188,6 +188,8 @@ class ConsolePTTChat(BaseChat):
         if self.is_streaming:
             self.interrupted = True
             self.is_streaming = False
+            self.listener_service.clear_buffer()
+            self.listener_service.set_state(ListenerStateName.pdt_waiting.value)
             if self.on_interrupt_callback:
                 self.on_interrupt_callback()
                 self.console.print("\n[yellow]Output interrupted[/yellow]\n")

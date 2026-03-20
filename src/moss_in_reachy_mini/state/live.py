@@ -9,10 +9,10 @@ from framework.abcd.agent_event import ProgramInputAgentEvent, CTMLAgentEvent
 from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.apps.live.douyin_live import DouyinLive
 from framework.apps.todolist import TodoList
-from moss_in_reachy_mini.state import MiniStateHook
+from moss_in_reachy_mini.state import BaseAgentHook
 
 
-class LiveState(MiniStateHook):
+class LiveState(BaseAgentHook):
 
     """
     直播状态
@@ -47,16 +47,7 @@ class LiveState(MiniStateHook):
         await self.douyin_live.pause()
 
     async def _run_idle_move(self):
-        if self.todolist and self.todolist.todo_todos:
-            message = Message.new(role="user")
-            message.with_content(
-                Text(text="按 todolist 顺序执行下一个未完成的叶子任务，并且需要用很短的话让用户知道当前在干什么"),
-            )
-            await self.eventbus.put(ProgramInputAgentEvent(
-                message=message,
-                priority=0,  # 正常事件队列
-            ))
-            return
+        pass
 
 
 class LiveStateProvider(Provider[LiveState]):
