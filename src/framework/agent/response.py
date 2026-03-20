@@ -241,6 +241,7 @@ class CTMLResponse(Response):
         self._event_addition = AgentEventAddition(
             event_id=event.event_id,
             event_type=event.event_type,
+            agent_id=self.agent_id,
         )
         self.response_id = event.event_id
 
@@ -332,7 +333,7 @@ class CTMLResponse(Response):
             interrupt_msg = Message.new(
                 role="system"
             ).with_additions(
-                AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type),
+                AgentEventAddition(event_id=self.event.event_id, event_type=self.event.event_type, agent_id=self.agent_id),
             ).with_content(
                 Text(text="[Interrupt] User input")
             )

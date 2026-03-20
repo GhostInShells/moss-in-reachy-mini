@@ -58,6 +58,9 @@ class WakenState(BaseAgentHook):
         self.mini.enable_motors()
         self.mini.wake_up()
         await self.head_tracker.start()
+        await self.eventbus.put(CTMLAgentEvent(
+            ctml="<reachy_mini:head_reset idle_mode=\"breathing\" />"
+        ))
         self._base_proactive_prob = 0.001
         self._stranger_cooldown_until = 0.0
         self._stranger_consecutive = 0
