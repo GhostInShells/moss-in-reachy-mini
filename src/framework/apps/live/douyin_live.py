@@ -2,6 +2,7 @@ import asyncio
 import enum
 import json
 import logging
+import os
 import random
 import time
 import uuid
@@ -871,7 +872,7 @@ class DouyinLiveProvider(Provider[DouyinLive]):
 
         return DouyinLive(
             eventbus=eventbus,
-            history_storage=ws.runtime().sub_storage("live_memory"),
+            history_storage=ws.runtime().sub_storage(os.environ["REACHY_MINI_MEMORY"]),
             config=config,
             logger=logger
         )

@@ -164,8 +164,9 @@ class DecisionAgentHook(BaseAgentHook):
                               "1. 不可以滥用`give_cues`，你的建议会让main agent做出新的回复导致又回到你这个思维起点，你必须谨慎使用`give_cues`"
                               "**严禁**："
                               "1. 重复上一轮的建议；"
-                              "2. 重复main agent的行动；"
-                              "3. 在明确问题上和main agent都不行动；"),
+                              "2. 重复 MainAgent；"
+                              "3. 在明确问题上和main agent都不行动；"
+                              "4. 不断的给 MainAgent 发建议"),
                     Text(text="====== 主Agent上下文更新事件 end ======"),
                 )
 

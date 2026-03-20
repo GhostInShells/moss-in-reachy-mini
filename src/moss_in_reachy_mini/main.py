@@ -79,6 +79,8 @@ def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgent:
     reflex_gui_proxy = ZMQChannelProxy(
         name="gui",
         address="tcp://127.0.0.1:9527",
+        recv_timeout=3,
+        send_timeout=3,
     )
 
     # websearch
@@ -93,7 +95,7 @@ def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgent:
     shell.main_channel.import_channels(
         memory.as_channel(),
         decision_session.as_channel(),
-        moss.as_channel(only_context_messages=True),
+        # moss.as_channel(only_context_messages=True),
         agent_task_chan,
         reflex_gui_proxy,
         websearch_chan,
@@ -106,7 +108,11 @@ def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgent:
     container.set(MOSSShell, shell)
     instructions = load_instructions(
         container,
-        files=["decision_agent/instructions.md", "decision_agent/give_cues_ctml_guideline.md"],
+        files=[
+            "decision_agent/instructions.md",
+            "decision_agent/give_cues_ctml_guideline.md",
+            "decision_agent/gui_ctml_guideline.md",
+        ],
         storage_name="instructions",
     )
     decision_agent = DecisionAgent.new(
