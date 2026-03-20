@@ -69,7 +69,7 @@ class AgentTaskChannel(Channel):
         self.deps = create_default_deps(backend=LocalBackend(root_dir=root_dir))
         self.agent = create_deep_agent(
             instructions=instructions + self.inner_instructions(),
-            model="anthropic:doubao-seed-1-6-251015",
+            model=os.environ["PYDANTIC_AI_MODEL"],
             include_todo=True,  # Task planning
             include_filesystem=True,  # File read/write/edit/execute
             include_subagents=True,  # Delegate to subagents
