@@ -16,6 +16,7 @@ from framework.abcd.agent_hook import AgentHook
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
+from moss_in_reachy_mini.components.sound import Sound
 from moss_in_reachy_mini.components.vision import Vision
 from moss_in_reachy_mini.state.abcd import InitialState, BaseAgentHook
 from moss_in_reachy_mini.state.asleep import AsleepState
@@ -53,6 +54,7 @@ class MossInReachyMini:
         body: Body,
         head: Head,
         antennas: Antennas,
+        sound: Sound,
         vision: Vision,
     ):
         self.mini = mini
@@ -62,6 +64,7 @@ class MossInReachyMini:
         self.body = body
         self.head = head
         self.antennas = antennas
+        self.sound = sound
         self.vision = vision
 
         # state
@@ -77,6 +80,15 @@ class MossInReachyMini:
         self._recorder = recorder
 
         self._bootstrapped = asyncio.Event()
+
+    async def __aenter__(self) -> "MossInReachyMini":
+        # Provide an async context manager for lightweight scripts/tests.
+        # The full runtime also wires `bootstrap/aclose` into channel lifecycle.
+        await self.bootstrap()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[no-untyped-def]
+        await self.aclose()
 
     async def switch_state(self, state_name: str, force: bool = False):
         state_name = state_name.lower()
@@ -219,6 +231,40 @@ class MossInReachyMini:
         )(self.antennas.reset)
 
         reachy_mini.build.command(
+            name="play_sound",
+            doc=(
+                "Play a sound (local file or URL). "
+                "If it's a relative path, it is resolved under assets/audio/. "
+                "Supports pause/resume/stop via corresponding commands."
+            ),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.sound.play_sound)
+
+        reachy_mini.build.command(
+            name="pause_sound",
+            doc="Pause current sound playback",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.sound.pause_sound)
+
+        reachy_mini.build.command(
+            name="resume_sound",
+            doc="Resume sound playback.",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.sound.resume_sound)
+
+        reachy_mini.build.command(
+            name="stop_sound",
+            doc="Stop sound playback.",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.sound.stop_sound)
+
+        reachy_mini.build.command(
+            name="sound_status",
+            doc="Get sound playback status.",
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+        )(self.sound.sound_status)
+
+        reachy_mini.build.command(
             doc=(
                 "启动人脸注册/录入流程。当用户说'录入人脸'、'注册人脸'、或同意进行人脸注册时，"
                 "必须立即调用此指令，不要自己尝试拍照或引导。"
@@ -308,6 +354,7 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         head = con.force_fetch(Head)
         antennas = con.force_fetch(Antennas)
         vision = con.force_fetch(Vision)
+        sound = con.force_fetch(Sound)
 
         return MossInReachyMini(
             mini,
@@ -320,5 +367,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
             body=body,
             head=head,
             antennas=antennas,
+            sound=sound,
             vision=vision,
         )

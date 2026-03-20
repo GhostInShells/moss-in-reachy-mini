@@ -358,6 +358,38 @@ class MicHubProvider(Provider[MicHub]):
         channels = int(audio_cfg.channels)
         frames_per_buffer = int(audio_cfg.chunk_size)
 
+        # Defensive validation: PortAudio will fail with "Invalid number of channels"
+        # if we request more channels than the device supports.
+        try:
+            import pyaudio  # type: ignore
+
+            pa = pyaudio.PyAudio()
+            try:
+                if device_index is not None:
+                    info = pa.get_device_info_by_index(device_index)
+                    max_in = int(info.get("maxInputChannels") or 0)
+                    if max_in <= 0:
+                        con.get(LoggerItf).warning(
+                            "MicHub input device_index=%s has no input channels; falling back to default device",
+                            device_index,
+                        )
+                        device_index = None
+                    elif channels > max_in:
+                        con.get(LoggerItf).warning(
+                            "MicHub channels=%s exceeds device_index=%s maxInputChannels=%s; clamping",
+                            channels,
+                            device_index,
+                            max_in,
+                        )
+                        channels = max_in
+            finally:
+                pa.terminate()
+        except Exception:
+            # If PyAudio isn't available or device query fails, keep original values.
+            pass
+
+        channels = max(1, int(channels))
+
         hub = MicHub(
             device_index=device_index,
             rate=rate,

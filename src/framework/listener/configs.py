@@ -28,6 +28,15 @@ class PyAudioInputConfig(BaseModel):
             self.device_index = os.environ.get(self.device_index[1:], '')
         if self.rate.startswith('$'):
             self.rate = os.environ.get(self.rate[1:], '44100')
+
+        # Optional env override for channel count.
+        # Some capture devices expose only stereo input; others only mono.
+        channels_env = os.environ.get("PYAUDIO_INPUT_DEVICE_CHANNELS")
+        if channels_env:
+            try:
+                self.channels = int(channels_env)
+            except Exception:
+                pass
         return self
 
     def get_device_index(self) -> Optional[int]:
@@ -48,11 +57,43 @@ class PyAudioInputConfig(BaseModel):
         pa = pa or pyaudio.PyAudio()
         conf = self.resolve_env()
         logger = logger or logging.getLogger("PyAudioInput")
+
+        device_index = self.get_device_index()
+        rate = int(conf.rate)
+        channels = int(conf.channels)
+
+        # Validate device capabilities to avoid opaque PortAudio errors.
+        if device_index is not None:
+            try:
+                info = pa.get_device_info_by_index(device_index)
+                max_in = int(info.get("maxInputChannels") or 0)
+                if max_in <= 0:
+                    logger.warning(
+                        "PyAudioInput device_index=%s has no input channels; falling back to default input device",
+                        device_index,
+                    )
+                    device_index = None
+                elif channels > max_in:
+                    logger.warning(
+                        "PyAudioInput channels=%s exceeds device_index=%s maxInputChannels=%s; clamping",
+                        channels,
+                        device_index,
+                        max_in,
+                    )
+                    channels = max_in
+            except Exception as e:
+                logger.warning(
+                    "PyAudioInput failed to read device info for device_index=%s: %s",
+                    device_index,
+                    e,
+                )
+
+        channels = max(1, int(channels))
         return PyAudioInput(
             pa,
-            rate=int(conf.rate),
-            device_index=self.get_device_index(),
-            channels=conf.channels,
+            rate=rate,
+            device_index=device_index,
+            channels=channels,
             logger=logger,
             dtype=dtype,
             read_interval=conf.read_interval,
