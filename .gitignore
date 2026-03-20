@@ -21,6 +21,8 @@ thread_*.json
 
 known_faces.json
 
+*_params.json
+
 .workspace/runtime/logs/
 .workspace/runtime/agent_history/
 *.log

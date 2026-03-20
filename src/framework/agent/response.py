@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import random
 from typing import List, Optional, AsyncIterator, AsyncIterable, Dict
@@ -103,6 +104,8 @@ class MOSShellResponse(Response):
                     ).as_head()
                     self._buffered.append(head_msg)
                     yield head_msg
+
+                    json.dump(params, open(f"{self.agent_id}_params.json", "w"), ensure_ascii=False, indent=2)
 
                     # 调用litellm流式接口
                     response_stream = await litellm.acompletion(**params)

@@ -62,7 +62,7 @@ def index() -> rx.Component:
     return rx.container(
         rx.color_mode.button(position="top-right"),
         rx.vstack(
-            rx.heading("Welcome!", size="6"),
+            rx.heading("小灵第二人格正在思考～", size="6"),
             rx.markdown(State.markdown_content),
             spacing="5",
             justify="center",
