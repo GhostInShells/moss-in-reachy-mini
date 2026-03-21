@@ -170,25 +170,12 @@ class DecisionAgentHook(BaseAgentHook):
                     Text(text="====== 主Agent上下文更新事件 end ======"),
                 )
 
-        # ============ 添加直播间的事件更新信息 ============
-        recent_unprocessed_events = await self.douyin_live.get_unprocessed_events()
-        if recent_unprocessed_events:
-            message.with_content(
-                Text(text="====== 抖音直播间事件 start ======"),
-                Text(text=self.douyin_live.config.idle_task_prompt),
-                Text(text=f"\n发现{len(recent_unprocessed_events)}个未处理事件，请分析："),
-                Text(text=f"当前在线人数：{self.douyin_live.current_users}"),
-                Text(text=f"事件类型分布："),
-                *[Text(text=f"- {event.to_natural()}") for event in recent_unprocessed_events],
-                Text(text=f"\n请分析这些事件并提供互动建议。"),
-                Text(text="====== 抖音直播间事件 end ======"),
-            )
-
         if not message.is_empty():
             await self.eventbus.put(ProgramInputAgentEvent(
                 message=message,
                 agent_id=self.decision_agent_id,
                 priority=0,  # 普通队列，可被高优事件打断
+                overdue=20,
             ))
 
 
