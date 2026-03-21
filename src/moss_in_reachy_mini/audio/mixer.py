@@ -82,6 +82,19 @@ class AudioMixer:
         self._sr: int | None = None
         self._ch: int | None = None
 
+        # Master volume gain (0.0 ~ 1.0). Default 1.0 (no attenuation).
+        try:
+            self._gain = max(0.0, min(1.0, float(os.getenv("REACHY_MINI_VOLUME", "1.0"))))
+        except Exception:
+            self._gain = 1.0
+
+    def set_volume(self, gain: float) -> None:
+        """Set master volume gain (0.0 ~ 1.0)."""
+        self._gain = max(0.0, min(1.0, float(gain)))
+
+    def volume(self) -> float:
+        return self._gain
+
     def sample_rate(self) -> int:
         return int(self._sr or 0)
 
@@ -336,6 +349,8 @@ class AudioMixer:
                     if self._output_buffer_len() >= self._max_output_buffers:
                         time.sleep(0.005)
                         continue
+                    if self._gain < 1.0:
+                        mixed *= self._gain
                     mixed = np.clip(mixed, -1.0, 1.0)
                     self._mini.media.push_audio_sample(mixed)
 

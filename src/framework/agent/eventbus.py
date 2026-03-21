@@ -28,4 +28,3 @@ class QueueEventBus(EventBus):
 
     def on_get(self, callback) -> None:
         self.get_callback = callback
-
