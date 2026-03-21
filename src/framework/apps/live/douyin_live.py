@@ -203,8 +203,6 @@ class EventBuffer:
             if event.event_id in self.processed_events
         }
 
-
-
     def clear_all(self):
         """清空所有事件"""
         self.events.clear()
@@ -346,7 +344,7 @@ class DouyinLive(DouyinLiveWebFetcher):
 
     def _parseGiftMsg(self, payload):
         message = GiftMessage().parse(payload)
-        self.logger.info(f"收到礼物：{message}")
+        # self.logger.info(f"收到礼物：{message}")
 
         user_id = str(message.user.id)
         user_name = message.user.nick_name
@@ -405,14 +403,14 @@ class DouyinLive(DouyinLiveWebFetcher):
                 users_to_send = []
 
                 async with self._gift_cache_lock:
-                    # 找出超过3秒没有新礼物的用户
+                    # 找出超过5秒没有新礼物的用户
                     for user_id, cache in self._gift_cache.items():
-                        if current_time - cache['last_gift_time'] >= 3:
+                        if current_time - cache['last_gift_time'] >= 5:
                             users_to_send.append((user_id, cache.copy()))
-                            # 从缓存中移除
 
                     # 为每个需要发送的用户创建合并事件
                     for user_id, cache in users_to_send:
+                        # 从缓存中移除
                         del self._gift_cache[user_id]
                         await self._create_merged_gift_event(cache)
 
