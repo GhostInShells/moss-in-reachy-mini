@@ -35,6 +35,8 @@ from pathlib import Path
 import litellm
 from dotenv import load_dotenv
 
+from framework.apps.live.douyin_live import DouyinLiveUserHistory, DouyinLiveEventType
+
 # 加载 .env
 _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 load_dotenv(_PROJECT_ROOT / ".env")
@@ -238,7 +240,17 @@ async def process_live_dir(live_dir: Path, *, force: bool = False, dry_run: bool
         with open(fp, encoding="utf-8") as f:
             data = json.load(f)
 
+        history_model = DouyinLiveUserHistory.model_validate(data)
+
+        # 跳过非核心用户
+        if not history_model.is_core_user:
+            continue
+        # 之前版本的核心用户逻辑比较松，此处再double check一下
+        if not history_model.check_core_user():
+            continue
+
         raw_history = data.get("history", [])
+
         deduped = _dedup_history(raw_history)
         dedup_removed = len(raw_history) - len(deduped)
         dedup_removed_total += dedup_removed
