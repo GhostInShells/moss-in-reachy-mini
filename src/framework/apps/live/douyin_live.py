@@ -5,12 +5,12 @@ import logging
 import os
 import random
 import time
-import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Set
 
 from ghoshell_common.contracts import YamlConfig, Storage, WorkspaceConfigs, FileStorage, Workspace, LoggerItf
+from ghoshell_common.helpers import uuid
 from ghoshell_container import INSTANCE, Provider, IoCContainer
 from ghoshell_moss import Message, Text, PyChannel
 from pydantic import Field, BaseModel
@@ -35,7 +35,7 @@ class DouyinLiveConfig(YamlConfig):
     p0_overdue: int = Field(default=30, description="douyin p0 overdue")
     gift_prompt: str = Field(default="", description="douyin gift prompt")
 
-    max_user_history_size: int = Field(default=10, description="max user history size")
+    max_user_history_size: int = Field(default=3, description="max user history size")
 
     # 快照配置
     snapshot_interval: int = Field(default=10, description="快照生成间隔（秒）")
@@ -43,6 +43,7 @@ class DouyinLiveConfig(YamlConfig):
     event_retention_seconds: int = Field(default=300, description="事件保留时间（秒）")
 
     # 闲时任务配置
+    idle_task_threshold: int = Field(default=5, description="闲时任务触发阈值（秒）")
     idle_task_overdue: int = Field(default=30, description="定时任务触发间隔（秒）")
     idle_task_prompt: str = Field(default="", description="定时任务的提示词")
 
@@ -82,7 +83,7 @@ class DouyinLiveEventType(enum.Enum):
 # ========== 直播间的历史记录 ==========
 class DouyinLiveEvent(BaseModel):
     # 唯一标识符，用于去重
-    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="事件唯一ID")
+    event_id: str = Field(default_factory=uuid, description="事件唯一ID")
 
     # 用户id
     user_id: str = Field(default_factory=str, description="douyin user id")
@@ -666,9 +667,15 @@ class DouyinLive(DouyinLiveWebFetcher):
             # ))
             pass
         else:
+            group_by_user = defaultdict(list)
             for event in recent_unprocessed_events:
                 event.mark_processed("live")  # 或者用一个新的方法 mark_analyzed
                 self.event_buffer.mark_processed(event.event_id)
+                group_by_user[(event.user_id, event.user_name)].append(event)
+
+            # 异步保存到本地文件
+            for (user_id, user_name), events in group_by_user.items():
+                self.save_queue.put_nowait((user_id, user_name, events))
 
         return recent_unprocessed_events
 
@@ -722,19 +729,12 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 2. 事件详情消息
         if recent_events:
-            # 按用户分组
-            group_by_user = defaultdict(list)
             msg = Message.new(role="user", name=f"__douyin_live_interaction__")
             for event in recent_events:
-                group_by_user[(event.user_id, event.user_name)].append(event)
                 msg.with_content(
-                    Text(text=f"{event.to_natural()}")
+                    Text(text=f"[{'已处理' if event.processed else '未处理'}] {event.to_natural()}")
                 )
             messages.append(msg)
-
-            # 异步保存到本地文件
-            for (user_id, user_name), events in group_by_user.items():
-                self.save_queue.put_nowait((user_id, user_name, events))
 
         # 更新当前快照
         async with self._snapshot_lock:

@@ -166,7 +166,8 @@ class DecisionAgentHook(BaseAgentHook):
                               "1. 重复上一轮的建议；"
                               "2. 重复 MainAgent；"
                               "3. 在明确问题上和main agent都不行动；"
-                              "4. 不断的给 MainAgent 发建议"),
+                              "4. 不断的给 MainAgent 发建议"
+                              "5. 将已完成"),
                     Text(text="====== 主Agent上下文更新事件 end ======"),
                 )
 

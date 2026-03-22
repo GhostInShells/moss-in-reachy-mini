@@ -307,8 +307,8 @@ async def run(container):
     agents.append(main_agent)
 
     # 决策Agent
-    decision_agent = build_decision_agent(container, "decision")
-    agents.append(decision_agent)
+    # decision_agent = build_decision_agent(container, "decision")
+    # agents.append(decision_agent)
 
     # AgentHub
     eventbus = container.force_fetch(EventBus)

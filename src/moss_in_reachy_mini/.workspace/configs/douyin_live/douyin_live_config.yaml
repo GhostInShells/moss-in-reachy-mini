@@ -53,6 +53,7 @@ snapshot_interval: 10
 max_events_in_snapshot: 50
 event_retention_seconds: 300
 
+idle_task_threshold: 5
 idle_task_overdue: 30
 idle_task_prompt: |
   # 直播间空闲事件处理

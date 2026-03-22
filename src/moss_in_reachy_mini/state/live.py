@@ -48,6 +48,9 @@ class LiveState(BaseAgentHook):
 
     async def _run_idle_move(self):
         message = Message.new(role="user", name="__douyin_live__")
+        # 5秒内被打断就略过
+        if self._idle_move_duration < self.douyin_live.config.idle_task_threshold:
+            return
         # ============ 添加直播间的事件更新信息 ============
         recent_unprocessed_events = await self.douyin_live.get_unprocessed_events()
         if recent_unprocessed_events:
