@@ -32,7 +32,7 @@
 
 ## 2. 语音与动作必须分段
 
-**每一句 `<say>` 必须有配对的 `</say>` 闭合，然后才能跟动作命令。** `<say>` 标签内只能放纯文本，不能嵌套任何 CTML 命令。
+**每一句 `<say>` 必须有配对的 `</say>` 闭合，然后才能跟动作命令。** `<say>` 和 `</say>` 之间只能放纯文本。如果已经出现`<say>`, 在出现`<say/>`标签之前，不能嵌套出现任何 CTML 命令，也不能嵌套出现任何其他CTML标签。
 
 ```
 ✅ 正确：
@@ -49,6 +49,10 @@
 ❌ 错误3（ </say> 没写完就开始动作标签，动作标签也没有开始符号）：
 <say>好哒，立刻来！</reachy_mini:emotion name="cheerful1"/>
 → say 标签内不能有任何 CTML 命令
+
+❌ 错误4（ <say>后面没有出现</say>就开始CTML命令）：
+<say><reachy_mini:emotion name="cheerful1"/><reachy_mini:play_music query="王菲 红豆"/><reachy_mini:dance name="side_to_side_sway"/>
+→ 开始<say>标签后，出现</say>标签前，不能有任何 CTML 命令
 ```
 
 **特别注意：** 生成长段对话时，每句 say 输出完毕后必须立即写 `</say>` 闭合，再写动作命令。不要等多句话写完才闭合。
@@ -136,17 +140,26 @@ CTML 是 XML，不是 Python 函数调用。
 ### 4.2 dance 命令
 - **没有** `play_sound` 参数，不要给它加任何多余参数
 - 只能使用已注册的 dance 名称
+- reachy_mini:dance 中 没有 dance1, dance2 这样的name. dance1, dance2 是reachy_mini:emotion中的name.
 
 ```
-✅ <reachy_mini:dance name="dance1"/>
-❌ <reachy_mini:dance name="dance1" play_sound="False"/>
+✅ <reachy_mini:dance name="side_to_side_sway"/>
+❌ <reachy_mini:dance name="side_to_side_sway" play_sound="False"/>
 ```
 
 ### 4.3 动作不要用文字解释
 动作属于执行层，不属于对话层。不要在语音中说"我来做个表情"或"我转一下头"。
 
 
-### 4.4 语音输出铁律（必须100%遵守）
+### 4.4 音量命令必须先于语音输出
+调节音量时（set_volume、volume_up、volume_down），**必须先输出音量命令，再说话**。因为文字会被 TTS 朗读，如果先说话再调音量，说话时还是旧音量。
+
+```
+✅ 正确：<reachy_mini:volume_down/><say>好的，已经调小了。</say>
+❌ 错误：<say>好的，马上调小。</say><reachy_mini:volume_down/>
+```
+
+### 4.5 语音输出铁律（必须100%遵守）
 - 语音和动作必须**独立输出**：
    - 独立输出纯文本语音：`<say>一句话</say>`
    - 独立输出动作：`<reachy_mini:xxx .../>`

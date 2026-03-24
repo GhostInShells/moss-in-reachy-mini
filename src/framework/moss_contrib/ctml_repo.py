@@ -17,7 +17,6 @@ class CtmlRepo:
         """
         Save CTML commands as text to storage.
         :param ctml__: Nested CTML commands to be executed as a synchronized group.
-               The commands will be parsed as sub-tasks and managed by the wait primitive.
         :param name: ctml name
         """
         ctml_text = ""

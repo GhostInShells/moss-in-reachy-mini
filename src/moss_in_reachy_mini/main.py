@@ -36,6 +36,7 @@ from moss_in_reachy_mini.components.antennas import AntennasProvider
 from moss_in_reachy_mini.components.body import BodyProvider
 from moss_in_reachy_mini.components.head import HeadProvider
 from moss_in_reachy_mini.components.head_tracker import HeadTrackerProvider
+from moss_in_reachy_mini.components.music import MusicSearchProvider
 from moss_in_reachy_mini.components.sound import SoundProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.logger import setup_logger
@@ -276,6 +277,7 @@ def common_dependencies(container: IoCContainer):
     container.register(VisionProvider())
     container.register(HeadTrackerProvider())
     container.register(SoundProvider())
+    container.register(MusicSearchProvider())
     container.register(CameraWorkerProvider())
     container.register(VideoRecorderWorkerProvider())
     container.register(FrameHubProvider())

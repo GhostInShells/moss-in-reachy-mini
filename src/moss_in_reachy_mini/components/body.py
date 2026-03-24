@@ -8,7 +8,6 @@ from reachy_mini.utils import create_head_pose
 from reachy_mini_dances_library import DanceMove
 from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
-from moss_in_reachy_mini.components.head_tracker import HeadTracker
 from moss_in_reachy_mini.moves.head_move import HeadMove
 from moss_in_reachy_mini.utils import load_emotions
 
@@ -16,7 +15,6 @@ from moss_in_reachy_mini.utils import load_emotions
 class Body:
     def __init__(self, mini: ReachyMini, container: IoCContainer):
         self.mini = mini
-
         self._emotions_storage, self._emotions = load_emotions(container)
 
     async def dance(self, name: str):
@@ -32,7 +30,7 @@ class Body:
         dance_docstrings = []
         for name, move in AVAILABLE_MOVES.items():
             func, params, meta = move
-            dance_docstrings.append(f"name: {name} description: {meta.get("description", "")}")
+            dance_docstrings.append(f"name: {name} description: {meta.get("description", "")} beats: {meta.get("default_duration_beats", 4)}")
         return f"Dance can be chosen in \n{"\n".join(dance_docstrings)}"
 
     async def emotion(self, name: str):
