@@ -17,15 +17,10 @@ python src/moss_in_reachy_mini/main.py
 - `.mood_base.md`是情绪基地（可人为修改）
 - `.autobiographical_memory.md`是自传记忆（可人为修改）
 - `.summary_memory.md`是交互历史摘要（可人为修改）
+- `.consciousness_memory.md`是意识记忆（可人为修改）
 - `thread_xxxxxx.json`是当前会话的所有上下文（不可人为修改），可以在对话中要求创建新的会话；当前不支持切换会话，后续可以提供一个UI页面来做更fancy的呈现。
 
-### 启动UI页面
-```commandline
-streamlit run src/moss_in_reachy_mini/scripts/memory_ui.py
-```
-
 ## 视觉
-
 ### 人脸识别
 #### 手动录入人脸
 在`src/moss_in_reachy_mini/.workspace/runtime/vision/faces`目录下创建文件夹，文件夹名字为人名，且只能用英文。
@@ -55,7 +50,10 @@ python scripts/train_face.py
 ### 开启直播
 .env文件中添加以下内容
 ```
+# 模式切换
 REACHY_MINI_MODE="live"
+# 隔离记忆
+REACHY_MINI_MEMORY="live_memory"
 ```
 运行main.py即可开启直播模式
 
