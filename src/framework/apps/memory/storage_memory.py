@@ -16,6 +16,7 @@ class MetaConfig(YamlConfig):
     # 记忆
     autobiographical_memory_md: str = Field(default="autobiographical_memory.md", description="autobiographical memory file")
     summary_memory_md: str = Field(default="summary_memory.md", description="summary memory file")
+    consciousness_memory_md: str = Field(default="consciousness_memory.md", description="conscious memory file")
 
 
 class StorageMemory:
@@ -101,6 +102,14 @@ class StorageMemory:
         """
         self.storage.put(self._meta_config.summary_memory_md, text__.encode())
 
+    async def refresh_consciousness_memory(self, text__: str):
+        """
+        更新你自己的意识记忆，需要和之前的意识记忆融合提炼，避免完全覆盖掉之前的意识记忆
+        :param text__: 意识记忆内容
+        :return:
+        """
+        self.storage.put(self._meta_config.consciousness_memory_md, text__.encode())
+
     async def read_md(self, md: str) -> str:
         if not self.storage.exists(md):
             return ""
@@ -112,17 +121,29 @@ class StorageMemory:
         personality = await self.read_md(self._meta_config.personality_md)
         behavior_preference = await self.read_md(self._meta_config.behavior_preference_md)
         mood_base = await self.read_md(self._meta_config.mood_base_md)
+        personality_contents = []
+        if personality:
+            personality_contents.append(Text(text=f"personality: {personality}"))
+        if behavior_preference:
+            personality_contents.append(Text(text=f"behavior_preference: {behavior_preference}"))
+        if mood_base:
+            personality_contents.append(Text(text=f"mood_base: {mood_base}"))
         msgs.append(Message.new(role="system", name="__personality__").with_content(
-            Text(text=personality or "Empty"),
-            Text(text=behavior_preference or "Empty"),
-            Text(text=mood_base or "Empty"),
+            *personality_contents
         ))
 
         autobiographical_memory = await self.read_md(self._meta_config.autobiographical_memory_md)
         summary_memory = await self.read_md(self._meta_config.summary_memory_md)
+        consciousness_memory = await self.read_md(self._meta_config.consciousness_memory_md)
+        memory_contents = []
+        if autobiographical_memory:
+            memory_contents.append(Text(text=f"autobiographical_memory: {autobiographical_memory}"))
+        if summary_memory:
+            memory_contents.append(Text(text=f"summary_memory: {summary_memory}"))
+        if consciousness_memory:
+            memory_contents.append(Text(text=f"consciousness_memory: {consciousness_memory}"))
         msgs.append(Message.new(role="system", name="__memory__").with_content(
-            Text(text=autobiographical_memory or "Empty"),
-            Text(text=summary_memory or "Empty"),
+            *memory_contents
         ))
 
         msgs.append(Message.new(role="system", name="__memory_settings__").with_content(
@@ -136,12 +157,13 @@ class StorageMemory:
             description="你的记忆存储和读取通道",
         )
 
-        if read_only:
+        if not read_only:
             memory.build.command()(self.refresh_personality)
             memory.build.command()(self.refresh_behavior_preference)
             memory.build.command()(self.refresh_mood_base)
             memory.build.command()(self.refresh_autobiographical_memory)
             memory.build.command()(self.refresh_summary_memory)
+            memory.build.command()(self.refresh_consciousness_memory)
         memory.build.context_messages(self.context_messages)
 
         return memory

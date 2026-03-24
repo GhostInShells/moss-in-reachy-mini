@@ -6,7 +6,7 @@ from ghoshell_moss import Message, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_event import ProgramInputAgentEvent, CTMLAgentEvent
-from framework.abcd.agent_hub import EventBus, AgentHub
+from framework.abcd.agent_hub import EventBus
 from framework.apps.live.douyin_live import DouyinLive
 from framework.apps.todolist import TodoList
 from moss_in_reachy_mini.state import BaseAgentHook
@@ -47,8 +47,35 @@ class LiveState(BaseAgentHook):
         await self.douyin_live.pause()
 
     async def _run_idle_move(self):
-        pass
-
+        message = Message.new(role="user", name="__live_idle_driver__")
+        # 5秒内被打断就略过
+        if self._idle_move_duration < self.douyin_live.config.idle_task_threshold:
+            return
+        # ============ 添加直播间的事件更新信息 ============
+        recent_unprocessed_events = await self.douyin_live.get_unprocessed_events()
+        if recent_unprocessed_events:
+            message.with_content(
+                Text(text="====== 抖音直播间事件 start ======"),
+                Text(text=self.douyin_live.config.idle_task_prompt),
+                Text(text=f"\n发现{len(recent_unprocessed_events)}个未处理事件，请回应："),
+                Text(text=f"当前在线人数：{self.douyin_live.current_users}"),
+                Text(text=f"事件列表："),
+                *[Text(text=f"- {event.to_natural()}") for event in recent_unprocessed_events],
+                Text(text=f"\n请对以下事件进行回应。"),
+                Text(text="====== 抖音直播间事件 end ======"),
+            )
+        # 2 * 5秒内被打断就略过
+        elif self._idle_move_duration > 2 * self.douyin_live.config.idle_task_threshold:
+            message.with_content(
+                Text(text=self.douyin_live.config.idle_think_prompt)
+            )
+        if not message.is_empty():
+            await self.eventbus.put(ProgramInputAgentEvent(
+                message=message,
+                agent_id="", # 默认主脑
+                priority=0,  # 普通队列，可被高优事件打断
+                overdue=20,
+            ))
 
 class LiveStateProvider(Provider[LiveState]):
     def singleton(self) -> bool:

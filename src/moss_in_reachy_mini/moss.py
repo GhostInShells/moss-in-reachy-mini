@@ -166,6 +166,8 @@ class MossInReachyMini:
             reachy_mini.build.context_messages(self.context_messages)
             return reachy_mini
 
+        reachy_mini.build.context_messages(self.context_messages)
+
         # 支持大模型自主切换reachy mini的仿生状态
         reachy_mini.build.command(
             doc=f"""

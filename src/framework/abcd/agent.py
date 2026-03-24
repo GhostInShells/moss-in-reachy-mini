@@ -1,7 +1,7 @@
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Union, List, Any, Optional, ClassVar, AsyncIterator, AsyncIterable
+from typing import Union, List, Any, Optional, ClassVar, AsyncIterator, AsyncIterable, Tuple
 
 from ghoshell_common.identifier import Identifier
 from ghoshell_container import Container
@@ -144,7 +144,7 @@ class ModelConf(BaseModel):
     )
     temperature: float = Field(default=0.7, description="temperature")
     n: int = Field(default=1, description="number of iterations")
-    max_tokens: int = Field(default=4000, description="max tokens")
+    max_tokens: int = Field(default=30000, description="max tokens")
     timeout: float = Field(default=30, description="timeout")
     request_timeout: float = Field(default=40, description="request timeout")
     kwargs: dict[str, Any] = Field(default_factory=dict, description="kwargs")
@@ -170,6 +170,24 @@ means only the tokens comprising the top 10% probability mass are considered.
             else:
                 real_params[key] = value
         return real_params
+
+    def generate_openapi_params(self) -> Tuple[str, str, dict[str, Any]]:
+        params = self.model_dump(exclude_none=True, exclude={"kwargs", "request_timeout"})
+        params.update(self.kwargs)
+        real_params = {}
+        for key, value in params.items():
+            if isinstance(value, str) and value.startswith("$"):
+                default_value = self.default_env.get(key, "")
+                real_value = os.environ.get(value[1:], default_value)
+                if real_value is not None:
+                    real_params[key] = real_value
+            else:
+                real_params[key] = value
+
+        real_params["timeout"] = self.request_timeout
+        api_key = real_params.pop("api_key")
+        base_url = real_params.pop("base_url")
+        return api_key, base_url, real_params
 
 
 class AgentConfig(BaseModel):

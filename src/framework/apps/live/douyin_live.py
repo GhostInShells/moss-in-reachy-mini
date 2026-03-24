@@ -5,12 +5,12 @@ import logging
 import os
 import random
 import time
-import uuid
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Dict, Set
 
 from ghoshell_common.contracts import YamlConfig, Storage, WorkspaceConfigs, FileStorage, Workspace, LoggerItf
+from ghoshell_common.helpers import uuid
 from ghoshell_container import INSTANCE, Provider, IoCContainer
 from ghoshell_moss import Message, Text, PyChannel
 from pydantic import Field, BaseModel
@@ -35,7 +35,7 @@ class DouyinLiveConfig(YamlConfig):
     p0_overdue: int = Field(default=30, description="douyin p0 overdue")
     gift_prompt: str = Field(default="", description="douyin gift prompt")
 
-    max_user_history_size: int = Field(default=10, description="max user history size")
+    max_user_history_size: int = Field(default=3, description="max user history size")
 
     # 快照配置
     snapshot_interval: int = Field(default=10, description="快照生成间隔（秒）")
@@ -43,8 +43,11 @@ class DouyinLiveConfig(YamlConfig):
     event_retention_seconds: int = Field(default=300, description="事件保留时间（秒）")
 
     # 闲时任务配置
+    idle_task_threshold: int = Field(default=5, description="闲时任务触发阈值（秒）")
     idle_task_overdue: int = Field(default=30, description="定时任务触发间隔（秒）")
     idle_task_prompt: str = Field(default="", description="定时任务的提示词")
+
+    idle_think_prompt: str = Field(default="", description="闲时思考的提示词")
 
     # 新增配置：去重和过滤
     deduplication_window: int = Field(default=120, description="去重时间窗口（秒）")
@@ -82,7 +85,7 @@ class DouyinLiveEventType(enum.Enum):
 # ========== 直播间的历史记录 ==========
 class DouyinLiveEvent(BaseModel):
     # 唯一标识符，用于去重
-    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="事件唯一ID")
+    event_id: str = Field(default_factory=uuid, description="事件唯一ID")
 
     # 用户id
     user_id: str = Field(default_factory=str, description="douyin user id")
@@ -105,7 +108,7 @@ class DouyinLiveEvent(BaseModel):
     def to_natural(self):
         local_time = time.localtime(self.create_at)
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
-        res = f"{time_str} {self.user_name}#{self.user_id} {self.event_type.to_natural()}"
+        res = f"{time_str} {self.user_name} {self.event_type.to_natural()}"
         if self.content:
             res = f"{res} {self.content}"
         return res
@@ -121,6 +124,10 @@ class DouyinLiveEvent(BaseModel):
         return time.time() - self.create_at <= seconds
 
 
+class DouyinLiveUserAssessment(BaseModel):
+    ai_profile: str = Field(default="", description="ai profile")
+
+
 # 单个用户所有的交互历史
 class DouyinLiveUserHistory(BaseModel):
     # 用户id
@@ -132,7 +139,7 @@ class DouyinLiveUserHistory(BaseModel):
     # 历史发生过的所有事情
     history: List[DouyinLiveEvent] = Field(default_factory=list, description="douyin user history")
     # 对该用户的综合评价
-    assessment: str = Field(default_factory=str, description="assessment")
+    assessment: DouyinLiveUserAssessment = Field(default_factory=DouyinLiveUserAssessment, description="assessment")
     # 最后进入时间（用于冷却）
     last_enter_time: Optional[int] = Field(default=None, description="最后进入时间")
     # 最后交互时间
@@ -160,6 +167,23 @@ class DouyinLiveUserHistory(BaseModel):
     def update_last_interaction_time(self):
         """更新最后交互时间"""
         self.last_interaction_time = int(time.time())
+
+    def check_core_user(self):
+        chat_like_count = len(self.get_history_events(
+            DouyinLiveEventType.chat,
+            DouyinLiveEventType.like,
+            max_count=3,
+        ))
+        gift_social_count = len(self.get_history_events(
+            DouyinLiveEventType.small_gift,
+            DouyinLiveEventType.medium_gift,
+            DouyinLiveEventType.super_gift,
+            DouyinLiveEventType.social,
+            max_count=1,
+        ))
+        if chat_like_count < 3 and gift_social_count < 1:
+            return False
+        return True
 
 
 @dataclass
@@ -604,8 +628,8 @@ class DouyinLive(DouyinLiveWebFetcher):
                             message_content.append(Text(text=f"  - {hist_event.to_natural()}"))
 
                 # 如果是核心用户，添加综合评价
-                if user_history.assessment:
-                    message_content.append(Text(text=f"\n用户 {event.user_name} 的综合评价：{user_history.assessment}"))
+                if user_history.assessment and user_history.assessment.ai_profile:
+                    message_content.append(Text(text=f"\n用户 {event.user_name} 的综合评价：{user_history.assessment.ai_profile}"))
 
                 # 发送到事件总线
                 await self.eventbus.put(ProgramInputAgentEvent(
@@ -666,9 +690,15 @@ class DouyinLive(DouyinLiveWebFetcher):
             # ))
             pass
         else:
+            group_by_user = defaultdict(list)
             for event in recent_unprocessed_events:
                 event.mark_processed("live")  # 或者用一个新的方法 mark_analyzed
                 self.event_buffer.mark_processed(event.event_id)
+                group_by_user[(event.user_id, event.user_name)].append(event)
+
+            # 异步保存到本地文件
+            for (user_id, user_name), events in group_by_user.items():
+                self.save_queue.put_nowait((user_id, user_name, events))
 
         return recent_unprocessed_events
 
@@ -722,19 +752,12 @@ class DouyinLive(DouyinLiveWebFetcher):
 
         # 2. 事件详情消息
         if recent_events:
-            # 按用户分组
-            group_by_user = defaultdict(list)
             msg = Message.new(role="user", name=f"__douyin_live_interaction__")
             for event in recent_events:
-                group_by_user[(event.user_id, event.user_name)].append(event)
                 msg.with_content(
-                    Text(text=f"{event.to_natural()}")
+                    Text(text=f"[{'已处理' if event.processed else '未处理'}] {event.to_natural()}")
                 )
             messages.append(msg)
-
-            # 异步保存到本地文件
-            for (user_id, user_name), events in group_by_user.items():
-                self.save_queue.put_nowait((user_id, user_name, events))
 
         # 更新当前快照
         async with self._snapshot_lock:
@@ -812,27 +835,11 @@ class DouyinLive(DouyinLiveWebFetcher):
 
                 # 判断是否为核心用户
                 if not history.is_core_user:
-                    # 检查互动次数
-                    chat_like_events = history.get_history_events(
-                        DouyinLiveEventType.chat,
-                        DouyinLiveEventType.like,
-                        max_count=3,
-                    )
-                    if len(chat_like_events) >= 3:
-                        history.is_core_user = True
+                    history.is_core_user = history.check_core_user()
 
-                    # 检查是否有重要行为
-                    important_events = history.get_history_events(
-                        DouyinLiveEventType.super_gift,
-                        DouyinLiveEventType.medium_gift,
-                        DouyinLiveEventType.small_gift,
-                        DouyinLiveEventType.social,
-                        max_count=1
-                    )
-                    if len(important_events) >= 1:
-                        history.is_core_user = True
-
-                await self.save_user_history(history)
+                # 保存用户历史
+                if history.history:
+                    await self.save_user_history(history)
                 self.save_queue.task_done()
         except asyncio.CancelledError:
             pass
@@ -872,7 +879,7 @@ class DouyinLiveProvider(Provider[DouyinLive]):
 
         return DouyinLive(
             eventbus=eventbus,
-            history_storage=ws.runtime().sub_storage(os.environ["REACHY_MINI_MEMORY"]),
+            history_storage=ws.runtime().sub_storage(os.environ.get("REACHY_MINI_MEMORY", "memory")),
             config=config,
             logger=logger
         )

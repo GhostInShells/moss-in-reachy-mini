@@ -6,16 +6,19 @@ import pathlib
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_common.contracts.storage import MemoryStorage
 from ghoshell_container import Container
-from ghoshell_moss import MOSSShell
+from ghoshell_moss import MOSSShell, Message, Text
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
 
 from framework.abcd.agent import AgentConfig, ModelConf
+from framework.abcd.agent_event import ProgramInputAgentEvent
+from framework.abcd.agent_hook import AgentHook
 from framework.abcd.agent_hub import EventBus, AgentHub
 from framework.abcd.session import Session
 from framework.agent.agent_fastapi import AgentFastAPI
+from framework.agent.agent_hook import BaseAgentHook
 from framework.agent.agent_hub import AgentHubImpl
 from framework.agent.broadcaster import ChatBroadcasterProvider, LogBroadcasterProvider
 from framework.agent.eventbus import QueueEventBus
@@ -30,6 +33,46 @@ from framework.apps.utils import AgentConsoleChat
 from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from moss_in_reachy_mini.utils import load_instructions
+
+
+class DriveSelfState(BaseAgentHook):
+
+    NAME = "live"
+    out_switchable = False
+
+    def __init__(
+            self,
+            eventbus: EventBus,
+            douyin: DouyinLive,
+            logger: LoggerItf=None,
+    ):
+        super().__init__()
+        self.logger = logger or logging.getLogger("LiveState")
+        self.eventbus = eventbus
+        self.douyin = douyin
+
+    def get_hook(self) -> AgentHook:
+        return self
+
+    async def on_self_enter(self):
+        pass
+
+    async def on_self_exit(self):
+        pass
+
+    async def _run_idle_move(self):
+        if self._idle_move_duration > 5:
+            message = Message.new(role="user", name="__drive_self__")
+            message.with_content(
+                Text(text=self.douyin.config.idle_think_prompt)
+            )
+            if not message.is_empty():
+                await self.eventbus.put(ProgramInputAgentEvent(
+                    message=message,
+                    agent_id="", # 默认主脑
+                    priority=0,  # 普通队列，可被高优事件打断
+                    overdue=20,
+                ))
 
 
 async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
@@ -56,11 +99,11 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # shell
     shell = new_ctml_shell(
         container=container,
-        speech=get_example_speech(container, default_speaker="可爱女生"),
+        # speech=get_example_speech(container, default_speaker="可爱女生"),
         experimental=False,
     )
     shell.main_channel.import_channels(
-        memory.as_channel(read_only=True),
+        memory.as_channel(),
         session.as_channel(),
         douyin_live.as_channel(),
         websearch_chan,
@@ -70,7 +113,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
 
     instructions = load_instructions(
         container,
-        files=["main_agent/instructions.md"],
+        files=["main_agent/instructions.md", "memory_rules.md"],
         storage_name="instructions",
     )
 
@@ -93,6 +136,8 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
             instructions=instructions,
         ),
     )
+    eventbus = container.force_fetch(EventBus)
+    agent.set_state_hook(DriveSelfState(eventbus=eventbus, douyin=douyin_live))
     agent.ctml_candidates = [
         # "<say>我正在听</say>"
     ]
@@ -219,7 +264,7 @@ async def main() -> None:
             main_agent_id=main_agent_id,
             agents=[
                 main_agent,
-                decision_agent,
+                # decision_agent,
             ],
             eventbus=container.force_fetch(EventBus),
             logger=container.get(LoggerItf),
