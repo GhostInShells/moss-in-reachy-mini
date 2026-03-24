@@ -244,31 +244,31 @@ class MossInReachyMini:
                 "If it's a relative path, it is resolved under assets/audio/. "
                 "Supports pause/resume/stop via corresponding commands."
             ),
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
         )(self.sound.play_sound)
 
         reachy_mini.build.command(
             name="pause_sound",
             doc="暂停当前音频/音乐播放。用户说暂停音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
         )(self.sound.pause_sound)
 
         reachy_mini.build.command(
             name="resume_sound",
             doc="恢复音频/音乐播放。用户说继续播放时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
         )(self.sound.resume_sound)
 
         reachy_mini.build.command(
             name="stop_sound",
             doc="停止音频/音乐播放。用户说停止音乐、关掉音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME,TeachingState.NAME),
         )(self.sound.stop_sound)
 
         reachy_mini.build.command(
             name="sound_status",
             doc="获取当前音频/音乐播放状态。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
         )(self.sound.sound_status)
 
         reachy_mini.build.command(
@@ -312,31 +312,31 @@ class MossInReachyMini:
                 "播放后系统会自动触发动作编排请求，你不需要在调用play_music时同时输出dance。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
             ),
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
+            available=self.is_available_fn(WakenState.NAME),
         )(self.music.play_music)
 
         reachy_mini.build.command(
             name="stop_music",
             doc="停止音乐播放并停止所有动作。用户说停止音乐、关掉音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
+            available=self.is_available_fn(WakenState.NAME),
         )(self.music.stop_music)
 
         reachy_mini.build.command(
             name="pause_music",
             doc="暂停音乐播放并停止动作。用户说暂停音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
+            available=self.is_available_fn(WakenState.NAME),
         )(self.music.pause_music)
 
         reachy_mini.build.command(
             name="resume_music",
             doc="恢复音乐播放并继续动作编排。用户说继续播放音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
+            available=self.is_available_fn(WakenState.NAME),
         )(self.music.resume_music)
 
         reachy_mini.build.command(
             name="search_music",
             doc="搜索音乐返回结果列表，不自动播放。用于让用户选择。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
+            available=self.is_available_fn(WakenState.NAME),
         )(self.music.search_music)
 
         reachy_mini.build.command(
