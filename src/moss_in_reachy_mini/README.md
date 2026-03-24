@@ -44,7 +44,7 @@ python scripts/train_face.py
 ```
 
 ## 直播
-### 直播配置文件
+### 直播配置文件（目前只支持抖音直播）
 [配置文件](.workspace/configs/douyin_live/douyin_live_config.yaml)
 
 ### 开启直播
