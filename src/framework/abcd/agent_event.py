@@ -1,5 +1,5 @@
 import time
-from typing import TypedDict, Optional, Any, Self, ClassVar, List
+from typing import TypedDict, Optional, Any, Self, ClassVar, List, Union
 
 from ghoshell_common.helpers import uuid
 from ghoshell_moss import Base64Image, Message
@@ -70,7 +70,9 @@ class AgentEventModel(BaseModel):
         )
 
     @classmethod
-    def from_agent_event(cls, agent_event: AgentEvent) -> Optional[Self]:
+    def from_agent_event(cls, agent_event: Union[AgentEvent, "AgentEventModel"]) -> Optional[Self]:
+        if isinstance(agent_event, AgentEventModel):
+            agent_event = agent_event.to_agent_event()
         if cls.event_type != agent_event["event_type"]:
             return None
         data = agent_event.get("data", {})

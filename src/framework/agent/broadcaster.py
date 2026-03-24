@@ -11,7 +11,8 @@ from framework.abcd.agent import Broadcaster
 from framework.agent.utils import InterruptedContent
 
 # CTML 标签中需要从终端输出中隐藏的 channel 前缀（say 标签的文本内容保留显示）
-_HIDDEN_CTML_CHANNELS = {"memory", "reachy_mini", "douyin_live"}
+# _HIDDEN_CTML_CHANNELS = {"memory", "reachy_mini", "douyin_live"}
+_HIDDEN_CTML_CHANNELS = {}
 
 
 class _CtmlDisplayFilter:

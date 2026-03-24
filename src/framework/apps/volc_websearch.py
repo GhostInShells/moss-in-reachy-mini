@@ -5,7 +5,7 @@ from typing import Optional
 import aiohttp
 from ghoshell_common.helpers import uuid
 from ghoshell_container import IoCContainer, Provider, INSTANCE
-from ghoshell_moss import Channel, ChannelRuntime, PyChannel
+from ghoshell_moss import Channel, ChannelRuntime, PyChannel, Message, Text
 from ghoshell_moss.core.concepts.command import CommandTaskResult
 
 
@@ -49,7 +49,8 @@ class VolcWebsearchChannel(Channel):
         # 请求体数据
         payload = {
             "Query": query,
-            "SearchType": "web"
+            "SearchType": "web",
+            "Count": 3,
         }
 
         # 创建异步HTTP会话并发送请求
@@ -78,6 +79,9 @@ class VolcWebsearchChannel(Channel):
 
                     return CommandTaskResult(
                         result=res,
+                        messages=[Message.new(role="user", name="__websearch_result__").with_content(
+                            Text(text="基于搜索结果进行**整合分析**，而不仅仅是转述；以及此次结果react行为避免**继续搜索**。"),
+                        )],
                         observe=True,
                     )
 

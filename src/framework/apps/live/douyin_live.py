@@ -47,6 +47,8 @@ class DouyinLiveConfig(YamlConfig):
     idle_task_overdue: int = Field(default=30, description="定时任务触发间隔（秒）")
     idle_task_prompt: str = Field(default="", description="定时任务的提示词")
 
+    idle_think_prompt: str = Field(default="", description="闲时思考的提示词")
+
     # 新增配置：去重和过滤
     deduplication_window: int = Field(default=120, description="去重时间窗口（秒）")
     max_enter_events_per_snapshot: int = Field(default=3, description="每个快照最多包含的进入事件数")
@@ -106,7 +108,7 @@ class DouyinLiveEvent(BaseModel):
     def to_natural(self):
         local_time = time.localtime(self.create_at)
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", local_time)
-        res = f"{time_str} {self.user_name}#{self.user_id} {self.event_type.to_natural()}"
+        res = f"{time_str} {self.user_name} {self.event_type.to_natural()}"
         if self.content:
             res = f"{res} {self.content}"
         return res
@@ -877,7 +879,7 @@ class DouyinLiveProvider(Provider[DouyinLive]):
 
         return DouyinLive(
             eventbus=eventbus,
-            history_storage=ws.runtime().sub_storage(os.environ["REACHY_MINI_MEMORY"]),
+            history_storage=ws.runtime().sub_storage(os.environ.get("REACHY_MINI_MEMORY", "memory")),
             config=config,
             logger=logger
         )

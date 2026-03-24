@@ -268,6 +268,9 @@ class BaseMainAgent(Agent, ABC):
 
     async def _finish_response(self, response: Response) -> None:
         inputs = response.inputted()
+        # react 事件不存储
+        if _ := ReactAgentEvent.from_agent_event(response.event):
+            inputs = []
         outputs = response.buffered()
         # 判断 outputs 不为空, 就再次保存.
         if inputs or outputs:

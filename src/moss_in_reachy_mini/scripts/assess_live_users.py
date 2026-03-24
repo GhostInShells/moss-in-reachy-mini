@@ -33,6 +33,7 @@ from collections import Counter
 from pathlib import Path
 
 import litellm
+import openai
 from dotenv import load_dotenv
 
 from framework.apps.live.douyin_live import DouyinLiveUserHistory, DouyinLiveEventType
@@ -206,10 +207,13 @@ def _build_llm_input(data: dict, history: list[dict], stats: dict) -> str:
 
 async def _call_llm(llm_input: str) -> str:
     """调用 LLM 生成 ai_profile。"""
-    response = await litellm.acompletion(
-        model=_LLM_MODEL,
+    client = openai.AsyncClient(
         api_key=_LLM_API_KEY,
         base_url=_LLM_BASE_URL,
+    )
+
+    response = await client.chat.completions.create(
+        model=_LLM_MODEL,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": llm_input},
