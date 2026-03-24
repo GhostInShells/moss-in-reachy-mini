@@ -30,7 +30,7 @@ class Body:
         dance_docstrings = []
         for name, move in AVAILABLE_MOVES.items():
             func, params, meta = move
-            dance_docstrings.append(f"name: {name} description: {meta.get("description", "")}")
+            dance_docstrings.append(f"name: {name} description: {meta.get("description", "")} beats: {meta.get("default_duration_beats", 4)}")
         return f"Dance can be chosen in \n{"\n".join(dance_docstrings)}"
 
     async def emotion(self, name: str):
