@@ -64,8 +64,8 @@ class LiveState(BaseAgentHook):
                 Text(text=f"\n请对以下事件进行回应。"),
                 Text(text="====== 抖音直播间事件 end ======"),
             )
-        # 2 * 5秒内被打断就略过
-        elif self._idle_move_duration > 2 * self.douyin_live.config.idle_task_threshold:
+        # 4 * 3秒内被打断就略过
+        elif self._idle_move_duration > 4 * self.douyin_live.config.idle_task_threshold:
             message.with_content(
                 Text(text=self.douyin_live.config.idle_think_prompt)
             )

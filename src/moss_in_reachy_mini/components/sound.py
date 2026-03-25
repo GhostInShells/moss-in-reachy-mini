@@ -1,9 +1,11 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import List
 
-from ghoshell_common.contracts import Workspace
+from ghoshell_common.contracts import Workspace, Storage, FileStorage
 from ghoshell_container import INSTANCE, IoCContainer, Provider
+from ghoshell_moss import Channel, PyChannel, Message, Text
 from reachy_mini import ReachyMini
 
 from moss_in_reachy_mini.audio.file_player import ReachyMiniAudioFilePlayer
@@ -13,17 +15,20 @@ logger = logging.getLogger(__name__)
 
 
 class Sound:
-    def __init__(self, mini: ReachyMini, workspace: Workspace) -> None:
+    def __init__(self, mini: ReachyMini, player: ReachyMiniAudioFilePlayer, mixer: AudioMixer, storage: FileStorage) -> None:
         self._mini = mini
-        self._workspace = workspace
-        self._player = ReachyMiniAudioFilePlayer(mini)
+        self._storage = storage
+        self._player = player
+        self._mixer = mixer
 
     def _resolve_sound_path(self, sound_file: str) -> Path:
         p = Path(sound_file)
         if p.is_absolute():
             return p
 
-        audio_dir = Path(self._workspace.assets().sub_storage("audio").abspath()).resolve()
+        self._storage.dir("", recursive=False)
+
+        audio_dir = Path(self._storage.abspath()).resolve()
         candidate = (audio_dir / p).resolve()
 
         # If user specifies a filename with extension, try the exact file first.
@@ -58,7 +63,7 @@ class Sound:
             priority_index = {ext: i for i, ext in enumerate(priority)}
 
             def key_fn(fp: Path) -> tuple[int, str]:
-                return (priority_index.get(fp.suffix.lower(), 999), fp.name)
+                return priority_index.get(fp.suffix.lower(), 999), fp.name
 
             return min(exact, key=key_fn)
 
@@ -78,6 +83,12 @@ class Sound:
     def _looks_like_url(value: str) -> bool:
         return value.startswith("http://") or value.startswith("https://")
 
+    def play_sound_doc(self):
+        return ("Play a sound (local file or URL). "
+                "If it's a relative path, it is resolved under assets/audio/. "
+                "Supports pause/resume/stop via corresponding commands."
+                f"@param sound_file: sound filename; The available files are as follows: {self._storage.dir("", recursive=False)}")
+
     async def play_sound(self, sound_file: str) -> None:
         """Play audio (file or URL) by decoding to PCM and streaming to Reachy Mini."""
 
@@ -90,7 +101,7 @@ class Sound:
             path = self._resolve_sound_path(sound_file)
             logger.info("Playing audio file: %s", path)
             if not path.exists():
-                audio_dir = Path(self._workspace.assets().sub_storage("audio").abspath())
+                audio_dir = Path(self._storage.abspath())
                 raise FileNotFoundError(
                     f"Sound file '{sound_file}' not found under {audio_dir}. Please check the filename in assets/audio."
                 )
@@ -107,9 +118,98 @@ class Sound:
     async def stop_sound(self) -> None:
         await asyncio.to_thread(self._player.stop)
 
-    async def sound_status(self) -> str:
+    async def set_volume(self, level: float) -> str:
+        """设置绝对音量。用户说"音量调到50"或"音量设为80"时使用。
+
+        :param level: 音量百分比，范围0~100。例如50表示50%音量。
+        """
+        if self._mixer is None:
+            return "音量控制不可用"
+        self._mixer.set_volume(level / 100.0)
+        pct = int(self._mixer.volume() * 100)
+        return f"音量已调整为{pct}%"
+
+    async def volume_up(self) -> str:
+        """调大音量。用户说"大声点"、"声音调大"时使用。"""
+        if self._mixer is None:
+            return "音量控制不可用"
+        current = self._mixer.volume()
+        step = 0.2 if current >= 0.1 else 0.05
+        self._mixer.set_volume(current + step)
+        pct = int(self._mixer.volume() * 100)
+        return f"音量已调大到{pct}%"
+
+    async def volume_down(self) -> str:
+        """调小音量。用户说"小声点"、"声音调小"时使用。"""
+        if self._mixer is None:
+            return "音量控制不可用"
+        current = self._mixer.volume()
+        step = 0.2 if current > 0.1 else 0.05
+        self._mixer.set_volume(current - step)
+        pct = int(self._mixer.volume() * 100)
+        return f"音量已调小到{pct}%"
+
+    async def context_messages(self) -> List[Message]:
+        msg = Message.new(role="user", name="__sound__")
+        pct = int(self._mixer.volume() * 100)
         status = await asyncio.to_thread(self._player.status)
-        return status.to_str()
+        msg.with_content(
+            Text(text=f"当前音量为{pct}"),
+            Text(text=f"当前播放器状态为{status}"),
+        )
+
+        return [msg]
+
+    def as_channel(self) -> PyChannel:
+        chan = PyChannel(name="sound", description="")
+        chan.build.command(
+            name="play_sound",
+            doc=self.play_sound_doc,
+        )(self.play_sound)
+
+        chan.build.command(
+            name="pause_sound",
+            doc="暂停当前音频/音乐播放。用户说暂停音乐时，**优先输出**此命令。",
+        )(self.pause_sound)
+
+        chan.build.command(
+            name="resume_sound",
+            doc="恢复音频/音乐播放。用户说继续播放时使用此命令。",
+        )(self.resume_sound)
+
+        chan.build.command(
+            name="stop_sound",
+            doc="停止音频/音乐播放。用户说停止音乐、关掉音乐时，**优先输出**此命令。",
+        )(self.stop_sound)
+
+        chan.build.command(
+            name="set_volume",
+            doc=(
+                "设置绝对音量。用户说'音量调到50'、'音量设为80'时使用。"
+                "level为百分比(0~100)。"
+                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
+            ),
+        )(self.set_volume)
+
+        chan.build.command(
+            name="volume_up",
+            doc=(
+                "调大音量。用户说'大声点'、'声音调大'时使用。"
+                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
+            ),
+        )(self.volume_up)
+
+        chan.build.command(
+            name="volume_down",
+            doc=(
+                "调小音量。用户说'小声点'、'声音调小'、'声音太大了'时使用。"
+                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
+            ),
+        )(self.volume_down)
+
+        chan.build.context_messages(self.context_messages)
+
+        return chan
 
 
 class SoundProvider(Provider[Sound]):
@@ -119,12 +219,10 @@ class SoundProvider(Provider[Sound]):
     def factory(self, con: IoCContainer) -> INSTANCE:
         mini = con.force_fetch(ReachyMini)
         ws = con.force_fetch(Workspace)
-        sound = Sound(mini, ws)
-        try:
-            mixer = con.force_fetch(AudioMixer)
-        except Exception:
-            mixer = None
-        if mixer is not None:
-            # Route play_sound to mixer to allow mixing with TTS.
-            sound._player._mixer = mixer  # type: ignore[attr-defined]
+        sound_storage: FileStorage|Storage = ws.assets().sub_storage("audio")
+        player = ReachyMiniAudioFilePlayer(mini)
+        mixer = con.force_fetch(AudioMixer)
+        # Route play_sound to mixer to allow mixing with TTS.
+        player._mixer = mixer  # type: ignore[attr-defined]
+        sound = Sound(mini, player, mixer, sound_storage)
         return sound

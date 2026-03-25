@@ -58,7 +58,6 @@ class MossInReachyMini:
         sound: Sound,
         vision: Vision,
         music: MusicSearch,
-        mixer: AudioMixer | None = None,
     ):
         self.mini = mini
         self.logger = logger or logging.getLogger(__name__)
@@ -70,7 +69,6 @@ class MossInReachyMini:
         self.sound = sound
         self.vision = vision
         self.music = music
-        self._mixer = mixer
 
         # state
         self._state_map = {state.NAME: state for state in states}
@@ -190,6 +188,11 @@ class MossInReachyMini:
         vision_chan.build.available(self.is_available_fn(WakenState.NAME, BoringState.NAME))
         sub_channels.append(vision_chan)
 
+        # 语音输出独立成轨，不会和其他动作打架
+        sound_chan = self.sound.as_channel()
+        sound_chan.build.available(self.is_available_fn(WakenState.NAME, BoringState.NAME))
+        sub_channels.append(sound_chan)
+
         # 注册子轨道
         reachy_mini.import_channels(
             *sub_channels,
@@ -236,74 +239,6 @@ class MossInReachyMini:
             name="antennas_reset",
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
         )(self.antennas.reset)
-
-        reachy_mini.build.command(
-            name="play_sound",
-            doc=(
-                "Play a sound (local file or URL). "
-                "If it's a relative path, it is resolved under assets/audio/. "
-                "Supports pause/resume/stop via corresponding commands."
-            ),
-            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
-        )(self.sound.play_sound)
-
-        reachy_mini.build.command(
-            name="pause_sound",
-            doc="暂停当前音频/音乐播放。用户说暂停音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
-        )(self.sound.pause_sound)
-
-        reachy_mini.build.command(
-            name="resume_sound",
-            doc="恢复音频/音乐播放。用户说继续播放时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
-        )(self.sound.resume_sound)
-
-        reachy_mini.build.command(
-            name="stop_sound",
-            doc="停止音频/音乐播放。用户说停止音乐、关掉音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME,TeachingState.NAME),
-        )(self.sound.stop_sound)
-
-        reachy_mini.build.command(
-            name="sound_status",
-            doc="获取当前音频/音乐播放状态。",
-            available=self.is_available_fn(WakenState.NAME, TeachingState.NAME),
-        )(self.sound.sound_status)
-
-        reachy_mini.build.command(
-            name="set_volume",
-            doc=(
-                "设置绝对音量。用户说'音量调到50'、'音量设为80'时使用。"
-                "level为百分比(0~100)。"
-                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
-            ),
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.set_volume)
-
-        reachy_mini.build.command(
-            name="volume_up",
-            doc=(
-                "调大音量。用户说'大声点'、'声音调大'时使用。"
-                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
-            ),
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.volume_up)
-
-        reachy_mini.build.command(
-            name="volume_down",
-            doc=(
-                "调小音量。用户说'小声点'、'声音调小'、'声音太大了'时使用。"
-                "注意：必须先输出此命令，再说话，否则说话时音量还是旧的。"
-            ),
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.volume_down)
-
-        reachy_mini.build.command(
-            name="get_volume",
-            doc="获取当前音量。用户问'音量多少'、'音量多高'时使用。",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.get_volume)
 
         reachy_mini.build.command(
             name="play_music",
@@ -371,44 +306,6 @@ class MossInReachyMini:
         face_reg.target_name = user_name
         await self.switch_state(EnrollingState.NAME, force=True)
 
-    async def set_volume(self, level: float) -> str:
-        """设置绝对音量。用户说"音量调到50"或"音量设为80"时使用。
-
-        :param level: 音量百分比，范围0~100。例如50表示50%音量。
-        """
-        if self._mixer is None:
-            return "音量控制不可用"
-        self._mixer.set_volume(level / 100.0)
-        pct = int(self._mixer.volume() * 100)
-        return f"音量已调整为{pct}%"
-
-    async def volume_up(self) -> str:
-        """调大音量。用户说"大声点"、"声音调大"时使用。"""
-        if self._mixer is None:
-            return "音量控制不可用"
-        current = self._mixer.volume()
-        step = 0.2 if current >= 0.1 else 0.05
-        self._mixer.set_volume(current + step)
-        pct = int(self._mixer.volume() * 100)
-        return f"音量已调大到{pct}%"
-
-    async def volume_down(self) -> str:
-        """调小音量。用户说"小声点"、"声音调小"时使用。"""
-        if self._mixer is None:
-            return "音量控制不可用"
-        current = self._mixer.volume()
-        step = 0.2 if current > 0.1 else 0.05
-        self._mixer.set_volume(current - step)
-        pct = int(self._mixer.volume() * 100)
-        return f"音量已调小到{pct}%"
-
-    async def get_volume(self) -> str:
-        """获取当前音量。用户问"现在音量多少"、"音量多高"时使用。"""
-        if self._mixer is None:
-            return "音量控制不可用"
-        pct = int(self._mixer.volume() * 100)
-        return f"当前音量为{pct}%"
-
     async def bootstrap(self):
         self.mini.__enter__()
         await self.switch_state(self._default_state)
@@ -431,19 +328,10 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         teaching = con.force_fetch(TeachingState)
         enrolling = con.force_fetch(EnrollingState)
 
-        live = None
-        if LiveState is not None:
-            try:
-                live = con.force_fetch(LiveState)
-            except Exception as e:
-                live = None
+        live = con.force_fetch(LiveState)
         logger = con.get(LoggerItf)
 
-        try:
-            recorder = con.get(VideoRecorderWorker)
-        except Exception:
-            recorder = None
-
+        recorder = con.get(VideoRecorderWorker)
         ws = con.force_fetch(Workspace)
         appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
         structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
@@ -454,11 +342,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
         if os.getenv("REACHY_MINI_MODE") == "live":
-            if live is None:
-                raise RuntimeError(
-                    "REACHY_MINI_MODE=live requires optional dependencies. "
-                    "Please install project with 'douyin_live' extras."
-                )
             states = [asleep, live, teaching]
             default_state = LiveState.NAME  # type: ignore[union-attr]
 
@@ -469,10 +352,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         vision = con.force_fetch(Vision)
         sound = con.force_fetch(Sound)
         music = con.force_fetch(MusicSearch)
-        try:
-            mixer = con.force_fetch(AudioMixer)
-        except Exception:
-            mixer = None
 
         return MossInReachyMini(
             mini,
@@ -488,5 +367,4 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
             sound=sound,
             vision=vision,
             music=music,
-            mixer=mixer,
         )
