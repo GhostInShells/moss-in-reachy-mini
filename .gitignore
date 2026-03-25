@@ -13,6 +13,7 @@ wheels/
 .idea
 .DS_Store
 temp.png
+temp.jpeg
 *_temp.json
 temp.json
 video_records/
@@ -22,6 +23,7 @@ thread_*.json
 known_faces.json
 
 *_params.json
+*_prompt.md
 
 .workspace/runtime/logs/
 .workspace/runtime/agent_history/

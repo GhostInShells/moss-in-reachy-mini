@@ -1,3 +1,4 @@
+import io
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 import numpy as np
@@ -91,7 +92,8 @@ class CameraFrame:
 
     def to_base64_image(self) -> Base64Image:
         img_pil = Image.fromarray(self.image)
-        img_pil.save("temp.png")
+        img_pil = img_pil.resize((512, 512))  # 大模型标准尺寸
+        img_pil.save("temp.jpeg")  # 保存本地一份
         return Base64Image.from_pil_image(img_pil)
 
 

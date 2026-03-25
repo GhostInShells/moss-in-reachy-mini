@@ -61,7 +61,7 @@ class StorageSession(Session):
     async def save_turn(self, inputs: List[Message], outputs: List[Message]):
         session = await self._get_session()
 
-        saved_outputs = [o for o in outputs if o.is_completed() and not o.is_empty()]  # 只保存完整的消息包
+        saved_outputs = [o for o in outputs if o.is_completed() and not o.is_empty() and o.contents]  # 只保存完整的消息包
 
         turn_id = str(uuid.uuid4())
         for msg in inputs + saved_outputs:
@@ -117,45 +117,28 @@ class StorageSession(Session):
         new_session = SessionData(messages=[])
         await self._save_session(new_session)
 
-    async def set_limitation(self, turn_rounds: int=10, max_tokens: int=-1) -> str:
-        """Configures session context visibility boundaries for the agent.
-
-        This tool controls how much historical session the agent can access by setting two key parameters:
-        maximum session rounds and maximum token limit for historical content. Execution is restricted
-        to explicit user requests only (no arbitrary/automatic execution).
-
-        Args:
-            turn_rounds: Integer defining the maximum number of session rounds (user-agent exchanges)
-                the agent can access. Default: 10. Valid range: ≥ 0 (0 = no historical rounds accessible).
-            max_tokens: Integer defining the maximum number of tokens of historical session content
-                the agent can access. Default: -1 (special value = unlimited tokens). Valid range: -1 or ≥ 0
-                (0 = no token-based content accessible).
-
-        Execution Rules (STRICTLY ENFORCE):
-            1. Invocation Restriction: Do NOT execute this tool automatically or arbitrarily. Execute ONLY if:
-               - The user explicitly requests adjustment of context visibility (e.g., "Limit to 5 session rounds",
-                 "Set max tokens to 2000 for history access")
-               - The user provides explicit values for turn_rounds, max_tokens, or both
+    async def set_limitation(self, turn_rounds: int=10) -> str:
+        """
+        设置Session最大可见轮次
+        :param turn_rounds: 最大轮次
         """
         self._meta_config.turn_rounds = turn_rounds
-        self._meta_config.max_tokens = max_tokens
+        # self._meta_config.max_tokens = max_tokens
         self._configs.save(self._meta_config)
         return "set session session limitation done"
 
     async def context_messages(self):
-        msgs = await self.get_session_history()
+        # 记忆放到了MainAgent里组织顺序
+        # msgs = await self.get_session_history()
 
-        msgs.append(Message.new(role="system", name="__session_settings__").with_content(
+        return [Message.new(role="system", name="__session_settings__").with_content(
             Text(text=f"Config: {self._meta_config.model_dump_json()}"),
-        ))
-        return msgs
+        )]
 
     def as_channel(self) -> PyChannel:
         session = PyChannel(
             name="session",
-            description="refresh相关的command请放置在你的回答结束末尾调用，并且请提前告知用户你要更新你自己的人格和记忆了",
         )
-
         session.build.command()(self.new_session)
         session.build.command()(self.set_limitation)
         session.build.context_messages(self.context_messages)

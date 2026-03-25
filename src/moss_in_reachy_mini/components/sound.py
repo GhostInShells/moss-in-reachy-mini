@@ -87,7 +87,7 @@ class Sound:
         return ("Play a sound (local file or URL). "
                 "If it's a relative path, it is resolved under assets/audio/. "
                 "Supports pause/resume/stop via corresponding commands."
-                f"@param sound_file: sound filename; The available files are as follows: {self._storage.dir("", recursive=False)}")
+                f"@param sound_file: sound filename; The available files are as follows: {list(self._storage.dir("", recursive=False))}")
 
     async def play_sound(self, sound_file: str) -> None:
         """Play audio (file or URL) by decoding to PCM and streaming to Reachy Mini."""
@@ -154,7 +154,7 @@ class Sound:
         pct = int(self._mixer.volume() * 100)
         status = await asyncio.to_thread(self._player.status)
         msg.with_content(
-            Text(text=f"当前音量为{pct}"),
+            Text(text=f"当前音量为{pct},"),
             Text(text=f"当前播放器状态为{status}"),
         )
 

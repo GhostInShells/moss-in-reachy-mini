@@ -1,4 +1,5 @@
 import asyncio
+import io
 import logging
 import time
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import List
 
 from PIL import Image
 from ghoshell_common.contracts import Storage, Workspace, LoggerItf, FileStorage
-from ghoshell_container import Provider, IoCContainer, INSTANCE, Container
+from ghoshell_container import Provider, IoCContainer, INSTANCE
 from ghoshell_moss import Message, Base64Image, Text, PyChannel
 
 from framework.abcd.agent_event import VisionAgentEvent, CTMLAgentEvent
@@ -22,12 +23,14 @@ class Vision:
             camera_worker: CameraWorker,
             storage: Storage,
             eventbus: EventBus,
+            appearance_img: Image.Image,
             logger: LoggerItf=None,
     ):
         self.camera_worker = camera_worker
         self.face_recognizer = camera_worker.face_recognizer
         self.vision_storage = storage
         self.eventbus = eventbus
+        self.appearance_img = appearance_img
         self.logger = logger or logging.getLogger("Vision")
 
     async def look(self, about: str = '', fps: int = 1, n: int = 1):
@@ -149,7 +152,10 @@ class Vision:
             ))
 
     async def context_messages(self):
-        msg = Message.new(role="system", name="__reachy_mini_vision__")
+        msg = Message.new(role="system", name="__reachy_mini_vision__").with_content(
+            Text(text="This image shows your appearance"),
+            Base64Image.from_pil_image(self.appearance_img),
+        )
         frame = self.camera_worker.get_latest_frame()
         if frame.image is not None:
             # 告诉 LLM 图上标注了哪些已识别的人
@@ -203,4 +209,6 @@ class VisionProvider(Provider[Vision]):
         vision_storage = ws.runtime().sub_storage("vision")
         eventbus = con.force_fetch(EventBus)
         logger = con.get(LoggerItf)
-        return Vision(camera_worker, vision_storage, eventbus=eventbus, logger=logger)
+        appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
+
+        return Vision(camera_worker, vision_storage, eventbus=eventbus, appearance_img=appearance_img, logger=logger)

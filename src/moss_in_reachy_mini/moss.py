@@ -1,18 +1,15 @@
 import asyncio
-import io
 import logging
 import os
 import time
 from collections.abc import Callable
 
-from ghoshell_common.contracts import LoggerItf, Workspace
+from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import INSTANCE, IoCContainer, Provider
-from ghoshell_moss import Base64Image, Message, PyChannel, Text
-from PIL import Image
+from ghoshell_moss import Message, PyChannel, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
-from moss_in_reachy_mini.audio.mixer import AudioMixer
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
@@ -23,14 +20,9 @@ from moss_in_reachy_mini.state.abcd import InitialState, BaseAgentHook
 from moss_in_reachy_mini.state.asleep import AsleepState
 from moss_in_reachy_mini.state.boring import BoringState
 from moss_in_reachy_mini.state.enrolling import EnrollingState
+from moss_in_reachy_mini.state.live import LiveState
 from moss_in_reachy_mini.state.teaching import TeachingState
 from moss_in_reachy_mini.state.waken import WakenState
-
-try:
-    from moss_in_reachy_mini.state.live import LiveState
-except Exception:  # optional dependency (douyin_live extras)
-    LiveState = None  # type: ignore[assignment]
-
 from moss_in_reachy_mini.video.recorder_channel import VideoRecorder
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
 
@@ -48,8 +40,6 @@ class MossInReachyMini:
         mini: ReachyMini,
         *states: BaseAgentHook,
         default_state: str = AsleepState.NAME,
-        appearance_img: Image.Image,
-        structure_img: Image.Image,
         logger: LoggerItf = None,
         recorder: VideoRecorderWorker | None = None,
         body: Body,
@@ -75,10 +65,6 @@ class MossInReachyMini:
         self._state: BaseAgentHook = InitialState()
         self._state_log: list[StateLog] = []
         self._default_state = default_state
-
-        # img
-        self.appearance_img = appearance_img
-        self.structure_img = structure_img
 
         self._recorder = recorder
 
@@ -118,14 +104,7 @@ class MossInReachyMini:
         return self._state
 
     async def context_messages(self):
-        # outlook message
-        messages = [
-            Message.new(role="user", name="__reachy_mini_outlook__").with_content(
-                Text(text="These two images shows your appearance and structure"),
-                Base64Image.from_pil_image(self.appearance_img),
-                Base64Image.from_pil_image(self.structure_img),
-            )
-        ]
+        messages = []
 
         # state context_messages
         state_message = Message.new(role="user", name="__reachy_mini_state__").with_content(
@@ -144,10 +123,7 @@ class MossInReachyMini:
 
         # components context messages
         head_messages = await self.head.context_messages()
-        antenna_messages = await self.antennas.context_messages()
         messages.extend(head_messages)
-        messages.extend(antenna_messages)
-
         return messages
 
     def is_available_fn(self, *available_states) -> Callable[[], bool]:
@@ -332,9 +308,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         logger = con.get(LoggerItf)
 
         recorder = con.get(VideoRecorderWorker)
-        ws = con.force_fetch(Workspace)
-        appearance_img = Image.open(io.BytesIO(ws.assets().get("appearance.png")))
-        structure_img = Image.open(io.BytesIO(ws.assets().get("structure.png")))
 
         # 桌面陪伴模式
         states = [asleep, waken, boring, teaching, enrolling]
@@ -357,8 +330,6 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
             mini,
             *states,
             default_state=default_state,
-            appearance_img=appearance_img,
-            structure_img=structure_img,
             logger=logger,
             recorder=recorder,
             body=body,

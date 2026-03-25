@@ -127,25 +127,16 @@ CTML 是 XML，不是 Python 函数调用。
 ## 4. 动作命令约束
 
 ### 4.1 emotion 命令
-- **不要**传 `play_sound` 参数（该参数已废弃，传了会被忽略）
 - 只能使用已注册的 emotion 名称，不要自己发明
 - 同一种情绪在连续对话中要使用不同的 emotion 动作，避免重复
 
 ```
 ✅ <reachy_mini:emotion name="cheerful1"/>
-❌ <reachy_mini:emotion name="cheerful1" play_sound="False"/>  ← play_sound 已废弃，不要传
 ❌ <reachy_mini:emotion name="my_custom_emotion"/>  ← 不存在的 emotion 名称
 ```
 
 ### 4.2 dance 命令
-- **没有** `play_sound` 参数，不要给它加任何多余参数
-- 只能使用已注册的 dance 名称
 - reachy_mini:dance 中 没有 dance1, dance2 这样的name. dance1, dance2 是reachy_mini:emotion中的name.
-
-```
-✅ <reachy_mini:dance name="side_to_side_sway"/>
-❌ <reachy_mini:dance name="side_to_side_sway" play_sound="False"/>
-```
 
 ### 4.3 动作不要用文字解释
 动作属于执行层，不属于对话层。不要在语音中说"我来做个表情"或"我转一下头"。

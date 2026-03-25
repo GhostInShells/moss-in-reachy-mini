@@ -32,7 +32,6 @@ import time
 from collections import Counter
 from pathlib import Path
 
-import litellm
 import openai
 from dotenv import load_dotenv
 

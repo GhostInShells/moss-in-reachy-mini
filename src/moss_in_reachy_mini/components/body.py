@@ -12,6 +12,91 @@ from moss_in_reachy_mini.moves.head_move import HeadMove
 from moss_in_reachy_mini.utils import load_emotions
 
 
+EMOJI_MAP = {
+    "😲": "amazed1",
+    "😟": "anxiety1",
+    "👂": "attentive1",
+    "🧏": "attentive2",
+    "😐": "boredom1",
+    "😴": "boredom2",
+    "🧘": "calming1",
+    "😊": "cheerful1",
+    "🤗": "come1",
+    "😕": "confused1",
+    "🙄": "contempt1",
+    "👀": "curious1",
+    "💃": "dance1",
+    "🕺": "dance2",
+    "💃🏻": "dance3",                       # skin tone variant
+    "😞": "displeased1",
+    "😤": "displeased2",
+    "🤢": "disgusted1",
+    "😔": "downcast1",
+    "💀": "dying1",
+    "⚡️": "electric1",
+    "🤩": "enthusiastic1",
+    "😃": "enthusiastic2",
+    "🥵": "exhausted1",
+    "😨": "fear1",
+    "😠": "frustrated1",
+    "🤬": "furious1",
+    "👋": "go_away1",
+    "🙏": "grateful1",
+    "🤝": "helpful1",
+    "✨": "helpful2",
+    "⏳": "impatient1",                     # hourglass to avoid dup
+    "😣": "impatient2",
+    "🤷": "incomprehensible2",
+    "😑": "indifferent1",
+    "❓": "inquiring1",
+    "❔": "inquiring2",
+    "🧐": "inquiring3",                   # two‑emoji sequence
+    "😡": "irritated1",                    # angry face (distinct from 😤)
+    "🤯": "irritated2",                    # exploding head for stronger irritation
+    "😆": "laughing1",
+    "😄": "laughing2",
+    "🥺": "lonely1",
+    "😶": "lost1",                         # no mouth – lost for words
+    "🥰": "loving1",
+    "🙅": "no1",
+    "🙅‍♀️": "no_excited1",                 # woman gesturing NO
+    "😢": "no_sad1",
+    "😬": "oops1",
+    "🤦": "oops2",
+    "🏆": "proud1",
+    "😎": "proud2",
+    "😏": "proud3",
+    "💢": "rage1",                       # anger symbol
+    "😮‍💨": "relief1",                     # face exhaling
+    "😌": "relief2",
+    "🚫": "reprimand1",
+    "🗣️": "reprimand2",
+    "🫵": "reprimand3",
+    "🙁": "resigned1",                     # slightly frowning face
+    "😥": "sad1",                          # sad but relieved face
+    "😭": "sad2",
+    "😱": "scared1",                       # face screaming in fear
+    "🧘‍♀️": "serenity1",                   # woman meditating
+    "😳": "shy1",                          # flushed face
+    "😪": "sleep1",                        # sleepy face
+    "🏅": "success1",
+    "🥳": "success2",
+    "😯": "surprised1",                    # hushed face
+    "😮": "surprised2",
+    "🤔": "thoughtful1",                   # thinking face (same as curious1 – but unique key)
+    "💭": "thoughtful2",                   # thought balloon
+    "🥱": "tired1",                        # yawning face (same as boredom1 – unique key)
+    "😖": "uncomfortable1",
+    "🧠": "understanding1",                # thumbs up (affirmative)
+    "👌": "understanding2",                # OK hand
+    "🤨": "uncertain1",
+    "🎊": "welcoming1",                   # waving hand light skin tone
+    "🎉": "welcoming2",                    # hugging face (different from come1)
+    "✅": "yes1",
+    "🫤": "yes_sad1",                    # sad face + thumbs up
+}
+
+
 class Body:
     def __init__(self, mini: ReachyMini, container: IoCContainer):
         self.mini = mini
@@ -29,45 +114,31 @@ class Body:
     def dance_docstring(self):
         dance_docstrings = []
         for name, move in AVAILABLE_MOVES.items():
-            func, params, meta = move
-            dance_docstrings.append(f"name: {name} description: {meta.get("description", "")} beats: {meta.get("default_duration_beats", 4)}")
-        return f"Dance can be chosen in \n{"\n".join(dance_docstrings)}"
+            # func, params, meta = move
+            dance_docstrings.append(f"name: {name}")
+        return f"Dance can be chosen in \n{",".join(dance_docstrings)}"
 
-    async def emotion(self, name: str):
+    async def emotion(self, emoji: str):
+        name = EMOJI_MAP.get(emoji, None)
+        if not name:
+            raise ValueError(f'{emoji} is not a valid emoji')
         params = self._emotions.get(name)
         if not params:
-            # raise ValueError(f"{name} is not a valid emotion")
-            params = self._emotions.get("dance1")
+            raise ValueError(f"{name} is not a valid emotion")
 
-        sound_path = None
-        # if play_sound:
-        #     sound_path = f"{self._emotions_storage.abspath()}/{name}.wav"
-
-        await self.mini.async_play_move(RecordedMove(move=params, sound_path=sound_path))
+        await self.mini.async_play_move(RecordedMove(move=params)),
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(),
         ))
 
     def emotion_docstring(self):
-        emotion_docstrings = []
-        for name, params in self._emotions.items():
-            emotion_docstrings.append(f"name: {name} description: {params.get('description', '')}")
-        return f"Emotion can be only chosen in \n{"\n".join(emotion_docstrings)}\nDo not use unknown emotion name"
+        # emotion_docstrings = []
+        # for name, params in self._emotions.items():
+        #     emotion_docstrings.append(f"{name} ({params.get('description', '')})")
+        # return f"Name choices in \n{"\n".join(emotion_docstrings)}\n"
+        return f"必须使用以下给定emoji列表：{','.join(EMOJI_MAP.keys())}；万不可传非列表内的emoji"
 
-    def as_commands(self) -> List[Command]:
-        return [
-            PyCommand(
-                func=self.dance,
-                name="dance",
-                doc=self.dance_docstring(),
-            ),
-            PyCommand(
-                func=self.emotion,
-                name="emotion",
-                doc=self.emotion_docstring(),
-            )
-        ]
 
 class BodyProvider(Provider[Body]):
     def singleton(self) -> bool:

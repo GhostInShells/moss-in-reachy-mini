@@ -95,7 +95,8 @@ class UserInputAgentEvent(AgentEventModel):
 class ProgramInputAgentEvent(AgentEventModel):
     event_type = "program_input"
 
-    message: Message = Field(description="input message")
+    prompt: Optional[Message] = Field(default=None, description="prompt message")  # 不存到记忆的message
+    message: Optional[Message] = Field(default=None, description="input message")
 
 
 class InterruptAgentEvent(AgentEventModel):

@@ -94,7 +94,7 @@ class StorageMemoryUI:
             # 保存配置：直接调用StorageMemory方法
             if st.button("💾 保存配置"):
                 with st.spinner("正在保存配置..."):
-                    run_async(self.storage_session.set_limitation(new_turns, new_tokens))
+                    run_async(self.storage_session.set_limitation(new_turns))
                     st.success("记忆限制配置已保存")
 
     def _render_memory_editors(self):

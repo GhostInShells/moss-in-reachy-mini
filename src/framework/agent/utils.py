@@ -45,9 +45,9 @@ async def setup_chat(eventbus: EventBus, chat: BaseChat) -> None:
     async def _on_get(event: AgentEvent):
         if event["agent_id"] not in ["main", ""]:
             return
-        if user_input := ProgramInputAgentEvent.from_agent_event(event):
+        if input_ := ProgramInputAgentEvent.from_agent_event(event):
             message_strings = []
-            for content in user_input.message.contents:
+            for content in input_.prompt.contents or [] + input_.message.contents or []:
                 if text := Text.from_content(content):
                     message_strings.append(text.text)
             chat.add_user_message("\n".join(message_strings))

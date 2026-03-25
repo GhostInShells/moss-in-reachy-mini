@@ -2,9 +2,9 @@ import asyncio
 import json
 import logging
 import random
+import time
 from typing import List, Optional, AsyncIterator, AsyncIterable, Dict
 
-import litellm
 import openai
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_moss import Message, MOSSShell, Text, MessageMeta, MessageStage, TextDelta, Addition
@@ -149,6 +149,18 @@ class AgentEventAddition(Addition):
         return "agent_event"
 
 
+class UsageAddition(Addition):
+    first_token_cost: float = Field(default=-1, description="first token cost")
+
+    total_tokens: int = Field(default=-1, description="total tokens")
+    prompt_tokens: int = Field(default=-1, description="prompt tokens")
+    completion_tokens: int = Field(default=-1, description="completion tokens")
+
+    @classmethod
+    def keyword(cls) -> str:
+        return "usage"
+
+
 class MOSShellResponse(Response):
     def __init__(
             self,
@@ -202,7 +214,7 @@ class MOSShellResponse(Response):
 
             try:
                 api_key, base_url, params = self.model.generate_openapi_params()
-                async with self.shell.interpreter_in_ctx(meta_instruction=META_INSTRUCTION) as interpreter:
+                async with self.shell.interpreter_in_ctx() as interpreter:
                     reasoning = False
 
                     # 构建请求消息列表
@@ -216,7 +228,8 @@ class MOSShellResponse(Response):
                     # 设置流式参数
                     params.update({
                         "messages": messages,
-                        "stream": True
+                        "stream": True,
+                        "stream_options": {"include_usage": True}
                     })
 
                     # 生成首包
@@ -228,50 +241,73 @@ class MOSShellResponse(Response):
                     self._buffered.append(head_msg)
                     yield head_msg
 
-                    json.dump(params, open(f"{self.agent_id}_params.json", "w"), ensure_ascii=False, indent=2)
+                    # 存储当前模型上下文至md
+                    md_lines = []
+                    for message in messages:
+                        for content in message.get("content", []):
+                            if content["type"] == "text":
+                                md_lines.append(content["text"])
+                            if content["type"] == "image_url":
+                                md_lines.append(content["image_url"]["url"])
 
-                    # 调用litellm流式接口
-                    # litellm._turn_on_debug()
+                    with open(f"{self.agent_id}_prompt.md", "w", encoding="utf-8") as f:
+                        f.writelines(md_lines)
+
+                    # json.dump(params, open(f"{self.agent_id}_params.json", "w"), ensure_ascii=False, indent=2)
+
+                    usage_addition = UsageAddition()
+                    now = time.time()
+                    first = True
                     async with openai.AsyncClient(
                         api_key=api_key,
                         base_url=base_url,
                     ) as client:
                         response_stream = await client.chat.completions.create(**params)
                         async for chunk in response_stream:
+                            if first:
+                                first = False
+                                usage_addition.first_token_cost = time.time() - now
+                            # 通常是尾包
+                            if chunk.usage:
+                                usage_addition.total_tokens = chunk.usage.total_tokens
+                                usage_addition.completion_tokens = chunk.usage.completion_tokens
+                                usage_addition.prompt_tokens = chunk.usage.prompt_tokens
                             # 检查中断信号
                             if self._interrupted.is_set():
                                 self.logger.info("Message stream interrupted by user")
                                 break
 
-                            delta = chunk.choices[0].delta
-                            self.logger.debug(f"Received delta: {delta}")
+                            # 大模型内容输出
+                            if chunk.choices:
+                                delta = chunk.choices[0].delta
+                                self.logger.debug(f"Received delta: {delta}")
 
-                            # 处理推理内容
-                            if "reasoning_content" in delta:
-                                if not reasoning:
-                                    reasoning = True
-                                reasoning_msg = Message(
-                                    meta=MessageMeta(stage=MessageStage.REASONING.value, role="assistant")
+                                # 处理推理内容
+                                if "reasoning_content" in delta:
+                                    if not reasoning:
+                                        reasoning = True
+                                    reasoning_msg = Message(
+                                        meta=MessageMeta(stage=MessageStage.REASONING.value, role="assistant")
+                                    ).with_additions(
+                                        self._event_addition,
+                                    ).as_delta(TextDelta(content=delta.reasoning_content))
+                                    self._buffered.append(reasoning_msg)
+                                    yield reasoning_msg
+                                    continue
+
+                                # 处理普通内容
+                                content = delta.content
+                                if not content:
+                                    continue
+                                # 生成间包
+                                delta_msg = Message(
+                                    meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
                                 ).with_additions(
                                     self._event_addition,
-                                ).as_delta(TextDelta(content=delta.reasoning_content))
-                                self._buffered.append(reasoning_msg)
-                                yield reasoning_msg
-                                continue
-
-                            # 处理普通内容
-                            content = delta.content
-                            if not content:
-                                continue
-                            # 生成间包
-                            delta_msg = Message(
-                                meta=MessageMeta(stage=MessageStage.RESPONSE.value, role="assistant")
-                            ).with_additions(
-                                self._event_addition,
-                            ).as_delta(TextDelta(content=content))
-                            self._buffered.append(delta_msg)
-                            yield delta_msg
-                            interpreter.feed(content)
+                                ).as_delta(TextDelta(content=content))
+                                self._buffered.append(delta_msg)
+                                yield delta_msg
+                                interpreter.feed(content)
 
                         # 解释器完成
                         interpreter.commit()
@@ -283,6 +319,7 @@ class MOSShellResponse(Response):
                             Text(text="".join(interpretation.feed_inputs)),
                         ).with_additions(
                             self._event_addition,
+                            usage_addition,
                         ).as_completed()
                         self._buffered.append(completed_msg)
                         yield completed_msg

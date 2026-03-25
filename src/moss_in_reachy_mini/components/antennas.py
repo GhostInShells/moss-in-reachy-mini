@@ -86,24 +86,6 @@ class Antennas:
         r_degree, l_degree = round(np.rad2deg(r_rad), 1), round(np.rad2deg(l_rad), 1)
         return r_degree, l_degree
 
-    async def context_messages(self):
-        msg = Message.new(role="user", name="__reachy_mini_antennas__")
-
-        r_degree, l_degree = self._get_current_position()
-        msg.with_content(
-            Text(text=f"Current antennas right degree:{r_degree}, left degree: {l_degree}")
-        )
-
-        return [msg]
-
-    def as_channel(self) -> PyChannel:
-        antennas = PyChannel(name="antennas", description="This channel should only be used when the user explicitly and actively specifies an antenna-related command.", blocking=True)
-
-        antennas.build.context_messages(self.context_messages)
-        antennas.build.command()(self.move)
-        antennas.build.command()(self.reset)
-
-        return antennas
 
 class AntennasProvider(Provider[Antennas]):
     def singleton(self) -> bool:

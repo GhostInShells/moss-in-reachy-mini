@@ -164,7 +164,7 @@ class BaseMainAgent(Agent, ABC):
     async def _handle_event(self, event: AgentEvent) -> Optional[Response]:
         prompts = await self.make_prompts()
 
-        if input_ := UserInputAgentEvent.from_agent_event(event) or ProgramInputAgentEvent.from_agent_event(event):
+        if input_ := UserInputAgentEvent.from_agent_event(event):
             now = time.time()
             # 不处理过期事件.
             if input_.is_overdue(now):
@@ -175,6 +175,24 @@ class BaseMainAgent(Agent, ABC):
                 agent_id=self._id,
                 event=input_,
                 inputs=[input_.message],
+                model=self.config.model,
+                prompts=prompts,
+                logger=self.logger,
+                eventbus=self._eventbus,
+            )
+
+        if input_ := ProgramInputAgentEvent.from_agent_event(event):
+            now = time.time()
+            if input_.is_overdue(now):
+                self._logger.info(f"agent receive event overdue: {event}")
+                return None
+            if input_.prompt and not input_.prompt.is_empty():
+                prompts.append(input_.prompt)
+            return MOSShellResponse(
+                shell=self.shell,
+                agent_id=self._id,
+                event=input_,
+                inputs=[input_.message] if input_.message and not input_.message.is_empty() else [],
                 model=self.config.model,
                 prompts=prompts,
                 logger=self.logger,

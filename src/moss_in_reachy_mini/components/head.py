@@ -69,12 +69,12 @@ class Head:
         self._last_idle_mode = self._idle_mode
         self._idle_mode = mode
 
-    async def reset(self, duration: float = 0.5, idle_mode: str = IdleMode.hold.value):
+    async def reset(self, idle_mode: str, duration: float = 0.5):
         """
         Reset the head, watching forward
 
+        :param idle_mode: 重置后保持的空闲模式，可选："hold"（空闲时静止）、"breathing"（空闲时呼吸，推荐）、"head_tracking"（空闲时人脸追踪）
         :param duration: 重置时间，单位秒
-        :param idle_mode: 重置后保持的空闲模式，可选："hold"（空闲时静止）、"breathing"（空闲时呼吸）、"head_tracking"（空闲时人脸追踪）
         """
         self.switch_idle_mode(idle_mode)
         await self.mini.async_play_move(move=HeadMove(
@@ -131,17 +131,15 @@ class Head:
 
         if self._idle_mode == IdleMode.head_tracking.value:
             msg.with_content(
-                Text(text="You are keep looking user with head tracking"),
+                Text(text="You are keep tracking user face"),
             )
             if frame.track_name:
                 msg.with_content(
                     Text(text=f"Current tracking {frame.track_name}")
                 )
 
-        msg.with_content(
-            Text(text=f"Current head pose is {self.mini.get_current_head_pose()}")
-        )
-
+        if msg.is_empty():
+            return []
         return [msg]
 
     async def on_idle(self):
