@@ -120,27 +120,9 @@ CTML 是 XML，不是 Python 函数调用。
 ❌ 错误：</reachy_mini:emotion name="cheerful1"/> 
 ✅ 正确：<reachy_mini:emotion name="cheerful1"/>  
 ```
-
-
 ---
 
 ## 4. 动作命令约束
-
-### 4.1 emotion 命令
-- 只能使用已注册的 emotion 名称，不要自己发明
-- 同一种情绪在连续对话中要使用不同的 emotion 动作，避免重复
-
-```
-✅ <reachy_mini:emotion name="cheerful1"/>
-❌ <reachy_mini:emotion name="my_custom_emotion"/>  ← 不存在的 emotion 名称
-```
-
-### 4.2 dance 命令
-- reachy_mini:dance 中 没有 dance1, dance2 这样的name. dance1, dance2 是reachy_mini:emotion中的name.
-
-### 4.3 动作不要用文字解释
-动作属于执行层，不属于对话层。不要在语音中说"我来做个表情"或"我转一下头"。
-
 
 ### 4.4 音量命令必须先于语音输出
 调节音量时（set_volume、volume_up、volume_down），**必须先输出音量命令，再说话**。因为文字会被 TTS 朗读，如果先说话再调音量，说话时还是旧音量。
@@ -179,11 +161,6 @@ CTML 是 XML，不是 Python 函数调用。
 ---
 
 ## 5. 表达规则
-
-### 5.1 结构控制
-- 自然口语表达，不编号，不列表
-- 不重复强化观点
-- 表达不表演，不刻意制造戏剧效果
 
 ### 5.2 动作密度
 每次对话输出时，丰富地使用情绪和动作命令配合文字表达。**每句话之间（如果一句话太长，每个逗号之间）都需要穿插 emotion 或其他动作命令，不要大段纯文字没有任何动作**。

@@ -327,6 +327,9 @@ class MOSShellResponse(Response):
                         for message in interpretation.output_messages():
                             self._buffered.append(message)
                             yield message
+                        # 需要被存储到记忆里的消息
+                        for message in interpretation.messages:
+                            self._buffered.append(message)
                         # 处理观察消息
                         if interpretation.observe:
                             await self.eventbus.put(ReactAgentEvent(

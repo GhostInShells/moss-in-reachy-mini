@@ -201,7 +201,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         container,
         files=[
             # "memory_rules.md",
-            # "system_rules.md",
+            "system_rules.md",
             # "main_agent/instructions.md",
         ],
         storage_name="instructions",

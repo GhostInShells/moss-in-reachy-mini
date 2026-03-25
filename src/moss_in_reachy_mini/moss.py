@@ -159,10 +159,12 @@ class MossInReachyMini:
             sub_channels.append(recorder_chan)
 
         # 视觉独立成轨，不会和其他动作轨打架
-        vision_chan = self.vision.as_channel()
-        # 目前仅支持Waken和Boring状态可以使用视觉，主要是为了屏蔽掉Live直播状态下的视觉上下文分散注意力
-        vision_chan.build.available(self.is_available_fn(WakenState.NAME, BoringState.NAME))
-        sub_channels.append(vision_chan)
+
+        if not os.getenv("DISABLE_VISION"):
+            vision_chan = self.vision.as_channel()
+            # 目前仅支持Waken和Boring状态可以使用视觉，主要是为了屏蔽掉Live直播状态下的视觉上下文分散注意力
+            vision_chan.build.available(self.is_available_fn(WakenState.NAME, BoringState.NAME))
+            sub_channels.append(vision_chan)
 
         # 语音输出独立成轨，不会和其他动作打架
         sound_chan = self.sound.as_channel()

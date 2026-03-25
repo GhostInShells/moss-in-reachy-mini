@@ -1,7 +1,8 @@
 from typing import List
 
 from ghoshell_container import IoCContainer, Provider, INSTANCE
-from ghoshell_moss import Command, PyCommand
+from ghoshell_moss import Command, PyCommand, Message, Text
+from ghoshell_moss.core.concepts.command import CommandTaskResult
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMove
 from reachy_mini.utils import create_head_pose
@@ -104,40 +105,61 @@ class Body:
 
     async def dance(self, name: str):
         if not AVAILABLE_MOVES.get(name):
-            raise ValueError(f'{name} is not a valid dance')
+            return CommandTaskResult(
+                observe=False,
+                messages=[Message.new(role="user", name="__emotion__").with_content(
+                    Text(text=f"本轮你生成的dance={name}是错误的，下次记得使用列表里正确的dance")
+                )]
+            )
         await self.mini.async_play_move(DanceMove(name))
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(),
         ))
+        return CommandTaskResult(
+            observe=False,
+        )
 
     def dance_docstring(self):
         dance_docstrings = []
         for name, move in AVAILABLE_MOVES.items():
             # func, params, meta = move
             dance_docstrings.append(f"name: {name}")
-        return f"Dance can be chosen in \n{",".join(dance_docstrings)}"
+        return f"必须使用以下列表给定的dance：{",".join(dance_docstrings)}；万不可传非列表内的舞蹈名"
 
     async def emotion(self, emoji: str):
         name = EMOJI_MAP.get(emoji, None)
         if not name:
-            raise ValueError(f'{emoji} is not a valid emoji')
+            return CommandTaskResult(
+                observe=False,
+                messages=[Message.new(role="user", name="__emotion__").with_content(
+                    Text(text=f"本轮你生成的emoji={emoji}是错误的，下次记得使用列表里正确的emoji")
+                )]
+            )
         params = self._emotions.get(name)
         if not params:
-            raise ValueError(f"{name} is not a valid emotion")
+            return CommandTaskResult(
+                observe=False,
+                messages=[Message.new(role="user", name="__emotion__").with_content(
+                    Text(text=f"本轮你生成的emoji={emoji}是错误的，下次记得使用列表里正确的emoji")
+                )]
+            )
 
         await self.mini.async_play_move(RecordedMove(move=params)),
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(),
         ))
+        return CommandTaskResult(
+            observe=False
+        )
 
     def emotion_docstring(self):
         # emotion_docstrings = []
         # for name, params in self._emotions.items():
         #     emotion_docstrings.append(f"{name} ({params.get('description', '')})")
         # return f"Name choices in \n{"\n".join(emotion_docstrings)}\n"
-        return f"必须使用以下给定emoji列表：{','.join(EMOJI_MAP.keys())}；万不可传非列表内的emoji"
+        return f"必须使用以下列表给定的emoji：{','.join(EMOJI_MAP.keys())}；万不可传非列表内的emoji"
 
 
 class BodyProvider(Provider[Body]):
