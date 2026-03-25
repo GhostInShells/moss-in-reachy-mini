@@ -95,12 +95,17 @@ class BaseMainAgent(Agent, ABC):
         """
         语法糖, 用来快速定义 prompt 对象.
         """
-        system_prompt = Message.new(role="system").with_content(
-            # instructions
-            Text(text=self.config.instructions),
+        system_prompt = Message.new(role="system")
+        if self.config.instructions:
+            system_prompt.with_content(
+                # instructions
+                Text(text=self.config.instructions),
+            )
+        system_prompt.with_content(
             # env datetime
             Text(text=f"Current datetime: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",),
         )
+
         session_prompts = await self.session.get_session_history()
         return [system_prompt] + session_prompts
 

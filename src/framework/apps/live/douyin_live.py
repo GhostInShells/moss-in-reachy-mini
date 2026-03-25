@@ -365,8 +365,8 @@ class DouyinLive(DouyinLiveWebFetcher):
         self.stats["total_events"] += 1
 
         # P0事件放入实时处理队列
-        if priority == Priority.P0:
-            self.realtime_queue.put_nowait(event)
+        # if priority == Priority.P0:
+        #     self.realtime_queue.put_nowait(event)
 
     def _parseGiftMsg(self, payload):
         message = GiftMessage().parse(payload)

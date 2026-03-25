@@ -138,6 +138,7 @@ class StorageSession(Session):
     def as_channel(self) -> PyChannel:
         session = PyChannel(
             name="session",
+            description="聊天会话通道"
         )
         session.build.command()(self.new_session)
         session.build.command()(self.set_limitation)
