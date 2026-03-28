@@ -97,6 +97,9 @@ class MusicSearch:
         self._pending_results: list[dict] = []  # Search results not yet downloaded
         self._prefetch_task: asyncio.Task | None = None
 
+        # Duration limiting
+        self._duration_timer: asyncio.Task | None = None
+
         # Register playback finish callback
         self._sound.set_on_finish(self._on_playback_finish)
 
@@ -289,6 +292,10 @@ class MusicSearch:
 
     async def _handle_song_finish(self) -> None:
         """Handle song finish: play next in playlist or notify end."""
+        # Cancel any duration timer
+        if self._duration_timer and not self._duration_timer.done():
+            self._duration_timer.cancel()
+            self._duration_timer = None
         # Clear remaining dance commands from previous song
         await self._eventbus.put(CTMLAgentEvent(
             ctml='<clear chan="reachy_mini"/>',
@@ -410,6 +417,24 @@ class MusicSearch:
             priority=0,
         ))
 
+    async def _stop_after_duration(self, duration_s: float) -> None:
+        """Stop playback after specified duration."""
+        try:
+            await asyncio.sleep(duration_s)
+            # Stop the sound
+            await self._sound.stop_sound()
+            # Manually trigger song finish to advance playlist
+            if self._current_song is not None:
+                # Cancel timer
+                self._duration_timer = None
+                # Simulate playback finish
+                await self._handle_song_finish()
+        except asyncio.CancelledError:
+            # Timer was cancelled (song finished naturally or user stopped)
+            pass
+        except Exception:
+            logger.exception("Error in duration timer")
+
     # ------------------------------------------------------------------
     # Context messages (music-playing state for LLM)
     # ------------------------------------------------------------------
@@ -439,13 +464,19 @@ class MusicSearch:
     # Public async API (exposed as CTML commands)
     # ------------------------------------------------------------------
 
-    async def play_music(self, query: str, count: int = 1) -> str:
+    async def play_music(self, query: str, count: int = 1, duration: float = -1.0) -> str:
         """搜索并播放音乐。query 为歌名、歌手名或关键词组合。
 
         :param query: 搜索关键词，如"周杰伦 晴天"
         :param count: 播放歌曲数量。当用户给出模糊描述（如"播欢快的歌"）时设为3，指定具体歌曲时用默认值1
+        :param duration: 播放时长（秒），默认-1表示自然播放完毕。如果设置大于0，则仅播放指定秒数的音乐
         """
         self._loop = asyncio.get_running_loop()
+
+        # Cancel any existing duration timer
+        if self._duration_timer and not self._duration_timer.done():
+            self._duration_timer.cancel()
+            self._duration_timer = None
 
         # Stop any ongoing playback
         if self._current_song is not None:
@@ -485,10 +516,19 @@ class MusicSearch:
                 self._current_song = song
                 await self._sound.play_sound(local_path)
                 self._playback_start_time = time.monotonic()
-                await self._push_choreography_event(song)
+                # Calculate remaining duration
+                remaining_s = info["duration_s"]
+                if duration > 0:
+                    remaining_s = min(duration, info["duration_s"])
+                    if remaining_s < info["duration_s"]:
+                        # Schedule stop after remaining_s seconds
+                        self._duration_timer = asyncio.create_task(
+                            self._stop_after_duration(remaining_s)
+                        )
+                await self._push_choreography_event(song, remaining_s=remaining_s)
                 return (
                     f"正在播放: {title} - {artist}（缓存）。"
-                    f"时长: {info['duration_s']}秒，BPM: {info['bpm']}。"
+                    f"时长: {remaining_s}秒，BPM: {info['bpm']}。"
                 )
 
         # 2. Search Bilibili
@@ -517,7 +557,16 @@ class MusicSearch:
         # 5. Start playing immediately + push choreography event
         await self._sound.play_sound(first_song["local_path"])
         self._playback_start_time = time.monotonic()
-        await self._push_choreography_event(first_song)
+        # Calculate remaining duration
+        remaining_s = first_song["duration_s"]
+        if duration > 0:
+            remaining_s = min(duration, first_song["duration_s"])
+            if remaining_s < first_song["duration_s"]:
+                # Schedule stop after remaining_s seconds
+                self._duration_timer = asyncio.create_task(
+                    self._stop_after_duration(remaining_s)
+                )
+        await self._push_choreography_event(first_song, remaining_s=remaining_s)
 
         # 6. Start prefetching next song in background
         self._start_prefetch()
@@ -527,11 +576,11 @@ class MusicSearch:
         if total == 1:
             return (
                 f"正在播放: {first_song['title']} - {first_song['artist']}。"
-                f"时长: {first_song['duration_s']}秒，BPM: {first_song['bpm']}。"
+                f"时长: {remaining_s}秒，BPM: {first_song['bpm']}。"
             )
         return (
             f"正在播放: {first_song['title']} - {first_song['artist']}"
-            f"（时长: {first_song['duration_s']}秒，BPM: {first_song['bpm']}）。"
+            f"（时长: {remaining_s}秒，BPM: {first_song['bpm']}）。"
             f"\n还有{len(self._pending_results)}首歌在后台准备中，会自动接续播放。"
         )
 
@@ -560,6 +609,10 @@ class MusicSearch:
 
     async def stop_music(self) -> str:
         """停止音乐播放。"""
+        # Cancel any duration timer
+        if self._duration_timer and not self._duration_timer.done():
+            self._duration_timer.cancel()
+            self._duration_timer = None
         self._current_song = None
         self._playback_start_time = None
         self._playlist = []

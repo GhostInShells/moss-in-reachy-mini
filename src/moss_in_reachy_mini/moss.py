@@ -269,6 +269,7 @@ class MossInReachyMini:
             doc=(
                 "搜索并播放音乐。query 为歌名、歌手名或关键词组合。"
                 "指定具体歌曲时 count=1；模糊描述（如'播欢快的歌'）时设 count=3。"
+                "duration（秒）默认-1表示自然播放完毕，设置大于0则仅播放指定秒数。"
                 "\n播放后系统会向你发送编舞请求，届时请用dance/emotion/head_move/antennas_move自由编排。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
             ),
