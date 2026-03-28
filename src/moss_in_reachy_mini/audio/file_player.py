@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,6 +163,10 @@ class ReachyMiniAudioFilePlayer:
         self._paused_accum_s: float = 0.0
 
         self._debug = os.getenv("REACHY_MINI_AUDIO_DEBUG", "").lower() in {"1", "true", "yes"}
+
+        # Optional callback invoked (from worker thread) when playback finishes
+        # normally (state transitions to "idle").  Signature: callback(source: str).
+        self._on_finish: Callable[[str], None] | None = None
 
         # Optional override: force output stream sample rate.
         # Useful on some macOS setups where the selected device reports a low
@@ -356,8 +361,14 @@ class ReachyMiniAudioFilePlayer:
                 self._status.state = "error"
                 self._status.error = str(e)
         finally:
-            if started:
-                pass
+            if started and self._on_finish is not None:
+                with self._lock:
+                    state = self._status.state
+                if state == "idle":
+                    try:
+                        self._on_finish(source)
+                    except Exception:
+                        logger.exception("on_finish callback failed")
 
     def _stream_source(self, source: str) -> bool:
         # Prefer PyAV when available (supports many codecs and URLs).

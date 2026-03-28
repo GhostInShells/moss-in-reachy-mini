@@ -42,9 +42,9 @@ class BoringState(BaseAgentHook):
         loop_times_per_second = 1 / self._idle_move_elapsed  # 每秒循环的次数
         per_loop_prob = 1 - math.pow(1 - self._emotion_prob, 1 / loop_times_per_second)  # 每次循环的概率
         if per_loop_prob >= 0 and  random.random() < per_loop_prob:
-            emotion = random.choice(["sleep1", "boredom1", "boredom2"])
+            emotion_emoji = random.choice(["😪", "😐", "😴"])
             await self.eventbus.put(CTMLAgentEvent(
-                ctml=f'<reachy_mini:emotion name="{emotion}" />'
+                ctml=f'<reachy_mini:emotion emoji="{emotion_emoji}" />'
             ))
             self._emotion_prob -= 0.003  # 每次触发后降低概率
 

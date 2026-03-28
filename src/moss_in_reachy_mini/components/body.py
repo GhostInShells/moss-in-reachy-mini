@@ -121,11 +121,20 @@ class Body:
         )
 
     def dance_docstring(self):
+        beat_dur = 60.0 / DanceMove.default_bpm
         dance_docstrings = []
         for name, move in AVAILABLE_MOVES.items():
-            # func, params, meta = move
-            dance_docstrings.append(f"name: {name}")
-        return f"必须使用以下列表给定的dance：{",".join(dance_docstrings)}；万不可传非列表内的舞蹈名"
+            func, params, meta = move
+            beats = meta.get("default_duration_beats", 4)
+            dur = round(beat_dur * beats, 1)
+            desc = meta.get("description", "")
+            dance_docstrings.append(f"{name}({beats}拍,{dur}s) {desc}")
+        header = (
+            f"BPM={DanceMove.default_bpm}，每拍{beat_dur:.2f}s。"
+            f"配合音乐时根据歌曲BPM估算耗时。"
+            f"必须使用以下列表中的name，严禁使用未定义的舞蹈名。"
+        )
+        return f"{header}\n" + "\n".join(dance_docstrings)
 
     async def emotion(self, emoji: str):
         name = EMOJI_MAP.get(emoji, None)
@@ -161,6 +170,19 @@ class Body:
         # return f"Name choices in \n{"\n".join(emotion_docstrings)}\n"
         return f"必须使用以下列表给定的emoji：{','.join(EMOJI_MAP.keys())}；万不可传非列表内的emoji"
 
+    def as_commands(self) -> List[Command]:
+        return [
+            PyCommand(
+                func=self.dance,
+                name="dance",
+                doc=self.dance_docstring(),
+            ),
+            PyCommand(
+                func=self.emotion,
+                name="emotion",
+                doc=self.emotion_docstring(),
+            )
+        ]
 
 class BodyProvider(Provider[Body]):
     def singleton(self) -> bool:

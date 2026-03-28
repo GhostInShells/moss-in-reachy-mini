@@ -4,6 +4,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from typing import List
 
 import av
 import librosa
@@ -13,7 +14,7 @@ from ghoshell_common.contracts import Workspace
 from ghoshell_container import INSTANCE, IoCContainer, Provider
 from ghoshell_moss import Message, Text
 
-from framework.abcd.agent_event import ReactAgentEvent
+from framework.abcd.agent_event import CTMLAgentEvent, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.components.sound import Sound
 
@@ -24,12 +25,18 @@ _BILIBILI_HEADERS = {
     "Referer": "https://www.bilibili.com",
 }
 
+# Max duration (seconds) for a single song. Longer clips are likely compilations.
+_MAX_SINGLE_SONG_DURATION = 600
+
+# ------------------------------------------------------------------
+# Audio analysis
+# ------------------------------------------------------------------
+
 
 def _analyze_audio(path: str) -> dict:
     """Analyze a local audio file and return duration_s, bpm, and beat_times."""
     result: dict = {"duration_s": 0.0, "bpm": 0, "beat_times": []}
     try:
-        # Decode with PyAV (handles m4a, mp3, etc.)
         container = av.open(path)
         stream = next((s for s in container.streams if s.type == "audio"), None)
         if stream is None:
@@ -50,8 +57,6 @@ def _analyze_audio(path: str) -> dict:
             return result
 
         audio = np.concatenate(samples).astype(np.float32)
-
-        # Use librosa for beat tracking (operates on numpy array directly)
         tempo, beats = librosa.beat.beat_track(y=audio, sr=sample_rate)
         beat_times = librosa.frames_to_time(beats, sr=sample_rate)
 
@@ -62,12 +67,9 @@ def _analyze_audio(path: str) -> dict:
     return result
 
 
-def _format_play_result(title: str, artist: str, info: dict, from_cache: bool = False) -> str:
-    """Format play_music return string — status only, no dance suggestions."""
-    bpm = info.get("bpm", 0)
-    duration_s = info.get("duration_s", 0)
-    cache_tag = "（缓存）" if from_cache else ""
-    return f"正在播放: {title} - {artist}{cache_tag}。时长: {duration_s}秒，BPM: {bpm}。舞蹈编排已自动触发，不要在本轮回复中输出任何dance命令。"
+# ------------------------------------------------------------------
+# MusicSearch class
+# ------------------------------------------------------------------
 
 
 class MusicSearch:
@@ -81,6 +83,22 @@ class MusicSearch:
         self._index_path = self._cache_dir / "index.json"
         self._index: dict = self._load_index()
         self._session: requests.Session | None = None
+
+        # Playlist state
+        self._playlist: list[dict] = []
+        self._playlist_index: int = 0
+        self._current_song: dict | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+        # Beat-sync: playback start time (monotonic) for beat alignment
+        self._playback_start_time: float | None = None
+
+        # Prefetch state
+        self._pending_results: list[dict] = []  # Search results not yet downloaded
+        self._prefetch_task: asyncio.Task | None = None
+
+        # Register playback finish callback
+        self._sound.set_on_finish(self._on_playback_finish)
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -100,6 +118,12 @@ class MusicSearch:
             encoding="utf-8",
         )
 
+    def _lookup_cache_by_bvid(self, bvid: str) -> dict | None:
+        for entry in self._index.values():
+            if entry.get("bvid") == bvid and entry.get("local_path") and Path(entry["local_path"]).exists():
+                return entry
+        return None
+
     def _lookup_cache(self, query: str) -> dict | None:
         entry = self._index.get(query)
         if entry and entry.get("local_path") and Path(entry["local_path"]).exists():
@@ -107,15 +131,13 @@ class MusicSearch:
         return None
 
     # ------------------------------------------------------------------
-    # Bilibili session + search + audio extraction (synchronous – run via to_thread)
+    # Bilibili session + search + audio extraction (synchronous)
     # ------------------------------------------------------------------
 
     def _get_session(self) -> requests.Session:
-        """Get or create a requests.Session with Bilibili cookies."""
         if self._session is None:
             self._session = requests.Session()
             self._session.headers.update(_BILIBILI_HEADERS)
-            # Visit homepage to obtain required cookies (buvid3, etc.)
             try:
                 self._session.get("https://www.bilibili.com", timeout=10)
             except Exception:
@@ -127,7 +149,6 @@ class MusicSearch:
         return re.sub(r"<[^>]+>", "", text)
 
     def _search_bilibili(self, query: str, count: int = 5) -> list[dict]:
-        """Search Bilibili for music videos, return list of result dicts."""
         url = "https://api.bilibili.com/x/web-interface/search/type"
         params = {"search_type": "video", "keyword": query, "page_size": count}
         try:
@@ -150,12 +171,10 @@ class MusicSearch:
         return results
 
     def _get_audio_url(self, bvid: str) -> str | None:
-        """Get the best audio stream URL for a Bilibili video."""
         try:
             info_url = f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}"
             info = self._get_session().get(info_url, timeout=10).json()
             cid = info["data"]["cid"]
-
             play_url = (
                 f"https://api.bilibili.com/x/player/playurl"
                 f"?bvid={bvid}&cid={cid}&fnval=16&fnver=0&fourk=1"
@@ -169,7 +188,6 @@ class MusicSearch:
         return None
 
     def _download_audio(self, audio_url: str, dest: Path) -> bool:
-        """Download audio stream to a local file. Bilibili requires Referer."""
         try:
             resp = self._get_session().get(audio_url, timeout=60, stream=True)
             resp.raise_for_status()
@@ -181,111 +199,341 @@ class MusicSearch:
             return False
 
     # ------------------------------------------------------------------
-    # Public async API (exposed as CTML commands)
+    # Song download + analyze
     # ------------------------------------------------------------------
 
-    async def _push_choreography_event(self, title: str, artist: str, info: dict) -> None:
-        """Push a ReactAgentEvent to trigger the LLM to generate dance choreography."""
-        bpm = info.get("bpm", 0)
+    async def _prepare_song(self, result: dict) -> dict | None:
+        """Download and analyze a single search result. Returns song dict or None."""
+        bvid = result["bvid"]
+        title = self._strip_html(result.get("title", "未知"))
+        artist = result.get("author", "未知")
+
+        cached = self._lookup_cache_by_bvid(bvid)
+        if cached and cached.get("bpm") and cached.get("beat_times") is not None:
+            return {
+                "title": cached["title"], "artist": cached["artist"],
+                "bpm": cached["bpm"], "duration_s": cached.get("duration_s", 0),
+                "beat_times": cached.get("beat_times", []),
+                "local_path": cached["local_path"], "bvid": bvid,
+            }
+
+        audio_url = await asyncio.to_thread(self._get_audio_url, bvid)
+        if not audio_url:
+            logger.warning("No audio URL for %s (%s)", title, bvid)
+            return None
+
+        safe_name = re.sub(r'[^\w\-]', '_', title)[:50]
+        cache_file = self._cache_dir / f"{safe_name}_{int(time.time())}.m4a"
+        ok = await asyncio.to_thread(self._download_audio, audio_url, cache_file)
+        if not ok:
+            return None
+
+        info = await asyncio.to_thread(_analyze_audio, str(cache_file))
         duration_s = info.get("duration_s", 0)
-        beat_times: list[float] = info.get("beat_times", [])
-        if bpm <= 0 or duration_s <= 0:
+
+        if duration_s > _MAX_SINGLE_SONG_DURATION:
+            logger.info("Skipping %s — duration %.0fs exceeds max", title, duration_s)
+            cache_file.unlink(missing_ok=True)
+            return None
+
+        self._index[bvid] = {
+            "title": title, "artist": artist, "source": "bilibili",
+            "bvid": bvid, "local_path": str(cache_file),
+            "cached_at": int(time.time()),
+            "bpm": info.get("bpm", 0), "duration_s": duration_s,
+            "beat_times": info.get("beat_times", []),
+        }
+        self._save_index()
+
+        return {
+            "title": title, "artist": artist,
+            "bpm": info.get("bpm", 0), "duration_s": duration_s,
+            "beat_times": info.get("beat_times", []),
+            "local_path": str(cache_file), "bvid": bvid,
+        }
+
+    # ------------------------------------------------------------------
+    # Prefetch: download next song in background while current plays
+    # ------------------------------------------------------------------
+
+    async def _prefetch_next(self) -> None:
+        """Download and analyze the next pending search result in background."""
+        while self._pending_results:
+            result = self._pending_results.pop(0)
+            try:
+                song = await self._prepare_song(result)
+                if song is not None:
+                    self._playlist.append(song)
+                    logger.info("Prefetched: %s (%.0fs)", song["title"], song["duration_s"])
+                    return
+            except Exception:
+                logger.exception("Prefetch failed for %s", result.get("title", "?"))
+
+    def _start_prefetch(self) -> None:
+        """Start a background prefetch task if there are pending results."""
+        if not self._pending_results:
             return
+        if self._prefetch_task and not self._prefetch_task.done():
+            return
+        self._prefetch_task = asyncio.create_task(self._prefetch_next())
 
-        beat_duration = 60.0 / bpm
-        dance_4beat_s = round(4 * beat_duration, 1)
-        total_beats = len(beat_times)
-        # How many 4-beat dances fit in the song
-        dance_count = max(1, total_beats // 4)
+    # ------------------------------------------------------------------
+    # Playback finish callback & playlist progression
+    # ------------------------------------------------------------------
 
-        if bpm > 120:
-            style = "活泼欢快"
-            dances = "headbanger_combo, chicken_peck, grid_snap, sharp_side_tilt, yeah_nod"
-        elif bpm > 80:
-            style = "律动感"
-            dances = "groovy_sway_and_roll, side_to_side_sway, polyrhythm_combo, uh_huh_tilt, simple_nod"
+    def _on_playback_finish(self, source: str) -> None:
+        """Called from file_player worker thread when playback finishes normally."""
+        if self._loop is None or self._current_song is None:
+            return
+        asyncio.run_coroutine_threadsafe(self._handle_song_finish(), self._loop)
+
+    async def _handle_song_finish(self) -> None:
+        """Handle song finish: play next in playlist or notify end."""
+        # Clear remaining dance commands from previous song
+        await self._eventbus.put(CTMLAgentEvent(
+            ctml='<clear chan="reachy_mini"/>',
+            priority=2,
+        ))
+
+        self._playlist_index += 1
+
+        if self._playlist_index < len(self._playlist):
+            # More songs ready — transition to next
+            prev = self._current_song
+            next_song = self._playlist[self._playlist_index]
+            self._current_song = next_song
+
+            await self._sound.play_sound(next_song["local_path"])
+            self._playback_start_time = time.monotonic()
+
+            # Push transition speech, then choreography for new song
+            await self._push_song_transition_event(prev, next_song)
+            await self._push_choreography_event(next_song)
+
+            # Prefetch the one after that
+            self._start_prefetch()
+
+        elif self._pending_results:
+            # Next song not in playlist yet — download now
+            prev = self._current_song
+            song = None
+            while self._pending_results and song is None:
+                result = self._pending_results.pop(0)
+                song = await self._prepare_song(result)
+
+            if song:
+                self._playlist.append(song)
+                self._current_song = song
+                await self._sound.play_sound(song["local_path"])
+                self._playback_start_time = time.monotonic()
+                await self._push_song_transition_event(prev, song)
+                await self._push_choreography_event(song)
+                self._start_prefetch()
+            else:
+                # All remaining downloads failed
+                last = self._current_song
+                self._current_song = None
+                self._playback_start_time = None
+                self._playlist = []
+                self._playlist_index = 0
+                self._pending_results = []
+                await self._push_song_end_event(last["title"], last["artist"])
         else:
-            style = "优雅舒缓"
-            dances = "pendulum_swing, head_tilt_roll, interwoven_spirals, side_glance_flick, dizzy_spin"
+            # All done
+            last = self._current_song
+            self._current_song = None
+            self._playback_start_time = None
+            self._playlist = []
+            self._playlist_index = 0
+            await self._push_song_end_event(last["title"], last["artist"])
 
+    async def _push_song_end_event(self, title: str, artist: str) -> None:
+        """Notify the LLM that all songs have finished playing."""
         prompt = (
-            f"音乐正在播放: {title} - {artist}，BPM={bpm}，时长={duration_s}秒，"
-            f"总共{total_beats}拍，每拍{beat_duration:.2f}秒，每个dance占4拍（{dance_4beat_s}秒），"
-            f"整首歌可容纳约{dance_count}个dance。风格: {style}。推荐dance: {dances}。"
-            f"\n请立即输出动作编排配合音乐。**必须大量使用loop来节省输出**，结构如下："
-            f"\n1. 开场（1-2个动作）"
-            f"\n2. 主体用loop覆盖大部分时长，每个loop体内放5-8个不同动作"
-            f"\n3. 中间可换多组loop体现变化"
-            f"\n4. 结尾（1-2个动作）"
-            f"\n总输出控制在15个标签以内。"
-            f"\n示例（{duration_s}秒歌曲）："
-            f"\n<reachy_mini:emotion name=\"cheerful1\"/>"
-            f"<loop times=\"{max(1, dance_count // 3)}\">"
-            f"...动作ctml"
-            f"</loop>"
-            f"<loop times=\"{max(1, dance_count // 3)}\">"
-            f"...动作ctml"
-            f"</loop>"
-            f"<reachy_mini:dance name=\"head_tilt_roll\"/>"
+            f"歌曲 {title} - {artist} 已播放完毕，播放列表结束。"
+            f"\n请简短自然地评价（一两句话即可），不要重复固定话术。"
+            f"\n如果用户之前没有其他请求，可以问问用户想听什么。"
+        )
+        await self._eventbus.put(ReactAgentEvent(
+            messages=[Message.new(role="system").with_content(Text(text=prompt))],
+            priority=0,
+        ))
+
+    async def _push_song_transition_event(self, prev: dict, next_song: dict) -> None:
+        """Push a ReactAgentEvent for the LLM to speak a transition line."""
+        prompt = (
+            f"歌曲 {prev['title']} - {prev['artist']} 播完了。"
+            f"\n现在开始播放: {next_song['title']} - {next_song['artist']}。"
+            f"\n请用一句话自然过渡（简短评价上一首或期待下一首）。"
+            f"\n**只说一句过渡语，不要输出dance/emotion等CTML动作标签**，编舞请求会单独发给你。"
         )
         await self._eventbus.put(ReactAgentEvent(
             messages=[Message.new(role="system").with_content(Text(text=prompt))],
             priority=1,
         ))
 
-    async def play_music(self, query: str) -> str:
+    # ------------------------------------------------------------------
+    # LLM choreography (one event per song, accurate duration)
+    # ------------------------------------------------------------------
+
+    async def _push_choreography_event(self, song: dict, remaining_s: float | None = None) -> None:
+        """Ask the LLM to freely choreograph using normal CTML commands.
+
+        :param song: song dict with title, artist, bpm, duration_s
+        :param remaining_s: if set, use this as the duration instead of full song duration
+        """
+        title = song.get("title", "")
+        artist = song.get("artist", "")
+        bpm = song.get("bpm", 0)
+        duration_s = remaining_s if remaining_s is not None else song.get("duration_s", 0)
+
+        prompt = (
+            f"歌曲 {title} - {artist} 正在播放（BPM={bpm}，剩余时长{duration_s}秒）。\n"
+            f"请根据歌曲的风格和节奏，编排覆盖整首歌剩余时长（{duration_s}秒）的舞蹈动作序列。\n"
+            f"\n"
+            f"你可以使用以下CTML命令自由组合：\n"
+            f"- <reachy_mini:dance name=\"...\"/>  选择适合歌曲风格的舞蹈\n"
+            f"- <reachy_mini:emotion emoji=\"...\"/>  穿插表达情绪\n"
+            f"- <reachy_mini:head_move yaw=\"..\" pitch=\"..\" duration=\"..\"/>  头部律动\n"
+            f"- <reachy_mini:antennas_move left=\"..\" right=\"..\" duration=\"..\"/>  天线摆动\n"
+            f"\n"
+            f"编排要求：\n"
+            f"- 动作序列的总时长必须覆盖{duration_s}秒，请根据每个dance的beats数和BPM={bpm}计算耗时来规划\n"
+            f"- 根据歌曲风格搭配动作（快歌用快动作如headbanger_combo，慢歌用柔和动作如pendulum_swing）\n"
+            f"- 动作之间可以穿插emotion和head_move增加表现力\n"
+            f"- 不要说话，只输出CTML动作标签\n"
+            f"- 系统会自动将你的动作对齐到歌曲节拍\n"
+        )
+        logger.info("Pushing choreography event for %s (BPM=%d, %.1fs)", title, bpm, duration_s)
+        await self._eventbus.put(ReactAgentEvent(
+            messages=[Message.new(role="system").with_content(Text(text=prompt))],
+            priority=0,
+        ))
+
+    # ------------------------------------------------------------------
+    # Context messages (music-playing state for LLM)
+    # ------------------------------------------------------------------
+
+    async def context_messages(self) -> List[Message]:
+        """Return context messages about current music playback state."""
+        if self._current_song is None:
+            return []
+        msg = Message.new(role="user", name="__music__")
+        title = self._current_song.get("title", "")
+        artist = self._current_song.get("artist", "")
+        bpm = self._current_song.get("bpm", 0)
+        total = len(self._playlist) + len(self._pending_results)
+        idx = self._playlist_index + 1
+        playlist_info = f"（第{idx}/{total}首）" if total > 1 else ""
+        msg.with_content(
+            Text(text=(
+                f"⚠️ 音乐正在播放: {title} - {artist}{playlist_info}（BPM={bpm}）。"
+                f"当收到编舞请求时，请用dance/emotion/head_move/antennas_move等CTML命令自由编排舞蹈动作。"
+                f"编排过程中不要说话，只输出CTML动作标签。"
+                f"歌曲结束时系统会自动通知你。"
+            )),
+        )
+        return [msg]
+
+    # ------------------------------------------------------------------
+    # Public async API (exposed as CTML commands)
+    # ------------------------------------------------------------------
+
+    async def play_music(self, query: str, count: int = 1) -> str:
         """搜索并播放音乐。query 为歌名、歌手名或关键词组合。
 
         :param query: 搜索关键词，如"周杰伦 晴天"
+        :param count: 播放歌曲数量。当用户给出模糊描述（如"播欢快的歌"）时设为3，指定具体歌曲时用默认值1
         """
-        # 1. Check cache
-        cached = self._lookup_cache(query)
-        if cached and cached.get("local_path") and Path(cached["local_path"]).exists():
-            local_path = cached["local_path"]
-            info = await asyncio.to_thread(_analyze_audio, local_path)
-            await self._sound.play_sound(local_path)
-            await self._push_choreography_event(cached["title"], cached["artist"], info)
-            return _format_play_result(cached["title"], cached["artist"], info, from_cache=True)
+        self._loop = asyncio.get_running_loop()
+
+        # Stop any ongoing playback
+        if self._current_song is not None:
+            self._current_song = None
+            self._playback_start_time = None
+            await self._sound.stop_sound()
+        self._pending_results = []
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
+
+        # 1. Check cache (single song)
+        if count == 1:
+            cached = self._lookup_cache(query)
+            if cached and cached.get("local_path") and Path(cached["local_path"]).exists():
+                local_path = cached["local_path"]
+                if cached.get("bpm") and cached.get("beat_times") is not None:
+                    info = {
+                        "bpm": cached["bpm"],
+                        "duration_s": cached.get("duration_s", 0),
+                        "beat_times": cached.get("beat_times", []),
+                    }
+                else:
+                    info = await asyncio.to_thread(_analyze_audio, local_path)
+                    cached["bpm"] = info.get("bpm", 0)
+                    cached["duration_s"] = info.get("duration_s", 0)
+                    cached["beat_times"] = info.get("beat_times", [])
+                    self._save_index()
+                title = cached["title"]
+                artist = cached["artist"]
+                song = {
+                    "title": title, "artist": artist,
+                    "bpm": info["bpm"], "duration_s": info["duration_s"],
+                    "beat_times": info["beat_times"], "local_path": local_path,
+                }
+                self._playlist = [song]
+                self._playlist_index = 0
+                self._current_song = song
+                await self._sound.play_sound(local_path)
+                self._playback_start_time = time.monotonic()
+                await self._push_choreography_event(song)
+                return (
+                    f"正在播放: {title} - {artist}（缓存）。"
+                    f"时长: {info['duration_s']}秒，BPM: {info['bpm']}。"
+                )
 
         # 2. Search Bilibili
-        results = await asyncio.to_thread(self._search_bilibili, query)
+        search_count = max(count * 2, 5)
+        results = await asyncio.to_thread(self._search_bilibili, query, search_count)
         if not results:
             return f"没有找到 '{query}' 相关的音乐"
 
-        # 3. Get audio URL for first result
-        best = results[0]
-        audio_url = await asyncio.to_thread(self._get_audio_url, best["bvid"])
-        if not audio_url:
-            return f"找到了 '{query}' 但无法获取播放链接"
+        # 3. Download ONLY the first song → play immediately
+        first_song = None
+        remaining_results = list(results)
+        while remaining_results and first_song is None:
+            result = remaining_results.pop(0)
+            first_song = await self._prepare_song(result)
 
-        # 4. Download to cache (Bilibili requires Referer, can't stream directly via PyAV)
-        safe_name = re.sub(r'[^\w\-]', '_', query)[:50]
-        cache_file = self._cache_dir / f"{safe_name}_{int(time.time())}.m4a"
-        ok = await asyncio.to_thread(self._download_audio, audio_url, cache_file)
-        if not ok:
-            return f"下载 '{query}' 音频失败"
+        if not first_song:
+            return f"找到了 '{query}' 但无法获取可用的音频"
 
-        # 5. Analyze BPM and beat times
-        info = await asyncio.to_thread(_analyze_audio, str(cache_file))
+        # 4. Set up playlist with first song, save remaining for prefetch
+        self._playlist = [first_song]
+        self._playlist_index = 0
+        self._current_song = first_song
+        # Keep up to (count - 1) remaining results for prefetch
+        self._pending_results = remaining_results[:count - 1]
 
-        # 6. Play local file
-        await self._sound.play_sound(str(cache_file))
+        # 5. Start playing immediately + push choreography event
+        await self._sound.play_sound(first_song["local_path"])
+        self._playback_start_time = time.monotonic()
+        await self._push_choreography_event(first_song)
 
-        # 7. Update cache index
-        title = best.get("title", query)
-        artist = best.get("author", "未知")
-        self._index[query] = {
-            "title": title,
-            "artist": artist,
-            "source": "bilibili",
-            "bvid": best["bvid"],
-            "local_path": str(cache_file),
-            "cached_at": int(time.time()),
-        }
-        self._save_index()
+        # 6. Start prefetching next song in background
+        self._start_prefetch()
 
-        await self._push_choreography_event(title, artist, info)
-        return _format_play_result(title, artist, info)
+        # 7. Build result string
+        total = 1 + len(self._pending_results)
+        if total == 1:
+            return (
+                f"正在播放: {first_song['title']} - {first_song['artist']}。"
+                f"时长: {first_song['duration_s']}秒，BPM: {first_song['bpm']}。"
+            )
+        return (
+            f"正在播放: {first_song['title']} - {first_song['artist']}"
+            f"（时长: {first_song['duration_s']}秒，BPM: {first_song['bpm']}）。"
+            f"\n还有{len(self._pending_results)}首歌在后台准备中，会自动接续播放。"
+        )
 
     async def search_music(self, query: str, count: int = 5) -> str:
         """搜索音乐返回结果列表，不自动播放。用于让用户选择。
@@ -312,42 +560,36 @@ class MusicSearch:
 
     async def stop_music(self) -> str:
         """停止音乐播放。"""
+        self._current_song = None
+        self._playback_start_time = None
+        self._playlist = []
+        self._playlist_index = 0
+        self._pending_results = []
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
         await self._sound.stop_sound()
+        # Clear remaining dance commands on reachy_mini channel
+        await self._eventbus.put(CTMLAgentEvent(
+            ctml='<clear chan="reachy_mini"/>',
+            priority=2,
+        ))
         return "音乐已停止。"
 
     async def resume_music(self) -> str:
         """恢复音乐播放，并继续配合动作。"""
-        # Get remaining time before resuming
         status = await asyncio.to_thread(self._sound._player.status)
         remaining_s = 0.0
         if status.duration_s and status.position_s:
-            remaining_s = max(0, status.duration_s - status.position_s)
+            remaining_s = round(max(0, status.duration_s - status.position_s), 1)
 
         await self._sound.resume_sound()
+        self._playback_start_time = time.monotonic()  # reset for beat-sync
 
-        # Push new choreography event with remaining time
-        if remaining_s > 0:
-            await self._push_remaining_choreography_event(remaining_s)
+        # Push a new choreography event with accurate remaining time
+        if self._current_song and remaining_s > 0:
+            await self._push_choreography_event(self._current_song, remaining_s=remaining_s)
 
         return f"音乐已恢复播放，剩余约{remaining_s:.0f}秒。"
-
-    async def _push_remaining_choreography_event(self, remaining_s: float) -> None:
-        """Push a ReactAgentEvent for the remaining playback time."""
-        prompt = (
-            f"音乐已恢复播放，剩余约{remaining_s:.0f}秒。"
-            f"请立即输出一段动作编排来配合剩余的音乐，总时长尽量接近{remaining_s:.0f}秒。"
-            f"编排应该丰富有层次，自由组合dance、head_move、antennas_move、emotion。"
-            f"<loop>只用在需要重复的片段，不要把整个编排包在一个大loop里。"
-            f"\n示例：\n<reachy_mini:dance name=\"groovy_sway_and_roll\"/>"
-            f"<reachy_mini:emotion name=\"cheerful1\"/>"
-            f"<loop times=\"2\"><reachy_mini:dance name=\"simple_nod\"/>"
-            f"<reachy_mini:antennas_move left=\"0.3\" right=\"-0.3\"/></loop>"
-            f"<reachy_mini:dance name=\"side_to_side_sway\"/>"
-        )
-        await self._eventbus.put(ReactAgentEvent(
-            messages=[Message.new(role="system").with_content(Text(text=prompt))],
-            priority=1,
-        ))
 
 
 class MusicSearchProvider(Provider[MusicSearch]):

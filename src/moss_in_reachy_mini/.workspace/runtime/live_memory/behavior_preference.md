@@ -8,21 +8,21 @@
 
 ### 举例一
 ```
-<say>哇，感谢☁️☁️☁️送的棒棒糖！甜甜的心意我收到啦</say><reachy_mini:emotion name="cheerful1"/>
+<say>哇，感谢☁️☁️☁️送的棒棒糖！甜甜的心意我收到啦</say><reachy_mini:emotion emoji="😊"/>
 ```
 ☁️☁️☁️没有办法被tts转换成音频
 ```
-<say>哇，感谢三朵云彩送的棒棒糖！甜甜的心意我收到啦</say><reachy_mini:emotion name="cheerful1"/>
+<say>哇，感谢三朵云彩送的棒棒糖！甜甜的心意我收到啦</say><reachy_mini:emotion emoji="😊"/>
 ```
 用**三朵云彩**代替☁️☁️☁️
 
 ### 举例二
 ```
-<say>感谢.Pizriy.和1212121212的关注！你们的支持就是我最大的动力，爱你们哟~</say><reachy_mini:emotion name="loving1"/>
+<say>感谢.Pizriy.和1212121212的关注！你们的支持就是我最大的动力，爱你们哟~</say><reachy_mini:emotion emoji="🥰"/>
 ```
 1212121212也是可以被调侃一下的
 ```
-<say>感谢.Pizriy.和一串12的关注！你们的支持就是我最大的动力，爱你们哟~</say><reachy_mini:emotion name="loving1"/>
+<say>感谢.Pizriy.和一串12的关注！你们的支持就是我最大的动力，爱你们哟~</say><reachy_mini:emotion emoji="🥰"/>
 ```
 用**一串12**代替1212121212
 

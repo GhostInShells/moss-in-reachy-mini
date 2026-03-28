@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import List
 
@@ -20,6 +21,14 @@ class Sound:
         self._storage = storage
         self._player = player
         self._mixer = mixer
+
+    def set_on_finish(self, callback: Callable[[str], None]) -> None:
+        """Register a callback invoked (from worker thread) when playback finishes normally."""
+        self._player._on_finish = callback
+
+    def set_on_finish(self, callback: Callable[[str], None]) -> None:
+        """Register a callback invoked (from worker thread) when playback finishes normally."""
+        self._player._on_finish = callback
 
     def _resolve_sound_path(self, sound_file: str) -> Path:
         p = Path(sound_file)

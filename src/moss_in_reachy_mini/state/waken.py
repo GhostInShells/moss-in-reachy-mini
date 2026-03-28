@@ -218,7 +218,7 @@ Proactive_Prompts = [
 _STRANGER_DETECTION_CTML = (
     '<say>你好呀，我还不认识你呢。'
     '如果想让我记住你，请说"开始人脸录入"，并告诉我你的名字。</say>'
-    '<reachy_mini:emotion name="welcoming1"/>'
+    '<reachy_mini:emotion emoji="🎊"/>'
 )
 
 
