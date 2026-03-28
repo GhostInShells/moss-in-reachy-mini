@@ -9,6 +9,7 @@ from ghoshell_container import Container
 from ghoshell_moss import MOSSShell, Message, Text
 from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
+from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
 
@@ -96,6 +97,11 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
+    chess_chan = ZMQChannelProxy(
+        name="chess",
+        address="tcp://localhost:5556",
+    )
+
     # shell
     shell = new_ctml_shell(
         container=container,
@@ -107,7 +113,8 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         session.as_channel(),
         douyin_live.as_channel(),
         websearch_chan,
-        agent_task_chan
+        agent_task_chan,
+        chess_chan
     )
     container.set(MOSSShell, shell)
 
@@ -137,7 +144,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         ),
     )
     eventbus = container.force_fetch(EventBus)
-    agent.set_state_hook(DriveSelfState(eventbus=eventbus, douyin=douyin_live))
+    # agent.set_state_hook(DriveSelfState(eventbus=eventbus, douyin=douyin_live))
     agent.ctml_candidates = [
         # "<say>我正在听</say>"
     ]
@@ -255,7 +262,11 @@ async def main() -> None:
         ))
 
         # 控制台语音交互
-        container.set(BaseChat, ConsolePTTChat(eventbus=eventbus))
+        container.set(
+            BaseChat,
+            # ConsolePTTChat(eventbus=eventbus)
+            ConsoleChat()
+        )
 
         main_agent = await build_main_agent(parent=container, agent_id=main_agent_id)
         decision_agent = await build_decision_agent(parent=container, agent_id=decision_agent_id)
@@ -276,7 +287,7 @@ async def main() -> None:
         await asyncio.gather(
             agent_hub.bootstrap(),
             setup_chat(eventbus, container.force_fetch(BaseChat)),
-            server.run()
+            # server.run()
         )
 
 

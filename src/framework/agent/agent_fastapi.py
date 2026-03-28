@@ -36,6 +36,7 @@ class AgentFastAPI:
             try:
                 text = data.get("text", "")
                 agent_id = data.get("agent_id", "")
+                priority = data.get("priority", 1)
                 enqueue = []
                 if text:
                     message = Message.new(role="user", name="__user__").with_content(
@@ -44,7 +45,7 @@ class AgentFastAPI:
                     await self._eventbus.put(
                         UserInputAgentEvent(
                             message=message,
-                            priority=1,
+                            priority=priority,
                             agent_id=agent_id,
                         )
                     )
@@ -55,7 +56,7 @@ class AgentFastAPI:
                     await self._eventbus.put(
                         CTMLAgentEvent(
                             ctml=ctml,
-                            priority=1,
+                            priority=priority,
                             agent_id=agent_id,
                         ),
                     )

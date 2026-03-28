@@ -751,13 +751,13 @@ class DouyinLive(DouyinLiveWebFetcher):
         messages.append(overview_msg)
 
         # 2. 事件详情消息
-        if recent_events:
-            msg = Message.new(role="user", name=f"__douyin_live_interaction__")
-            for event in recent_events:
-                msg.with_content(
-                    Text(text=f"[{'已处理' if event.processed else '未处理'}] {event.to_natural()}")
-                )
-            messages.append(msg)
+        # if recent_events:
+        #     msg = Message.new(role="user", name=f"__douyin_live_interaction__")
+        #     for event in recent_events:
+        #         msg.with_content(
+        #             Text(text=f"[{'已处理' if event.processed else '未处理'}] {event.to_natural()}")
+        #         )
+        #     messages.append(msg)
 
         # 更新当前快照
         async with self._snapshot_lock:
