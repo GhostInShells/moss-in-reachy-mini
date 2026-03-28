@@ -1,4 +1,5 @@
 import asyncio
+import bisect
 import logging
 import os
 import time
@@ -124,10 +125,52 @@ class MossInReachyMini:
         # components context messages
         head_messages = await self.head.context_messages()
         messages.extend(head_messages)
+
+        # music context (suppress speech during playback)
+        music_messages = await self.music.context_messages()
+        messages.extend(music_messages)
+
         return messages
 
     def is_available_fn(self, *available_states) -> Callable[[], bool]:
         return lambda: self._state.NAME in available_states
+
+    # ------------------------------------------------------------------
+    # Beat-sync: align dance/emotion to music beats when playing
+    # ------------------------------------------------------------------
+
+    async def _wait_for_beat(self):
+        """If music is playing, wait until the next beat boundary."""
+        song = self.music._current_song
+        if song is None:
+            return
+
+        start = self.music._playback_start_time
+        if start is None:
+            return
+
+        beat_times: list[float] = song.get("beat_times", [])
+        if not beat_times:
+            return
+
+        elapsed = time.monotonic() - start
+        idx = bisect.bisect_right(beat_times, elapsed)
+        if idx < len(beat_times):
+            wait = beat_times[idx] - elapsed
+            if 0 < wait < 3.0:
+                await asyncio.sleep(wait)
+
+    async def _beat_synced_dance(self, name: str):
+        """Dance with beat alignment when music is playing."""
+        await self._wait_for_beat()
+        return await self.body.dance(name)
+
+    async def _beat_synced_emotion(self, emoji: str):
+        """Emotion with beat alignment when music is playing."""
+        await self._wait_for_beat()
+        return await self.body.emotion(emoji)
+
+    # ------------------------------------------------------------------
 
     def as_channel(self, only_context_messages=False) -> PyChannel:
         self.logger.info("MossInReachyMini.as_channel()...")
@@ -178,15 +221,18 @@ class MossInReachyMini:
 
         # 注册自身command，都是动作
         # 动作单轨化：reachy mini的可执行动作比较简单，拆多轨增加复杂度而且容易导致电机打架抽搐，单轨化的表现力已经足够了
+        # dance/emotion 使用 beat-sync 包装，音乐播放时自动对齐节拍
         reachy_mini.build.command(
+            name="dance",
             doc=self.body.dance_docstring,
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.body.dance)
+        )(self._beat_synced_dance)
 
         reachy_mini.build.command(
+            name="emotion",
             doc=self.body.emotion_docstring,
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
-        )(self.body.emotion)
+        )(self._beat_synced_emotion)
 
         reachy_mini.build.command(
             name="head_move",
@@ -222,7 +268,8 @@ class MossInReachyMini:
             name="play_music",
             doc=(
                 "搜索并播放音乐。query 为歌名、歌手名或关键词组合。"
-                "播放后系统会自动触发动作编排请求，你不需要在调用play_music时同时输出dance。"
+                "指定具体歌曲时 count=1；模糊描述（如'播欢快的歌'）时设 count=3。"
+                "\n播放后系统会向你发送编舞请求，届时请用dance/emotion/head_move/antennas_move自由编排。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
             ),
             available=self.is_available_fn(WakenState.NAME),

@@ -1,3 +1,4 @@
 thread_*
 live_id_*/
+decision_agent_sessions/
 !.gitignore
