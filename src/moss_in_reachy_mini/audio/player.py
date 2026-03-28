@@ -14,11 +14,12 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
     def __init__(
         self,
         mini: ReachyMini,
+        recorder: VideoRecorderWorker,
+        mixer: AudioMixer,
         *,
         logger: LoggerItf | None = None,
         safety_delay: float = 0.5,
-        recorder: VideoRecorderWorker | None = None,
-        mixer: AudioMixer | None = None,
+
     ):
         """
         基于 PyAudio 的异步音频播放器实现
@@ -102,10 +103,7 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
     def _audio_stream_start(self):
         # Mixer owns the output stream. If mixer isn't provided, fallback to
         # direct output stream control.
-        if self._mixer is None:
-            self.mini.media.start_playing()
-            # If another component forced the output stream samplerate, sync.
-            self._sync_output_format()
+        pass
 
     def _audio_stream_stop(self):
         # Don't close any shared output stream here.
@@ -155,14 +153,9 @@ class ReachyMiniStreamPlayer(BaseAudioStreamPlayer):
             except Exception:
                 self._logger.warning("Failed to record output audio")
 
-        if self._mixer is not None:
-            # TTS is mono duplicated to stereo in `audio_data` already.
-            # Route into mixer so it can mix with background audio.
-            self._mixer.push(
-                "tts",
-                data,
-                rate=self.sample_rate,
-                channels=int(data.shape[1]) if data.ndim == 2 else 1,
-            )
-        else:
-            self.mini.media.push_audio_sample(data)
+        self._mixer.push(
+            "tts",
+            data,
+            rate=self.sample_rate,
+            channels=int(data.shape[1]) if data.ndim == 2 else 1,
+        )

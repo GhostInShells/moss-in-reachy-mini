@@ -9,6 +9,7 @@ from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
+from moss_in_reachy_mini.audio.mixer import AudioMixer
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_hub import AgentHub, EventBus
 from framework.abcd.session import Session
@@ -343,16 +344,8 @@ def get_speech(
     from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
 
     container = container or get_container()
-    try:
-        from moss_in_reachy_mini.audio.mixer import AudioMixer
-
-        mixer = container.force_fetch(AudioMixer)
-    except Exception:
-        mixer = None
-    try:
-        recorder = container.get(VideoRecorderWorker)
-    except Exception:
-        recorder = None
+    mixer = container.force_fetch(AudioMixer)
+    recorder = container.force_fetch(VideoRecorderWorker)
     app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
     app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
     resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")

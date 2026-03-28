@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import av
 import numpy as np
 from reachy_mini import ReachyMini
 
@@ -375,14 +376,6 @@ class ReachyMiniAudioFilePlayer:
         # Can be disabled for troubleshooting dylib conflicts (e.g. macOS cv2 vs av).
         disable_pyav = os.getenv("REACHY_MINI_AUDIO_DISABLE_PYAV", "").lower() in {"1", "true", "yes"}
 
-        if disable_pyav:
-            av = None  # type: ignore
-        else:
-            try:
-                import av  # type: ignore
-            except Exception:
-                av = None  # type: ignore
-
         # Ensure the output stream is open early so we can use the actual
         # samplerate it runs at.
         self._ensure_output_open()
@@ -402,9 +395,8 @@ class ReachyMiniAudioFilePlayer:
             self._paused_accum_s = 0.0
         pushed_frames = 0
 
-        if av is not None:
+        if not disable_pyav:
             self._stream_with_pyav(
-                av,
                 source,
                 sr_out=sr_out,
                 ch_out=ch_out,
@@ -460,7 +452,6 @@ class ReachyMiniAudioFilePlayer:
 
     def _stream_with_pyav(
         self,
-        av,
         source: str,
         *,
         sr_out: int,
