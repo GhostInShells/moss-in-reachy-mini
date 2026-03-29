@@ -1,4 +1,5 @@
 import logging
+import time
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import Provider, IoCContainer
@@ -19,7 +20,7 @@ class LiveState(BaseAgentHook):
     """
 
     NAME = "live"
-    out_switchable = False
+    out_switchable = True
 
     def __init__(
             self,
@@ -35,6 +36,7 @@ class LiveState(BaseAgentHook):
         self.logger = logger or logging.getLogger("LiveState")
         self.eventbus = eventbus
         self.todolist = todolist
+        self.last_run_time = int(time.time())
 
     async def on_self_enter(self):
         self.mini.enable_motors()
@@ -61,6 +63,13 @@ class LiveState(BaseAgentHook):
             prompt = Message.new(role="user", name="__live_idle_driver_prompt__").with_content(
                 Text(text=self.douyin_live.config.idle_task_prompt),
             )
+            now = int(time.time())
+            if (now - self.last_run_time) >= 5*60:
+                self.last_run_time = now
+                prompt.with_content(
+                    Text(text="本次你要索要观众的点赞和关注")
+                )
+
             await self.eventbus.put(ProgramInputAgentEvent(
                 prompt=prompt,
                 message=message,
