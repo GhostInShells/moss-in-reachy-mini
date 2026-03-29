@@ -12,11 +12,18 @@ class HeadMove(Move):
             self,
             start_pose: npt.NDArray[np.float64],
             target_pose: npt.NDArray[np.float64],
+            start_body_yaw: float=None,
+            target_body_yaw: float=None,
             duration: float = 0.5,
     ):
         self.start_pose = start_pose
         self.target_pose = target_pose
         self._duration = duration
+
+        self.start_body_yaw = start_body_yaw
+        self.target_body_yaw = (
+            target_body_yaw if target_body_yaw is not None else start_body_yaw
+        )
 
     @property
     def duration(self) -> float:
@@ -29,7 +36,13 @@ class HeadMove(Move):
         interp_head_pose = linear_pose_interpolation(
             self.start_pose, self.target_pose, interp_time
         )
-        return interp_head_pose, None, None
+        interp_body_yaw_joint = None
+        if self.start_body_yaw is not None:
+            interp_body_yaw_joint = (
+                self.start_body_yaw
+                + (self.target_body_yaw - self.start_body_yaw) * interp_time
+            )
+        return interp_head_pose, None, interp_body_yaw_joint
 
 
 class BreathingMove(Move):  # type: ignore

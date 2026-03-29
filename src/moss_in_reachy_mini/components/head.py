@@ -37,6 +37,8 @@ class Head:
         self._idle_mode: str = IdleMode.hold.value
         self._last_idle_mode: str = IdleMode.hold.value  # 记录上一个空闲模式，方便恢复
 
+        self._current_body_yaw = 0.0
+
     async def move(
             self,
             x: float = 0,
@@ -45,6 +47,7 @@ class Head:
             roll: float = 0,
             pitch: float = 0,
             yaw: float = 0,
+            body_yaw: float = 0,
             duration: float = 0.5,
     ):
         """Move to a pose in 6D space (position and orientation).
@@ -56,14 +59,18 @@ class Head:
             roll (float): Roll angle. range(degree): [-40, +40]
             pitch (float): Pitch angle. range(degree): [-40, +40]
             yaw (float): Yaw angle. range(degree): [-60, +60]
+            body_yaw (float): Body yaw angle. range(degree): [-155, +155]
             duration (float): Duration in seconds.
         """
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(x, y, z, roll, pitch, yaw),
+            self._current_body_yaw,
+            body_yaw,
             duration=duration
         ))
 
+        self._current_body_yaw = body_yaw
 
     def switch_idle_mode(self, mode: str):
         self._last_idle_mode = self._idle_mode
@@ -80,8 +87,11 @@ class Head:
         await self.mini.async_play_move(move=HeadMove(
             self.mini.get_current_head_pose(),
             create_head_pose(),
+            self._current_body_yaw,
+            0.0,
             duration=duration,
         ))
+        self._current_body_yaw = 0.0
 
     async def start_tracking_face(self, name: str):
         """
@@ -106,6 +116,8 @@ class Head:
         self._head_tracker.set_target_track_name("")
 
     async def _breathing(self):
+        await self.reset(IdleMode.breathing.value, duration=0.5)
+
         _, current_antennas = self.mini.get_current_joint_positions()
         current_head_pose = self.mini.get_current_head_pose()
         breathing_move = BreathingMove(
