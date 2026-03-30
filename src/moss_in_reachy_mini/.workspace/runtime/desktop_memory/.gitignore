@@ -1,3 +1,5 @@
 thread_*
 decision_agent_sessions/
+main_agent_sessions/
+live_agent_sessions/
 !.gitignore

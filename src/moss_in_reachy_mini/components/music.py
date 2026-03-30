@@ -13,6 +13,8 @@ import requests
 from ghoshell_common.contracts import Workspace
 from ghoshell_container import INSTANCE, IoCContainer, Provider
 from ghoshell_moss import Message, Text
+from reachy_mini_dances_library import DanceMove
+from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
 from framework.abcd.agent_event import CTMLAgentEvent, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
@@ -27,6 +29,9 @@ _BILIBILI_HEADERS = {
 
 # Max duration (seconds) for a single song. Longer clips are likely compilations.
 _MAX_SINGLE_SONG_DURATION = 600
+
+# Head reset after each dance adds ~0.5s
+_HEAD_RESET_OVERHEAD = 0.5
 
 # ------------------------------------------------------------------
 # Audio analysis
@@ -99,6 +104,13 @@ class MusicSearch:
 
         # Duration limiting
         self._duration_timer: asyncio.Task | None = None
+        self._per_song_duration: float = -1.0  # -1 means play full song
+
+        # Continuous mode: when True, system prompts LLM to pick next song after each finishes
+        self._continuous: bool = False
+
+        # Guard flag: prevents _on_playback_finish callback from firing during intentional stops
+        self._stopping: bool = False
 
         # Register playback finish callback
         self._sound.set_on_finish(self._on_playback_finish)
@@ -284,14 +296,52 @@ class MusicSearch:
     # Playback finish callback & playlist progression
     # ------------------------------------------------------------------
 
+    async def _reset_playback(self) -> None:
+        """Stop music and clear ALL playback/playlist state. Called at the start of every play_music."""
+        # Cancel duration timer
+        if self._duration_timer and not self._duration_timer.done():
+            self._duration_timer.cancel()
+            self._duration_timer = None
+        # Cancel prefetch
+        if self._prefetch_task and not self._prefetch_task.done():
+            self._prefetch_task.cancel()
+            self._prefetch_task = None
+        # Stop sound with _stopping guard so callback is a no-op
+        if self._current_song is not None:
+            self._stopping = True
+            await self._sound.stop_sound()
+            self._stopping = False
+        # Clear all state
+        self._current_song = None
+        self._playback_start_time = None
+        self._playlist = []
+        self._playlist_index = 0
+        self._pending_results = []
+        self._per_song_duration = -1.0
+        self._continuous = False
+
     def _on_playback_finish(self, source: str) -> None:
         """Called from file_player worker thread when playback finishes normally."""
-        if self._loop is None or self._current_song is None:
+        if self._loop is None or self._current_song is None or self._stopping:
             return
         asyncio.run_coroutine_threadsafe(self._handle_song_finish(), self._loop)
 
+    def _start_duration_timer(self, song: dict) -> float:
+        """Start duration timer if per_song_duration is set. Returns the effective remaining_s."""
+        song_dur = song.get("duration_s", 0)
+        if self._per_song_duration > 0:
+            remaining_s = min(self._per_song_duration, song_dur)
+            if remaining_s < song_dur:
+                self._duration_timer = asyncio.create_task(
+                    self._stop_after_duration(remaining_s)
+                )
+            return remaining_s
+        return song_dur
+
     async def _handle_song_finish(self) -> None:
         """Handle song finish: play next in playlist or notify end."""
+        if self._current_song is None:
+            return  # Already handled or reset — nothing to do
         # Cancel any duration timer
         if self._duration_timer and not self._duration_timer.done():
             self._duration_timer.cancel()
@@ -312,10 +362,11 @@ class MusicSearch:
 
             await self._sound.play_sound(next_song["local_path"])
             self._playback_start_time = time.monotonic()
+            remaining_s = self._start_duration_timer(next_song)
 
             # Push transition speech, then choreography for new song
             await self._push_song_transition_event(prev, next_song)
-            await self._push_choreography_event(next_song)
+            await self._push_choreography_event(next_song, remaining_s=remaining_s)
 
             # Prefetch the one after that
             self._start_prefetch()
@@ -333,8 +384,9 @@ class MusicSearch:
                 self._current_song = song
                 await self._sound.play_sound(song["local_path"])
                 self._playback_start_time = time.monotonic()
+                remaining_s = self._start_duration_timer(song)
                 await self._push_song_transition_event(prev, song)
-                await self._push_choreography_event(song)
+                await self._push_choreography_event(song, remaining_s=remaining_s)
                 self._start_prefetch()
             else:
                 # All remaining downloads failed
@@ -346,7 +398,7 @@ class MusicSearch:
                 self._pending_results = []
                 await self._push_song_end_event(last["title"], last["artist"])
         else:
-            # All done
+            # No more songs in playlist
             last = self._current_song
             self._current_song = None
             self._playback_start_time = None
@@ -355,12 +407,19 @@ class MusicSearch:
             await self._push_song_end_event(last["title"], last["artist"])
 
     async def _push_song_end_event(self, title: str, artist: str) -> None:
-        """Notify the LLM that all songs have finished playing."""
-        prompt = (
-            f"歌曲 {title} - {artist} 已播放完毕，播放列表结束。"
-            f"\n请简短自然地评价（一两句话即可），不要重复固定话术。"
-            f"\n如果用户之前没有其他请求，可以问问用户想听什么。"
-        )
+        """Notify the LLM that a song has finished playing."""
+        if self._continuous:
+            prompt = (
+                f"歌曲 {title} - {artist} 已播放完毕。"
+                f"\n请简短自然地评价这首歌（一两句话即可），不要重复固定话术，"
+                f"然后继续用play_music选择下一首歌并播放（记得带上continuous=True），不要停下来问用户。"
+            )
+        else:
+            prompt = (
+                f"歌曲 {title} - {artist} 已播放完毕。"
+                f"\n请简短自然地评价这首歌（一两句话即可），不要重复固定话术。"
+                f"\n可以问问用户还想听什么。"
+            )
         await self._eventbus.put(ReactAgentEvent(
             messages=[Message.new(role="system").with_content(Text(text=prompt))],
             priority=0,
@@ -393,23 +452,48 @@ class MusicSearch:
         artist = song.get("artist", "")
         bpm = song.get("bpm", 0)
         duration_s = remaining_s if remaining_s is not None else song.get("duration_s", 0)
+        beat_dur = round(60.0 / bpm, 2) if bpm > 0 else 0.5
+
+        # Build dance duration table (fixed at DanceMove.default_bpm=114)
+        internal_beat_dur = 60.0 / DanceMove.default_bpm
+        dance_lines = []
+        for name, move in AVAILABLE_MOVES.items():
+            _func, _params, meta = move
+            beats = meta.get("default_duration_beats", 4)
+            dance_dur = round(internal_beat_dur * beats, 1)
+            total_dur = round(dance_dur + _HEAD_RESET_OVERHEAD, 1)
+            dance_lines.append(f"  {name}: {total_dur}s")
+        dance_table = "\n".join(dance_lines)
 
         prompt = (
             f"歌曲 {title} - {artist} 正在播放（BPM={bpm}，剩余时长{duration_s}秒）。\n"
-            f"请根据歌曲的风格和节奏，编排覆盖整首歌剩余时长（{duration_s}秒）的舞蹈动作序列。\n"
+            f"请编排覆盖整首歌剩余时长的舞蹈动作序列。\n"
             f"\n"
-            f"你可以使用以下CTML命令自由组合：\n"
-            f"- <reachy_mini:dance name=\"...\"/>  选择适合歌曲风格的舞蹈\n"
-            f"- <reachy_mini:emotion emoji=\"...\"/>  穿插表达情绪\n"
-            f"- <reachy_mini:head_move yaw=\"..\" pitch=\"..\" duration=\"..\"/>  头部律动\n"
-            f"- <reachy_mini:antennas_move left=\"..\" right=\"..\" duration=\"..\"/>  天线摆动\n"
+            f"=== 节拍信息 ===\n"
+            f"每拍时长: {beat_dur}s（BPM={bpm}）\n"
+            f"系统会自动将每个动作对齐到最近的节拍点。\n"
             f"\n"
-            f"编排要求：\n"
-            f"- 动作序列的总时长必须覆盖{duration_s}秒，请根据每个dance的beats数和BPM={bpm}计算耗时来规划\n"
-            f"- 根据歌曲风格搭配动作（快歌用快动作如headbanger_combo，慢歌用柔和动作如pendulum_swing）\n"
-            f"- 动作之间可以穿插emotion和head_move增加表现力\n"
-            f"- 不要说话，只输出CTML动作标签\n"
-            f"- 系统会自动将你的动作对齐到歌曲节拍\n"
+            f"=== 动作时长表（固定，不随歌曲BPM变化）===\n"
+            f"{dance_table}\n"
+            f"  emotion: ~1.5s\n"
+            f"  head_move: 由duration参数决定\n"
+            f"  antennas_move: 由duration参数决定\n"
+            f"\n"
+            f"=== 可用CTML命令 ===\n"
+            f'- <reachy_mini:dance name="..."/>  舞蹈动作\n'
+            f'- <reachy_mini:emotion emoji="..."/>  表情动作\n'
+            f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>  头部律动\n'
+            f'- <reachy_mini:antennas_move left=".." right=".." duration=".."/>  天线摆动\n'
+            f'- <sleep duration=".."/>  节拍停顿（用beat的倍数：{beat_dur}s=一拍，{round(beat_dur * 2, 2)}s=两拍）\n'
+            f"\n"
+            f"=== 编排要求 ===\n"
+            f"1. 直接输出完整的动作序列，总时长覆盖{duration_s}秒（不要使用loop，逐个写出每个动作）\n"
+            f"2. 动作要多样化，不要连续重复相同动作，尽量用到不同的dance\n"
+            f"3. 用<sleep duration=\"{beat_dur}\"/>在动作间插入节拍停顿，踩准节奏\n"
+            f"4. head_move和antennas_move穿插在dance之间增加表现力\n"
+            f"5. 根据歌曲风格搭配（快歌→headbanger_combo/chicken_peck，慢歌→pendulum_swing/side_to_side_sway）\n"
+            f"6. 高潮段密集动作，安静段多用sleep留白\n"
+            f"7. 不要说话，只输出CTML动作标签\n"
         )
         logger.info("Pushing choreography event for %s (BPM=%d, %.1fs)", title, bpm, duration_s)
         await self._eventbus.put(ReactAgentEvent(
@@ -421,18 +505,18 @@ class MusicSearch:
         """Stop playback after specified duration."""
         try:
             await asyncio.sleep(duration_s)
-            # Stop the sound
+            if self._current_song is None:
+                return
+            # Set _stopping so the worker-thread callback becomes a no-op
+            self._stopping = True
             await self._sound.stop_sound()
-            # Manually trigger song finish to advance playlist
-            if self._current_song is not None:
-                # Cancel timer
-                self._duration_timer = None
-                # Simulate playback finish
-                await self._handle_song_finish()
+            self._stopping = False
+            self._duration_timer = None
+            await self._handle_song_finish()
         except asyncio.CancelledError:
-            # Timer was cancelled (song finished naturally or user stopped)
-            pass
+            self._stopping = False
         except Exception:
+            self._stopping = False
             logger.exception("Error in duration timer")
 
     # ------------------------------------------------------------------
@@ -464,28 +548,25 @@ class MusicSearch:
     # Public async API (exposed as CTML commands)
     # ------------------------------------------------------------------
 
-    async def play_music(self, query: str, count: int = 1, duration: float = -1.0) -> str:
-        """搜索并播放音乐。query 为歌名、歌手名或关键词组合。
+    async def play_music(self, query: str, count: int = 1, duration: float = -1.0, continuous: bool = False) -> str:
+        """搜索并播放音乐。query 必须是具体的「歌手+歌名」或「歌名」。
 
-        :param query: 搜索关键词，如"周杰伦 晴天"
-        :param count: 播放歌曲数量。当用户给出模糊描述（如"播欢快的歌"）时设为3，指定具体歌曲时用默认值1
-        :param duration: 播放时长（秒），默认-1表示自然播放完毕。如果设置大于0，则仅播放指定秒数的音乐
+        禁止将用户的模糊描述（如"下雨天适合听的歌"）直接作为 query。
+        当用户给出心情/场景/风格描述时，先推荐具体歌曲，再用具体歌名调用。
+
+        :param query: 具体歌名或歌手+歌名，如"周杰伦 晴天"、"光年之外"
+        :param count: 播放歌曲数量，默认1
+        :param duration: 不要传此参数，除非用户明确要求只听指定秒数。默认-1播完整首歌
+        :param continuous: 连续播放模式。当用户要求播放多首歌曲时设为True，播完后系统会提示你继续选歌
         """
         self._loop = asyncio.get_running_loop()
 
-        # Cancel any existing duration timer
-        if self._duration_timer and not self._duration_timer.done():
-            self._duration_timer.cancel()
-            self._duration_timer = None
+        # Always reset ALL state first — clean slate for every play request
+        await self._reset_playback()
 
-        # Stop any ongoing playback
-        if self._current_song is not None:
-            self._current_song = None
-            self._playback_start_time = None
-            await self._sound.stop_sound()
-        self._pending_results = []
-        if self._prefetch_task and not self._prefetch_task.done():
-            self._prefetch_task.cancel()
+        # Store session settings
+        self._per_song_duration = duration
+        self._continuous = continuous
 
         # 1. Check cache (single song)
         if count == 1:
@@ -516,15 +597,7 @@ class MusicSearch:
                 self._current_song = song
                 await self._sound.play_sound(local_path)
                 self._playback_start_time = time.monotonic()
-                # Calculate remaining duration
-                remaining_s = info["duration_s"]
-                if duration > 0:
-                    remaining_s = min(duration, info["duration_s"])
-                    if remaining_s < info["duration_s"]:
-                        # Schedule stop after remaining_s seconds
-                        self._duration_timer = asyncio.create_task(
-                            self._stop_after_duration(remaining_s)
-                        )
+                remaining_s = self._start_duration_timer(song)
                 await self._push_choreography_event(song, remaining_s=remaining_s)
                 return (
                     f"正在播放: {title} - {artist}（缓存）。"
@@ -557,15 +630,7 @@ class MusicSearch:
         # 5. Start playing immediately + push choreography event
         await self._sound.play_sound(first_song["local_path"])
         self._playback_start_time = time.monotonic()
-        # Calculate remaining duration
-        remaining_s = first_song["duration_s"]
-        if duration > 0:
-            remaining_s = min(duration, first_song["duration_s"])
-            if remaining_s < first_song["duration_s"]:
-                # Schedule stop after remaining_s seconds
-                self._duration_timer = asyncio.create_task(
-                    self._stop_after_duration(remaining_s)
-                )
+        remaining_s = self._start_duration_timer(first_song)
         await self._push_choreography_event(first_song, remaining_s=remaining_s)
 
         # 6. Start prefetching next song in background
@@ -609,18 +674,7 @@ class MusicSearch:
 
     async def stop_music(self) -> str:
         """停止音乐播放。"""
-        # Cancel any duration timer
-        if self._duration_timer and not self._duration_timer.done():
-            self._duration_timer.cancel()
-            self._duration_timer = None
-        self._current_song = None
-        self._playback_start_time = None
-        self._playlist = []
-        self._playlist_index = 0
-        self._pending_results = []
-        if self._prefetch_task and not self._prefetch_task.done():
-            self._prefetch_task.cancel()
-        await self._sound.stop_sound()
+        await self._reset_playback()
         # Clear remaining dance commands on reachy_mini channel
         await self._eventbus.put(CTMLAgentEvent(
             ctml='<clear chan="reachy_mini"/>',
