@@ -1,4 +1,4 @@
-thread_*
+*_sessions/
 live_id_*/
 decision_agent_sessions/
 !.gitignore
