@@ -112,6 +112,9 @@ class MusicSearch:
         # Guard flag: prevents _on_playback_finish callback from firing during intentional stops
         self._stopping: bool = False
 
+        # Set by stop_music() to reject stale continuous callbacks from queued events
+        self._music_stopped: bool = False
+
         # Register playback finish callback
         self._sound.set_on_finish(self._on_playback_finish)
 
@@ -318,7 +321,6 @@ class MusicSearch:
         self._playlist_index = 0
         self._pending_results = []
         self._per_song_duration = -1.0
-        self._continuous = False
 
     def _on_playback_finish(self, source: str) -> None:
         """Called from file_player worker thread when playback finishes normally."""
@@ -412,7 +414,7 @@ class MusicSearch:
             prompt = (
                 f"歌曲 {title} - {artist} 已播放完毕。"
                 f"\n请简短自然地评价这首歌（一两句话即可），不要重复固定话术，"
-                f"然后继续用play_music选择下一首歌并播放（记得带上continuous=True），不要停下来问用户。"
+                f"然后继续用play_music选择下一首歌并播放，不要停下来问用户。"
             )
         else:
             prompt = (
@@ -561,12 +563,20 @@ class MusicSearch:
         """
         self._loop = asyncio.get_running_loop()
 
+        # Reject stale continuous callbacks that arrive after stop_music
+        if self._music_stopped:
+            self._music_stopped = False
+            if continuous:
+                return "音乐已停止。"
+
         # Always reset ALL state first — clean slate for every play request
         await self._reset_playback()
 
         # Store session settings
         self._per_song_duration = duration
-        self._continuous = continuous
+        if continuous:
+            self._continuous = True
+        # Don't set _continuous = False here; only stop_music clears it
 
         # 1. Check cache (single song)
         if count == 1:
@@ -674,7 +684,9 @@ class MusicSearch:
 
     async def stop_music(self) -> str:
         """停止音乐播放。"""
+        self._music_stopped = True  # Block stale continuous callbacks
         await self._reset_playback()
+        self._continuous = False  # Explicitly stop continuous mode
         # Clear remaining dance commands on reachy_mini channel
         await self._eventbus.put(CTMLAgentEvent(
             ctml='<clear chan="reachy_mini"/>',
