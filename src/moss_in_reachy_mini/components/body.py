@@ -130,8 +130,8 @@ class Body:
             desc = meta.get("description", "")
             dance_docstrings.append(f"{name}({beats}拍,{dur}s) {desc}")
         header = (
-            f"BPM={DanceMove.default_bpm}，每拍{beat_dur:.2f}s。"
-            f"配合音乐时根据歌曲BPM估算耗时。"
+            f"以下dance的执行时长是固定的（内部BPM={DanceMove.default_bpm}），不随歌曲BPM变化。"
+            f"每个dance后面标注的秒数就是实际执行时长（不含复位0.5s）。"
             f"必须使用以下列表中的name，严禁使用未定义的舞蹈名。"
         )
         return f"{header}\n" + "\n".join(dance_docstrings)
