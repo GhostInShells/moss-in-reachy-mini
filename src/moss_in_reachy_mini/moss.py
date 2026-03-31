@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from typing import List
 
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import INSTANCE, IoCContainer, Provider
@@ -11,6 +12,7 @@ from ghoshell_moss import Message, PyChannel, Text
 from reachy_mini import ReachyMini
 
 from framework.abcd.agent_hook import AgentHook
+from framework.apps.chinese_chess.channel import IS_ENABLE_CHINESE_CHESS
 from moss_in_reachy_mini.components.antennas import Antennas
 from moss_in_reachy_mini.components.body import Body
 from moss_in_reachy_mini.components.head import Head
@@ -24,6 +26,7 @@ from moss_in_reachy_mini.state.enrolling import EnrollingState
 from moss_in_reachy_mini.state.live import LiveState
 from moss_in_reachy_mini.state.teaching import TeachingState
 from moss_in_reachy_mini.state.waken import WakenState
+from moss_in_reachy_mini.state.chess import ChessPlayingState
 from moss_in_reachy_mini.video.recorder_channel import VideoRecorder
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker
 
@@ -225,24 +228,24 @@ class MossInReachyMini:
         reachy_mini.build.command(
             name="dance",
             doc=self.body.dance_docstring,
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
         )(self._beat_synced_dance)
 
         reachy_mini.build.command(
             name="emotion",
             doc=self.body.emotion_docstring,
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
         )(self._beat_synced_emotion)
 
         reachy_mini.build.command(
             name="head_move",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
         )(self.head.move)
 
         reachy_mini.build.command(
             name="head_reset",
             available=self.is_available_fn(
-                WakenState.NAME, LiveState.NAME, TeachingState.NAME, EnrollingState.NAME
+                WakenState.NAME, LiveState.NAME, TeachingState.NAME, EnrollingState.NAME, ChessPlayingState.NAME
             ),
         )(self.head.reset)
 
@@ -256,12 +259,12 @@ class MossInReachyMini:
 
         reachy_mini.build.command(
             name="antennas_move",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
         )(self.antennas.move)
 
         reachy_mini.build.command(
             name="antennas_reset",
-            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
         )(self.antennas.reset)
 
         reachy_mini.build.command(
@@ -360,13 +363,18 @@ class MossInReachyMiniProvider(Provider[MossInReachyMini]):
         recorder = con.get(VideoRecorderWorker)
 
         # 桌面陪伴模式
-        states = [asleep, waken, boring, teaching, enrolling]
+        states: List[BaseAgentHook] = [asleep, waken, boring, teaching, enrolling]
         default_state = WakenState.NAME
 
         # 直播模式下，只使用直播状态，预计未来会增加一个直播讲课状态
         if os.getenv("REACHY_MINI_MODE") == "live":
-            states = [asleep, live, teaching]
-            default_state = LiveState.NAME  # type: ignore[union-attr]
+            states: List[BaseAgentHook] = [asleep, live, teaching]
+            default_state = LiveState.NAME
+
+        if IS_ENABLE_CHINESE_CHESS:
+            chess_playing = con.force_fetch(ChessPlayingState)
+            states.append(chess_playing)
+            default_state = ChessPlayingState.NAME
 
         # components
         body = con.force_fetch(Body)
