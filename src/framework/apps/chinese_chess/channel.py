@@ -50,6 +50,8 @@ class GameState(BaseModel):
         return self.red_player == "小灵"
 
     def is_your_turn(self) -> bool:
+        if self.game_state == "finished":
+            return False
         if self.is_red_player() and self.current_turn == "red":
             return True
         if not self.is_red_player() and self.current_turn == "black":
