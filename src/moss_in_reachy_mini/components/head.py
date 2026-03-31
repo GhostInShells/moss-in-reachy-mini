@@ -116,7 +116,7 @@ class Head:
         self._head_tracker.set_target_track_name("")
 
     async def _breathing(self):
-        await self.reset(IdleMode.breathing.value, duration=0.5)
+        # await self.reset(IdleMode.breathing.value, duration=0.5)
 
         _, current_antennas = self.mini.get_current_joint_positions()
         current_head_pose = self.mini.get_current_head_pose()

@@ -20,7 +20,6 @@ class LiveState(BaseAgentHook):
     """
 
     NAME = "live"
-    out_switchable = True
 
     def __init__(
             self,

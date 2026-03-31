@@ -9,6 +9,7 @@ from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
+from framework.apps.chinese_chess.channel import IS_ENABLE_CHINESE_CHESS, ChineseChessChannel
 from moss_in_reachy_mini.audio.mixer import AudioMixer
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_hub import AgentHub, EventBus
@@ -42,7 +43,7 @@ from moss_in_reachy_mini.components.sound import SoundProvider
 from moss_in_reachy_mini.components.vision import VisionProvider
 from moss_in_reachy_mini.logger import setup_logger
 from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
-from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider
+from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider, ChessPlayingStateProvider
 from moss_in_reachy_mini.state.enrolling import EnrollingStateProvider
 from moss_in_reachy_mini.state.teaching import TeachingState, TeachingStateProvider
 from moss_in_reachy_mini.utils import load_instructions
@@ -187,6 +188,10 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         douyin_live = container.force_fetch(DouyinLive)
         shell.main_channel.import_channels(douyin_live.as_channel())
 
+    if IS_ENABLE_CHINESE_CHESS:
+        chinese_chess_chan = container.force_fetch(ChineseChessChannel)
+        shell.main_channel.import_channels(chinese_chess_chan)
+
     ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(
         available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
@@ -261,6 +266,13 @@ def common_dependencies(container: IoCContainer):
         api_key=os.environ["VOLC_WEBSEARCH_API_KEY"],
     ))
 
+    if IS_ENABLE_CHINESE_CHESS:
+        chinese_chess_chan = ChineseChessChannel(
+            server_url="ws://115.191.2.88:8765/ws",
+            logger=container.get(LoggerItf),
+        )
+        container.set(ChineseChessChannel, chinese_chess_chan)
+
     # agent task
     container.register(AgentTaskChannelProvider(
         name="task",
@@ -299,6 +311,7 @@ def common_dependencies(container: IoCContainer):
     container.register(LiveStateProvider())
     container.register(TeachingStateProvider())
     container.register(EnrollingStateProvider())
+    container.register(ChessPlayingStateProvider())
 
     # Moss
     container.register(MossInReachyMiniProvider())

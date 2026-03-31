@@ -26,6 +26,7 @@ from framework.agent.eventbus import QueueEventBus
 from framework.agent.main_agent import MainAgent
 from framework.agent.utils import setup_chat
 from framework.apps.agent_task import AgentTaskChannelProvider, AgentTaskChannel
+from framework.apps.chinese_chess.channel import IS_ENABLE_CHINESE_CHESS, ChineseChessChannel
 from framework.apps.live.douyin_live import DouyinLiveProvider, DouyinLive
 from framework.agent.decision_agent import DecisionAgent, DecisionSession, DecisionAgentHookProvider
 from framework.apps.memory.storage_memory import StorageMemory
@@ -97,11 +98,6 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
-    chess_chan = ZMQChannelProxy(
-        name="chess",
-        address="tcp://localhost:5556",
-    )
-
     # shell
     shell = new_ctml_shell(
         container=container,
@@ -114,8 +110,13 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         douyin_live.as_channel(),
         websearch_chan,
         agent_task_chan,
-        chess_chan
     )
+
+    if IS_ENABLE_CHINESE_CHESS:
+        shell.main_channel.import_channels(
+            ChineseChessChannel(server_url="ws://115.191.2.88:8765/ws")
+        )
+
     container.set(MOSSShell, shell)
 
     instructions = load_instructions(
