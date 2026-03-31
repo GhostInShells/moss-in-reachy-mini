@@ -1,3 +1,5 @@
+# 手动引入象棋算法依赖
+在本文件夹里引入`pikafish.nnue`文件，具体可参考[Pikafish](https://github.com/official-pikafish/Pikafish)
 
 # 启用象棋
 `.env`里添加以下内容

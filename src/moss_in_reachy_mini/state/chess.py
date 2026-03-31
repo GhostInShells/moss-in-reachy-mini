@@ -93,9 +93,15 @@ class ChessPlayingState(BaseAgentHook):
             pieces_str_list.append(f"{coord}: {pieces[coord]}")
         pieces_str = ", ".join(pieces_str_list)
 
-        player_last_move = self.chess_channel.current_game_state.board_state.move_history[-1]
+        message = Message.new(role="user", name="__chess_move__")
+        if self.chess_channel.current_game_state.board_state.move_history:
+            player_last_move = self.chess_channel.current_game_state.board_state.move_history[-1]
+            message.with_content(Text(text=f"对手上一步走棋从{player_last_move[0:2]}移动到{player_last_move[2:4]}"))
 
         best_move_from_piece = pieces[best_move[0:2]]
+        message.with_content(
+            Text(text=f"你当前的最佳走法是将{best_move_from_piece}按{best_move}移动")
+        )
 
         await self.eventbus.put(ProgramInputAgentEvent(
             prompt=Message.new(role="user", name="__chess_move__").with_content(
@@ -108,10 +114,7 @@ class ChessPlayingState(BaseAgentHook):
                         "4. 追求美学：你鄙视那些龟缩防守、兑子求和的下法。在你的棋道里，一盘精彩的棋必须有弃子攻杀、有精妙绝伦的战术组合。哪怕局面占优，若对手下得过于苟且，你也会冷言相讥。"
                      )
             ),
-            message=Message.new(role="user", name="__chess_move__").with_content(
-                Text(text=f"对手上一步走棋从{player_last_move[0:2]}移动到{player_last_move[2:4]}"),
-                Text(text=f"你当前的最佳走法是将{best_move_from_piece}按{best_move}移动"),
-            ),
+            message=message,
             priority=99,
         ))
         self.lastest_board = board_str
