@@ -173,6 +173,16 @@ class MossInReachyMini:
         await self._wait_for_beat()
         return await self.body.emotion(emoji)
 
+    async def _beat_synced_head_move(self, **kwargs):
+        """Head move with beat alignment when music is playing."""
+        await self._wait_for_beat()
+        return await self.head.move(**kwargs)
+
+    async def _beat_synced_antennas_move(self, **kwargs):
+        """Antennas move with beat alignment when music is playing."""
+        await self._wait_for_beat()
+        return await self.antennas.move(**kwargs)
+
     # ------------------------------------------------------------------
 
     def as_channel(self, only_context_messages=False) -> PyChannel:
@@ -240,7 +250,7 @@ class MossInReachyMini:
         reachy_mini.build.command(
             name="head_move",
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
-        )(self.head.move)
+        )(self._beat_synced_head_move)
 
         reachy_mini.build.command(
             name="head_reset",
@@ -260,7 +270,7 @@ class MossInReachyMini:
         reachy_mini.build.command(
             name="antennas_move",
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME, TeachingState.NAME, ChessPlayingState.NAME),
-        )(self.antennas.move)
+        )(self._beat_synced_antennas_move)
 
         reachy_mini.build.command(
             name="antennas_reset",
@@ -270,9 +280,18 @@ class MossInReachyMini:
         reachy_mini.build.command(
             name="play_music",
             doc=(
-                "搜索并播放音乐。query 为歌名、歌手名或关键词组合。"
-                "指定具体歌曲时 count=1；模糊描述（如'播欢快的歌'）时设 count=3。"
-                "duration（秒）默认-1表示自然播放完毕，设置大于0则仅播放指定秒数。"
+                "搜索并播放音乐。"
+                "query 必须是具体的「歌手+歌名」或「歌名」，如'周杰伦 晴天'、'光年之外'。"
+                "\n**禁止**将用户的模糊描述（如'下雨天适合听的歌'、'欢快的歌'）直接作为 query。"
+                "\n当用户给出心情、场景或风格描述时，你需要先根据自己的音乐知识推荐具体歌曲，"
+                "然后直接用具体歌名调用本命令，不要询问用户确认。可以边说你的推荐边播放。"
+                "\n\n**continuous 参数（必读）**："
+                "\n- 播放单首歌：continuous不传或False。播完后系统通知你结束。"
+                "\n- 播放多首歌（用户说'播一组'、'播几首'、'连续播放'等）：**必须传 continuous=True**。"
+                "  每首歌播完后系统会通知你，届时请评论刚才的歌并继续调用 play_music（**仍带 continuous=True**）播下一首。"
+                "\n- 每次调用 play_music 都会自动停掉当前正在播放的歌曲并清空所有旧状态。"
+                "\n\nduration 不要传，除非用户在**当前这次请求**中明确说了只听多少秒。"
+                "不要沿用之前对话中的duration设置，每次都按用户最新的要求判断。默认播完整首歌。"
                 "\n播放后系统会向你发送编舞请求，届时请用dance/emotion/head_move/antennas_move自由编排。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
             ),
