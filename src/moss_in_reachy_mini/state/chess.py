@@ -11,7 +11,7 @@ from reachy_mini import ReachyMini
 from framework.abcd.agent_event import ProgramInputAgentEvent
 from framework.abcd.agent_hub import EventBus
 from framework.apps.chinese_chess.channel import ChineseChessChannel
-from framework.apps.chinese_chess.utils import parse_chinese_board
+from framework.apps.chinese_chess.utils import parse_chinese_board, uci_to_chinese_notation
 from framework.apps.live.douyin_live import DouyinLive
 from moss_in_reachy_mini.state.abcd import BaseAgentHook
 
@@ -45,6 +45,7 @@ class ChessPlayingState(BaseAgentHook):
     async def on_self_enter(self):
         """进入对弈状态"""
         self.mini.enable_motors()
+        self.mini.wake_up()
         self.logger.info("进入象棋对弈状态")
         await self.start_idle_move()
 
@@ -83,37 +84,54 @@ class ChessPlayingState(BaseAgentHook):
             ))
 
     async def wait_for_move(self):
+        if not self.lastest_board:
+            _, self.lastest_board = await self.chess_channel.get_best_move_and_board()
+
         await self.chess_channel.can_move.wait()
 
         best_move, board_str = await self.chess_channel.get_best_move_and_board()
 
         pieces = parse_chinese_board(board_str)
-        pieces_str_list = []
-        for coord in sorted(pieces.keys(), key=lambda x: (int(x[1:]), x[0])):
-            pieces_str_list.append(f"{coord}: {pieces[coord]}")
-        pieces_str = ", ".join(pieces_str_list)
+        # pieces_str_list = []
+        # for coord in sorted(pieces.keys(), key=lambda x: (int(x[1:]), x[0])):
+        #     pieces_str_list.append(f"{coord}: {pieces[coord]}")
+        # pieces_str = ", ".join(pieces_str_list)
 
         message = Message.new(role="user", name="__chess_move__")
+        prompt = Message.new(role="user", name="__chess_move__")
+
         if self.chess_channel.current_game_state.board_state.move_history:
             player_last_move = self.chess_channel.current_game_state.board_state.move_history[-1]
-            message.with_content(Text(text=f"对手上一步走棋从{player_last_move[0:2]}移动到{player_last_move[2:4]}"))
+            if self.lastest_board:
+                player_last_move_notation = uci_to_chinese_notation(self.lastest_board, player_last_move)
+                message.with_content(Text(text=f"对手已走棋{player_last_move_notation}"))
+                lastest_pieces = parse_chinese_board(self.lastest_board)
+                # lastest_pieces_str_list = []
+                # for coord in sorted(lastest_pieces.keys(), key=lambda x: (int(x[1:]), x[0])):
+                #     lastest_pieces_str_list.append(f"{coord}: {lastest_pieces[coord]}")
+                # lastest_pieces_str = ", ".join(lastest_pieces_str_list)
+                prompt.with_content(
+                    Text(text=f"之前回合的棋盘是：\n{self.lastest_board}"),
+                )
+                eaten_piece = lastest_pieces.get(player_last_move[2:4])
+                if eaten_piece:
+                    message.with_content(Text(text=f"并吃掉你的{eaten_piece}"))
 
-        best_move_from_piece = pieces[best_move[0:2]]
+        best_move_notation = uci_to_chinese_notation(board_str, best_move)
         message.with_content(
-            Text(text=f"你当前的最佳走法是将{best_move_from_piece}按{best_move}移动")
+            Text(text=f"你当前的最佳走法是{best_move_notation}，最佳走棋不一定是为了应对对方的走棋，可能是更长远的布局，UCI格式为{best_move}")
+        )
+        eaten_piece = pieces.get(best_move[2:4])
+        if eaten_piece:
+            message.with_content(Text(text=f"并吃掉对手的{eaten_piece}"))
+
+        prompt.with_content(
+            Text(text=f"当前回合的棋盘是：\n{board_str}"),
+            Text(text="你需要回应简洁、自信、带有挑衅的锋芒。可以是冷笑、嘲讽、直接的警告或冰冷的宣告")
         )
 
         await self.eventbus.put(ProgramInputAgentEvent(
-            prompt=Message.new(role="user", name="__chess_move__").with_content(
-                Text(text=f"上一步的棋盘是：\n{self.lastest_board}"),
-                Text(text=f"当前的棋盘：\n{board_str}\n{pieces_str}"),
-                Text(text="你是一名以“毒舌”和“凌厉攻势”著称的象棋高手，人称“棋坛刺客”。性格特点: "
-                        "1. 侵略如火：你的字典里没有“和棋”二字。"
-                        "2. 语言如刀：你的口头禅短促、有力，充满挑衅与压迫感。你会用三言两语刺破对手的心理防线——可以是不屑的调侃、一针见血的指点，或是看穿对手意图后的冷笑。说话从不拐弯抹角，直指要害。"
-                        "3. 自信甚至自负：你坚信自己的计算比对手更深一步。当对手长考时，你会表现出不耐；当对手走出软弱的一步，你会直接点破其犹豫。你追求的不是“赢”，而是“让对手输得心服口服”。"
-                        "4. 追求美学：你鄙视那些龟缩防守、兑子求和的下法。在你的棋道里，一盘精彩的棋必须有弃子攻杀、有精妙绝伦的战术组合。哪怕局面占优，若对手下得过于苟且，你也会冷言相讥。"
-                     )
-            ),
+            prompt=prompt,
             message=message,
             priority=99,
         ))

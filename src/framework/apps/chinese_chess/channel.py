@@ -343,4 +343,3 @@ class ChineseChessChannel(Channel):
     async def on_start_up(self):
         await self.connect()
         await self._pikafish.start()
-
