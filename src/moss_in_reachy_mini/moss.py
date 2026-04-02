@@ -295,19 +295,19 @@ class MossInReachyMini:
                 "\n播放后系统会向你发送编舞请求，届时请用dance/emotion/head_move/antennas_move自由编排。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
             ),
-            available=self.is_available_fn(WakenState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
         )(self.music.play_music)
 
         reachy_mini.build.command(
             name="stop_music",
             doc="停止音乐播放并停止所有动作。用户说停止音乐、关掉音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
         )(self.music.stop_music)
 
         reachy_mini.build.command(
             name="pause_music",
             doc="暂停音乐播放并停止动作。用户说暂停音乐时使用此命令。",
-            available=self.is_available_fn(WakenState.NAME),
+            available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
         )(self.music.pause_music)
 
         reachy_mini.build.command(

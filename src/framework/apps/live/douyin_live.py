@@ -379,10 +379,29 @@ class DouyinLive(DouyinLiveWebFetcher):
         diamond_count = message.gift.diamond_count
         current_time = time.time()
 
-        # 异步处理礼物事件
-        asyncio.create_task(self._add_gift_to_cache(
-            user_id, user_name, gift_name, gift_cnt, diamond_count, current_time
-        ))
+        # 判断礼物类型
+        if diamond_count <= 20:
+            event_type = DouyinLiveEventType.small_gift
+        elif diamond_count <= 100:
+            event_type = DouyinLiveEventType.medium_gift
+        else:
+            event_type = DouyinLiveEventType.super_gift
+
+        # 创建合并事件
+        event = DouyinLiveEvent(
+            user_id=user_id,
+            user_name=user_name,
+            event_type=event_type,
+            content=f"{gift_name}（钻石={gift_cnt}）",
+            priority=Priority.P0
+        )
+
+        # 添加到事件缓冲区
+        self.event_buffer.add(event)
+        self.stats["total_events"] += 1
+
+        # 放入实时处理队列
+        self.realtime_queue.put_nowait(event)
 
     async def _add_gift_to_cache(self, user_id: str, user_name: str, gift_name: str,
                                  gift_cnt: int, diamond_count: int, timestamp: float):
@@ -600,20 +619,24 @@ class DouyinLive(DouyinLiveWebFetcher):
                 message_content = []
 
                 # 根据事件类型选择不同的prompt
-                if event.event_type in [DouyinLiveEventType.super_gift,
-                                        DouyinLiveEventType.medium_gift,
-                                        DouyinLiveEventType.small_gift]:
+                if event.event_type in [
+                    DouyinLiveEventType.super_gift,
+                    DouyinLiveEventType.medium_gift,
+                    # DouyinLiveEventType.small_gift, 小礼物不打断感谢了
+                ]:
                     prompt = self.config.gift_prompt
                     priority = 99  # 礼物最高优先级
                     message_content.append(Text(text=prompt))
                     overdue = 0
                     can_resume = True
-                else:
+                elif event.event_type == DouyinLiveEventType.chat:
                     prompt = self.config.p0_prompt
                     priority = 1  # P0事件优先级
                     message_content.append(Text(text=prompt))
                     overdue = self.config.p0_overdue
                     can_resume = False
+                else:
+                    continue
 
                 # 添加当前事件
                 message_content.append(Text(text=event.to_natural()))
