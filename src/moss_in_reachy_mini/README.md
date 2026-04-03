@@ -115,3 +115,36 @@ REACHY_MINI_MEMORY="live_memory"
 ```
 运行main.py即可开启直播模式
 
+
+## Slide Studio
+
+第一步：启动Slide Studio
+```
+python src/moss_in_reachy_mini/zmq_channels/slide.py
+```
+
+第二步：启动Reachy Mini
+```
+python src/moss_in_reachy_mini/main.py
+```
+
+Slide Studio Assets位置
+```
+.workspace/assets/slide_studio
+```
+
+每个幻灯片是一个文件夹，文件夹下通过图片和每张图片的.md后缀文件来组织内容
+
+.md格式说明
+```
+---
+title: ...
+outline: ...
+---
+
+# 正文
+
+```
+- title和outline组成了幻灯片的标题和大纲，当选中一个幻灯片播放时，AI可以看到每一页的标题和大纲。
+- 图片和正文组成了单页幻灯片的内容，当播放到某一页时，AI可以看到该图片和正文的内容。
+
