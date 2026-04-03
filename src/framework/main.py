@@ -98,6 +98,13 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
+    slide_chan = ZMQChannelProxy(
+        name="slide",
+        address="tcp://127.0.0.1:6666",
+        send_timeout=3,
+        recv_timeout=3,
+    )
+
     # shell
     shell = new_ctml_shell(
         container=container,
@@ -110,6 +117,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         douyin_live.as_channel(),
         websearch_chan,
         agent_task_chan,
+        slide_chan
     )
 
     if IS_ENABLE_CHINESE_CHESS:

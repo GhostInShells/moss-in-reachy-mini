@@ -1,11 +1,13 @@
 import asyncio
 import os
+import pathlib
 
 from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import Container, IoCContainer, get_container
 from ghoshell_moss import MOSSShell, new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
-from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
+from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy, ZMQChannelHub
+from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
@@ -50,6 +52,7 @@ from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
+CURRENT_DIR = pathlib.Path(__file__).parent
 
 
 # 决策脑：分析当前所有事件然后给主脑递小纸条
@@ -163,6 +166,14 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
+    # hub channel
+    slide_chan = ZMQChannelProxy(
+        name="slide",
+        address="tcp://127.0.0.1:6666",
+        send_timeout=3,
+        recv_timeout=3,
+    )
+
     # Shell
     mini = container.force_fetch(ReachyMini)
     moss = container.force_fetch(MossInReachyMini)
@@ -182,6 +193,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         session.as_channel(),
         websearch_chan,
         agent_task_chan,
+        slide_chan,
     )
     if os.getenv("REACHY_MINI_MODE") == "live":
         # douyin_live
