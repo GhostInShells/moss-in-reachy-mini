@@ -26,6 +26,7 @@ dependencies = [
     "pydantic-ai-backend==0.1.14",
     "pydantic-ai==1.70.0",
     "librosa>=0.10.2",
+    "pynput==1.8.1",
 ]
 
 [project.optional-dependencies]

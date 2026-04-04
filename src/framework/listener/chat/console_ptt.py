@@ -4,6 +4,13 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 import traceback
 
+try:
+    from pynput import keyboard
+    HAS_PYNPUT = True
+except ImportError:
+    HAS_PYNPUT = False
+    # 如果需要使用空格键控制，请安装 pynput 库: pip install pynput
+
 import numpy as np
 from ghoshell_container import IoCContainer
 from ghoshell_moss_contrib.agent.depends import check_agent
@@ -64,15 +71,30 @@ class ConsolePTTChat(BaseChat):
 
         self.ai_response_done = asyncio.Event()
 
-    async def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
-        """异步设置Enter to Talk模式"""
+        # 键盘监听相关属性
+        self.space_pressed = False
+        self.keyboard_listener = None
+        self._keyboard_quit_event = asyncio.Event()
+        self._keyboard_events = asyncio.Queue()
+
+    async def _setup_ptt_mode(self, mini: ReachyMini=None):
+        """异步设置PTT（Push-to-Talk）模式，使用空格键控制录音"""
         try:
             # 异步初始化Listener服务
             await self._initialize_listener_service(mini)
-            # 启动异步输入监听
-            self._input_task = asyncio.create_task(self._input_loop())
+
+            # 检查键盘监听库是否可用
+            if not HAS_PYNPUT:
+                self.console.print("[yellow]pynput library not available, falling back to Enter key mode.[/yellow]")
+                # 回退到原来的Enter键模式
+                self._input_task = asyncio.create_task(self._input_loop())
+                return
+
+            # 启动键盘监听
+            self._input_task = asyncio.create_task(self._keyboard_listener_loop())
+
         except Exception as e:
-            self.console.print(f"[red]Error initializing Enter to Talk mode: {e}[/red]")
+            self.console.print(f"[red]Error initializing PTT mode: {e}[/red]")
             self.console.print("[yellow]Falling back to text input mode.[/yellow]")
 
     async def _initialize_listener_service(self, mini: ReachyMini=None):
@@ -152,6 +174,8 @@ class ConsolePTTChat(BaseChat):
 
     async def _input_loop(self):
         """异步输入循环"""
+        from framework.listener.async_concepts import AsyncListenerStateName
+
         try:
             while not self._quit_event.is_set():
                 try:
@@ -195,8 +219,126 @@ class ConsolePTTChat(BaseChat):
         except Exception as e:
             self.logger.exception(f"Error in input loop: {e}")
 
+    async def _keyboard_listener_loop(self):
+        """异步键盘监听循环，监听空格键按下和释放"""
+        if not HAS_PYNPUT:
+            self.logger.error("pynput not available, cannot start keyboard listener")
+            return
+
+        loop = asyncio.get_event_loop()
+
+        def on_press(key):
+            """键盘按下回调"""
+            try:
+                if key == keyboard.Key.space and not self.space_pressed:
+                    self.space_pressed = True
+                    # 将按下事件放入队列
+                    asyncio.run_coroutine_threadsafe(
+                        self._handle_space_key_press(),
+                        loop
+                    )
+            except Exception as e:
+                self.logger.error(f"Error in on_press: {e}")
+
+        def on_release(key):
+            """键盘释放回调"""
+            try:
+                if key == keyboard.Key.space and self.space_pressed:
+                    self.space_pressed = False
+                    # 将释放事件放入队列
+                    asyncio.run_coroutine_threadsafe(
+                        self._handle_space_key_release(),
+                        loop
+                    )
+                # 检测 'q' 键退出
+                if key == keyboard.KeyCode.from_char('q'):
+                    self.console.print("[bold red]关闭中....[/bold red]")
+                    self._quit_event.set()
+                    return False  # 停止监听器
+            except Exception as e:
+                self.logger.error(f"Error in on_release: {e}")
+            return True
+
+        # 启动键盘监听器
+        self.keyboard_listener = keyboard.Listener(
+            on_press=on_press,
+            on_release=on_release
+        )
+        self.keyboard_listener.start()
+        self.console.print("[green]键盘监听已启动，长按空格说话，松开空格提交，按 'q' 退出。[/green]")
+
+        # 等待退出事件
+        try:
+            await self._quit_event.wait()
+        except asyncio.CancelledError:
+            self.logger.info("Keyboard listener loop cancelled")
+        finally:
+            if self.keyboard_listener:
+                self.keyboard_listener.stop()
+                self.keyboard_listener = None
+
+    async def _handle_space_key_press(self):
+        """处理空格键按下事件（开始录音）"""
+        from framework.listener.async_concepts import AsyncListenerStateName
+
+        if not self.listener_service:
+            return
+
+        # 检查当前状态
+        try:
+            current_state = await self.listener_service.current_state()
+            state_name = current_state.name().value
+        except Exception as e:
+            self.logger.warning(f"Failed to get current state: {e}")
+            return
+
+        # 如果当前不在录音状态，则开始录音
+        if state_name != AsyncListenerStateName.PDT_LISTENING.value:
+            self.console.print("[green]开始录音...[/green]")
+            await self.listener_service.set_state(AsyncListenerStateName.PDT_LISTENING.value)
+            # 等待状态切换完成
+            for _ in range(10):  # 最多等待1秒
+                await asyncio.sleep(0.1)
+                try:
+                    current = await self.listener_service.current_state()
+                    if current.name() == AsyncListenerStateName.PDT_LISTENING:
+                        break
+                except Exception:
+                    pass
+
+    async def _handle_space_key_release(self):
+        """处理空格键释放事件（结束录音并提交）"""
+        from framework.listener.async_concepts import AsyncListenerStateName
+
+        if not self.listener_service:
+            return
+
+        # 检查当前状态
+        try:
+            current_state = await self.listener_service.current_state()
+            state_name = current_state.name().value
+        except Exception as e:
+            self.logger.warning(f"Failed to get current state: {e}")
+            return
+
+        # 如果当前在录音状态，则结束录音并提交
+        if state_name == AsyncListenerStateName.PDT_LISTENING.value:
+            self.console.print("[yellow]结束录音并提交识别...[/yellow]")
+            await self.listener_service.commit()
+            # 等待状态切换完成（回到等待状态）
+            for _ in range(10):  # 最多等待1秒
+                await asyncio.sleep(0.1)
+                try:
+                    current = await self.listener_service.current_state()
+                    if current.name() == AsyncListenerStateName.PDT_WAITING:
+                        break
+                except Exception:
+                    pass
+
     async def _handle_enter_key_operation(self):
         """异步处理Enter键操作"""
+        from framework.listener.async_concepts import AsyncListenerStateName
+
         if not self.listener_service:
             return
 
@@ -267,14 +409,14 @@ class ConsolePTTChat(BaseChat):
         self.console.print("=== Chat Started ===")
 
         self.console.print(Panel(
-            Markdown(""" 
-当前是 Enter to Talk 模式，通过 Enter 键控制录音. 
-操作方法: 
-1. **按下 Enter 键**：开始录音 (切换到 pdt_listening 状态) 
-2. **再次按下 Enter 键**：结束录音并提交给 Agent 处理 
-3. 输入 `q` 然后回车：退出程序 
+            Markdown("""
+当前是 PTT（Push-to-Talk）模式，通过空格键控制录音.
+操作方法:
+1. **长按空格键**：开始录音 (切换到 pdt_listening 状态)
+2. **松开空格键**：结束录音并提交给 Agent 处理
+3. 按 `q` 键：退出程序
 """),
-            title="Enter to Talk (Enter Key Control)",
+            title="PTT (Space Key Control)",
         ))
 
     def add_user_message(self, message: str):
@@ -341,7 +483,7 @@ class ConsolePTTChat(BaseChat):
         self.ai_response_done.set()
 
         # 根据模式显示不同的提示
-        self.console.print("> 按下Enter键开始录音: ")
+        self.console.print("> 长按空格说话，松开空格提交: ")
 
     def print_exception(self, exception: Any, context: str = ""):
         """打印异常信息"""
@@ -368,8 +510,8 @@ class ConsolePTTChat(BaseChat):
         try:
             # 打印启动信息
             self._print_startup_info()
-            # 异步设置 Enter to Talk 模式
-            await self._setup_enter_to_talk_mode()
+            # 异步设置 PTT（空格键控制）模式
+            await self._setup_ptt_mode()
             # 运行主循环
             await self._run_main_loop()
         except Exception as e:
@@ -396,6 +538,11 @@ class ConsolePTTChat(BaseChat):
         self.is_streaming = False
         self.interrupted = False
         self._quit_event.set()
+
+        # 停止键盘监听器
+        if self.keyboard_listener:
+            self.keyboard_listener.stop()
+            self.keyboard_listener = None
 
         # 取消输入任务
         if self._input_task and not self._input_task.done():
