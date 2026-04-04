@@ -53,6 +53,7 @@ from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, Video
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 CURRENT_DIR = pathlib.Path(__file__).parent
+IS_ENABLE_SLIDE = os.getenv("ENABLE_SLIDE", "0") == "1"
 
 
 # 决策脑：分析当前所有事件然后给主脑递小纸条
@@ -166,14 +167,6 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
-    # hub channel
-    slide_chan = ZMQChannelProxy(
-        name="slide",
-        address="tcp://127.0.0.1:6666",
-        send_timeout=3,
-        recv_timeout=3,
-    )
-
     # Shell
     mini = container.force_fetch(ReachyMini)
     moss = container.force_fetch(MossInReachyMini)
@@ -193,7 +186,6 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         session.as_channel(),
         websearch_chan,
         agent_task_chan,
-        slide_chan,
     )
     if os.getenv("REACHY_MINI_MODE") == "live":
         # douyin_live
@@ -203,6 +195,15 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     if IS_ENABLE_CHINESE_CHESS:
         chinese_chess_chan = container.force_fetch(ChineseChessChannel)
         shell.main_channel.import_channels(chinese_chess_chan)
+
+    if IS_ENABLE_SLIDE:
+        slide_chan = ZMQChannelProxy(
+            name="slide",
+            address="tcp://127.0.0.1:6666",
+            send_timeout=3,
+            recv_timeout=3,
+        )
+        shell.main_channel.import_channels(slide_chan)
 
     ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(

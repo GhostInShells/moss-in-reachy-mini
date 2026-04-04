@@ -401,7 +401,8 @@ class DouyinLive(DouyinLiveWebFetcher):
         self.stats["total_events"] += 1
 
         # 放入实时处理队列
-        self.realtime_queue.put_nowait(event)
+        if event_type != DouyinLiveEventType.small_gift:
+            self.realtime_queue.put_nowait(event)
 
     async def _add_gift_to_cache(self, user_id: str, user_name: str, gift_name: str,
                                  gift_cnt: int, diamond_count: int, timestamp: float):
