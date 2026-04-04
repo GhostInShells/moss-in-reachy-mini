@@ -3,8 +3,8 @@ import logging
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import traceback
-import threading
 
+import numpy as np
 from ghoshell_container import IoCContainer
 from ghoshell_moss_contrib.agent.depends import check_agent
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
@@ -20,7 +20,7 @@ if check_agent():
     from rich.console import Console
     from rich.panel import Panel
     from rich.prompt import Prompt
-    from framework.listener.concepts import ListenerService, ListenerStateName
+    from framework.listener.async_concepts import AsyncListenerService, AsyncListenerStateName, Recognition
 
 
 class ConsolePTTChat(BaseChat):
@@ -55,36 +55,30 @@ class ConsolePTTChat(BaseChat):
         self.debug = debug
         self.logger = logger or logging.getLogger("ConsolePTTChat")
 
-        # Listener相关属性
-        self.listener_service: Optional[ListenerService] = None
-        self._quit_event = threading.Event()
-        self._input_thread: Optional[threading.Thread] = None
+        # 异步Listener相关属性
+        self.listener_service: Optional[AsyncListenerService] = None
+        self._quit_event = asyncio.Event()
+        self._input_task: Optional[asyncio.Task] = None
 
         self._container = container
 
         self.ai_response_done = asyncio.Event()
 
-        self._event_loop = asyncio.get_event_loop()
-
-    def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
-        """设置Enter to Talk模式"""
+    async def _setup_enter_to_talk_mode(self, mini: ReachyMini=None):
+        """异步设置Enter to Talk模式"""
         try:
-            # 初始化Listener服务
-            self._initialize_listener_service(mini)
-            # 启动输入监听线程
-            self._start_input_listener()
+            # 异步初始化Listener服务
+            await self._initialize_listener_service(mini)
+            # 启动异步输入监听
+            self._input_task = asyncio.create_task(self._input_loop())
         except Exception as e:
             self.console.print(f"[red]Error initializing Enter to Talk mode: {e}[/red]")
             self.console.print("[yellow]Falling back to text input mode.[/yellow]")
 
-    def _initialize_listener_service(self, mini: ReachyMini=None):
-        """初始化Listener服务"""
-        # 这里需要根据实际的依赖注入系统来获取ListenerService
-        # 暂时使用一个简化的实现
-        from framework.listener.lisenter_impl import ListenerServiceImpl
+    async def _initialize_listener_service(self, mini: ReachyMini=None):
+        """异步初始化Listener服务"""
+        from framework.listener.async_listener_service import AsyncListenerServiceImpl
         from framework.listener.configs import ListenerConfig
-
-        # 创建简单的logger实现
 
         config = ListenerConfig()
 
@@ -101,69 +95,85 @@ class ConsolePTTChat(BaseChat):
             except Exception as e:
                 self.logger.warning("failed to init MicHub audio input, fallback to PyAudioInput: %s", e)
 
-        self.listener_service = ListenerServiceImpl(
+        # 创建异步Listener服务
+        self.listener_service = AsyncListenerServiceImpl(
             config=config,
             logger=self.logger,
             audio_input=audio_input,
-            # audio_input=ReachyMiniInput(mini=mini),
         )
 
-        # 设置回调
-        self.listener_service.set_callback(self._create_listener_callback())
-        self.listener_service.bootstrap()
+        # 设置异步回调
+        await self.listener_service.set_callback(self._create_listener_callback())
+        # 异步启动服务
+        await self.listener_service.bootstrap()
+
+        self.logger.info("AsyncListenerService initialized")
 
     def _create_listener_callback(self):
-        """创建Listener回调"""
-        from framework.listener.concepts import ListenerCallback, Recognition
+        """创建异步Listener回调"""
+        from framework.listener.async_concepts import AsyncListenerCallback
 
-        class ConsoleListenerCallback(ListenerCallback):
+        class AsyncConsoleListenerCallback(AsyncListenerCallback):
             def __init__(self, console_chat):
                 self.console_chat = console_chat
 
-            def on_recognition(self, result: Recognition) -> None:
-                """处理语音识别结果"""
+            async def on_recognition(self, result: Recognition) -> None:
+                """异步处理语音识别结果"""
                 if result.seq == 0:
-                    self.console_chat.handle_first_seq()
+                    await self.console_chat.handle_first_seq()
                     self.console_chat.console.print("")
                 if result.text and result.text.strip():
                     # 将识别结果作为用户输入处理
                     if result.is_last:
                         self.console_chat.console.print("", end="\r\033[K")
                         self.console_chat.console.print(f"[cyan]Recognized: {result.text}[/cyan]")
-                        self.console_chat.handle_voice_input(result.text)
+                        await self.console_chat.handle_voice_input(result.text)
                     else:
                         self.console_chat.console.print(f"[green]Recognizing: {result.text}[/green]", end='\r')
 
-            def on_waken(self) -> None:
-                """唤醒事件"""
+            async def on_waken(self) -> None:
+                """唤醒事件（跳过实现）"""
                 self.console_chat.console.print("[yellow]Wake word detected[/yellow]")
 
-            def on_state_change(self, state: str) -> None:
+            async def on_state_change(self, state: str) -> None:
                 """状态变化事件"""
                 if self.console_chat.debug:
                     self.console_chat.console.print(f"[blue]State changed to: {state}[/blue]")
 
-            def on_error(self, error: str) -> None:
+            async def on_error(self, error: str) -> None:
                 """错误处理"""
                 self.console_chat.console.print(f"[red]Listener error: {error}[/red]")
 
-        return ConsoleListenerCallback(self)
+            async def save_batch(self, rec: Recognition, audio: np.ndarray) -> None:
+                """保存批次（可选实现）"""
+                pass
 
-    def _start_input_listener(self):
-        """启动输入监听线程"""
+        return AsyncConsoleListenerCallback(self)
 
-        def input_loop():
+    async def _input_loop(self):
+        """异步输入循环"""
+        try:
             while not self._quit_event.is_set():
                 try:
-                    # 显示提示信息
-                    state = self.listener_service.current_state().name() if self.listener_service else "unknown"
+                    # 获取当前状态
+                    state_name = "unknown"
+                    if self.listener_service:
+                        try:
+                            current_state = await self.listener_service.current_state()
+                            state_name = current_state.name().value
+                        except Exception as e:
+                            self.logger.warning(f"Failed to get current state: {e}")
 
-                    if state == ListenerStateName.pdt_listening.value:
+                    # 显示提示信息
+                    if state_name == AsyncListenerStateName.PDT_LISTENING.value:
                         prompt = "[bold green]正在录音... (再次按下Enter键结束录音)"
                     else:
-                        prompt = f"[bold green]按下Enter键开始录音 (输入q退出){state}"
+                        prompt = f"[bold green]按下Enter键开始录音 (输入q退出) 当前状态: {state_name}"
 
-                    user_input = Prompt.ask(prompt, console=self.console, default="")
+                    # 异步等待用户输入
+                    user_input = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: Prompt.ask(prompt, console=self.console, default="")
+                    )
 
                     if user_input.lower() == "q":
                         self.console.print("[bold red]关闭中....[/bold red]")
@@ -171,49 +181,86 @@ class ConsolePTTChat(BaseChat):
                         break
 
                     # 处理Enter键操作
-                    self._handle_enter_key_operation()
+                    await self._handle_enter_key_operation()
 
+                except asyncio.CancelledError:
+                    break
                 except Exception as e:
                     if not self._quit_event.is_set():
                         self.console.print(f"[red]Input error: {e}[/red]")
+                        await asyncio.sleep(0.5)  # 避免频繁错误循环
 
-        self._input_thread = threading.Thread(target=input_loop, daemon=True)
-        self._input_thread.start()
+        except asyncio.CancelledError:
+            self.logger.info("Input loop cancelled")
+        except Exception as e:
+            self.logger.exception(f"Error in input loop: {e}")
 
-    def _handle_enter_key_operation(self):
-        """处理Enter键操作"""
+    async def _handle_enter_key_operation(self):
+        """异步处理Enter键操作"""
         if not self.listener_service:
             return
 
         if self.is_streaming:
             self.interrupted = True
             self.is_streaming = False
-            self.listener_service.clear_buffer()
-            self.listener_service.set_state(ListenerStateName.pdt_waiting.value)
+            await self.listener_service.clear_buffer()
+            await self.listener_service.set_state(AsyncListenerStateName.PDT_WAITING.value)
             if self.on_interrupt_callback:
                 self.on_interrupt_callback()
                 self.console.print("\n[yellow]Output interrupted[/yellow]\n")
         else:
-            current_state = self.listener_service.current_state().name()
-            if current_state == ListenerStateName.pdt_listening.value:
-                # 松开按键效果 - 结束录音
-                self.console.print("[yellow]结束录音并提交识别...[/yellow]")
-                self.listener_service.commit()
-            else:
-                # 按下按键效果 - 开始录音
-                self.console.print("[green]开始录音...[/green]")
-                # self.handle_voice_input("")
-                self.listener_service.set_state(ListenerStateName.pdt_listening.value)
+            try:
+                current_state = await self.listener_service.current_state()
+                state_name = current_state.name().value
 
-    def handle_voice_input(self, text: str):
-        """处理语音输入"""
+                if state_name == AsyncListenerStateName.PDT_LISTENING.value:
+                    # 松开按键效果 - 结束录音
+                    self.console.print("[yellow]结束录音并提交识别...[/yellow]")
+                    await self.listener_service.commit()
+
+                    # 等待状态切换完成（回到等待状态）
+                    for _ in range(10):  # 最多等待1秒
+                        await asyncio.sleep(0.1)
+                        try:
+                            current = await self.listener_service.current_state()
+                            if current.name() == AsyncListenerStateName.PDT_WAITING:
+                                break
+                        except Exception:
+                            pass
+                else:
+                    # 按下按键效果 - 开始录音
+                    self.console.print("[green]开始录音...[/green]")
+                    await self.listener_service.set_state(AsyncListenerStateName.PDT_LISTENING.value)
+
+                    # 等待状态切换完成
+                    for _ in range(10):  # 最多等待1秒
+                        await asyncio.sleep(0.1)
+                        try:
+                            current = await self.listener_service.current_state()
+                            if current.name() == AsyncListenerStateName.PDT_LISTENING:
+                                break
+                        except Exception:
+                            pass
+            except Exception as e:
+                self.console.print(f"[red]Error handling enter key: {e}[/red]")
+                self.logger.exception(f"Error handling enter key: {e}")
+
+    async def handle_voice_input(self, text: str):
+        """异步处理语音输入"""
         # 添加用户消息到历史记录
         if text:
             self.add_user_message(text)
 
         # 调用输入处理回调
         if text and self.on_input_callback:
-            self.on_input_callback(text)
+            # 注意：on_input_callback 可能是同步的，需要适配
+            if asyncio.iscoroutinefunction(self.on_input_callback):
+                await self.on_input_callback(text)
+            else:
+                # 在 executor 中运行同步回调
+                await asyncio.get_event_loop().run_in_executor(
+                    None, self.on_input_callback, text
+                )
 
     def _print_startup_info(self):
         """打印启动信息"""
@@ -317,50 +364,64 @@ class ConsolePTTChat(BaseChat):
         self.console.print(f"[red][{timestamp}] ERROR: {error_msg}[/red]")
 
     async def run(self):
-        """运行聊天界面主循环"""
+        """异步运行聊天界面主循环"""
         try:
             # 打印启动信息
             self._print_startup_info()
-            self._setup_enter_to_talk_mode()
-            await self._run_enter_to_talk_mode()
+            # 异步设置 Enter to Talk 模式
+            await self._setup_enter_to_talk_mode()
+            # 运行主循环
+            await self._run_main_loop()
+        except Exception as e:
+            self.print_exception(e, "Error in async chat")
         finally:
-            # 清理资源
-            self._cleanup()
+            # 异步清理资源
+            await self._cleanup()
 
-    async def _run_enter_to_talk_mode(self):
-        """运行Enter to Talk模式"""
+
+    async def _run_main_loop(self):
+        """异步主循环"""
         try:
             # 等待退出事件
-            while not self._quit_event.is_set():
-                await asyncio.sleep(0.1)
+            await self._quit_event.wait()
+            self.console.print("[yellow]Exiting async chat...[/yellow]")
 
-            self.console.print("[yellow]Exiting Enter to Talk mode...[/yellow]")
-
+        except asyncio.CancelledError:
+            self.logger.info("Main loop cancelled")
         except Exception as e:
-            self.print_exception(e, "Error in Enter to Talk mode")
+            self.print_exception(e, "Error in main loop")
 
-    def _cleanup(self):
-        """清理资源"""
+    async def _cleanup(self):
+        """异步清理资源"""
         self.is_streaming = False
         self.interrupted = False
         self._quit_event.set()
 
-        # 关闭Listener服务
+        # 取消输入任务
+        if self._input_task and not self._input_task.done():
+            self._input_task.cancel()
+            try:
+                await self._input_task
+            except asyncio.CancelledError:
+                pass
+
+        # 关闭异步Listener服务
         if self.listener_service:
             try:
-                self.listener_service.shutdown()
+                await self.listener_service.shutdown()
             except Exception as e:
                 self.console.print(f"[red]Error shutting down listener: {e}[/red]")
 
-        # 等待输入线程结束
-        if self._input_thread and self._input_thread.is_alive():
-            self._input_thread.join(timeout=5.0)
-
-    def handle_first_seq(self):
+    async def handle_first_seq(self):
+        """异步处理第一个序列（发送ASR调用事件）"""
         if not self.eventbus:
             return
-        asyncio.run_coroutine_threadsafe(self.eventbus.put(
-            AsrInvokeAgentEvent(
-                priority=99,
+
+        try:
+            await self.eventbus.put(
+                AsrInvokeAgentEvent(
+                    priority=99,
+                )
             )
-        ), self._event_loop)
+        except Exception as e:
+            self.logger.exception(f"Error sending ASR invoke event: {e}")

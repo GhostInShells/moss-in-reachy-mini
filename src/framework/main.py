@@ -273,8 +273,8 @@ async def main() -> None:
         # 控制台语音交互
         container.set(
             BaseChat,
-            # ConsolePTTChat(eventbus=eventbus)
-            ConsoleChat()
+            ConsolePTTChat(eventbus=eventbus)
+            # ConsoleChat()
         )
 
         main_agent = await build_main_agent(parent=container, agent_id=main_agent_id)
