@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import queue
 import threading
@@ -10,7 +11,7 @@ import scipy.signal as signal
 from ghoshell_common.contracts import LoggerItf
 from ghoshell_container import IoCContainer, Provider
 
-from framework.listener.concepts import AudioInput
+from framework.listener.async_concepts import AsyncAudioInput
 from framework.listener.configs import ListenerConfig
 
 logger = logging.getLogger(__name__)
@@ -155,7 +156,7 @@ class MicHub:
         *,
         max_queue: int = 400,
         drop_policy: DropPolicy = "drop_oldest",
-    ) -> AudioInput:
+    ) -> AsyncAudioInput:
         return MicHubAudioInput(
             hub=self,
             name=name,
@@ -239,7 +240,7 @@ class MicSubscription:
         self._hub._unsubscribe(self._sub)
 
 
-class MicHubAudioInput(AudioInput):
+class MicHubAudioInput(AsyncAudioInput):
     """AudioInput adapter backed by a MicHub subscription."""
 
     def __init__(
@@ -275,22 +276,22 @@ class MicHubAudioInput(AudioInput):
     def dtype(self) -> np.dtype:
         return self._dtype
 
-    def start(self) -> None:
+    async def start(self) -> None:
         if self._closed:
             raise OSError("MicHubAudioInput already closed")
         self._started = True
         self._sub.drain()
         self._buffer.clear()
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self._started = False
         self._sub.drain()
         self._buffer.clear()
 
-    def closed(self) -> bool:
+    async def closed(self) -> bool:
         return self._closed
 
-    def close(self, error: Optional[Exception] = None) -> None:
+    async def close(self, error: Optional[Exception] = None) -> None:
         if self._closed:
             return
         self._closed = True
@@ -312,7 +313,7 @@ class MicHubAudioInput(AudioInput):
         resampled = signal.resample(audio_data, number_of_samples)
         return resampled.astype(self.dtype)
 
-    def read(self, *, rate: Optional[int] = None, duration: Optional[float] = None) -> np.ndarray:
+    def _read_sync(self, *, rate: Optional[int] = None, duration: Optional[float] = None) -> np.ndarray:
         if not self._started:
             raise RuntimeError("MicHubAudioInput is not running")
 
@@ -344,6 +345,27 @@ class MicHubAudioInput(AudioInput):
         del self._buffer[:bytes_needed]
         np_data = np.frombuffer(chunk, dtype=self.dtype)
         return self._resample(np_data, rate)
+
+    async def read(self, *, rate: Optional[int] = None, duration: Optional[float] = None) -> np.ndarray:
+        """
+        异步读取音频数据。
+        在单独的线程中执行阻塞的读取操作。
+        """
+        if not self._started:
+            raise RuntimeError("MicHubAudioInput is not running")
+        if self._closed:
+            raise RuntimeError("MicHubAudioInput is closed")
+
+        try:
+            audio_data = await asyncio.to_thread(
+                self._read_sync,
+                rate=rate,
+                duration=duration,
+            )
+            return audio_data
+        except Exception as e:
+            logger.exception(f"Error reading audio: {e}")
+            raise
 
 
 class MicHubProvider(Provider[MicHub]):
