@@ -205,6 +205,16 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         )
         shell.main_channel.import_channels(slide_chan)
 
+    if os.getenv("ENABLE_JETARM", "") == "1":
+        jetarm_address = os.getenv("JETARM_CHANNEL_ADDRESS")
+        jetarm_chan = ZMQChannelProxy(
+            name="jetarm",
+            address=jetarm_address,
+            send_timeout=3,
+            recv_timeout=3,
+        )
+        shell.main_channel.import_channels(jetarm_chan)
+
     ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(
         available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
