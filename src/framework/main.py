@@ -34,6 +34,7 @@ from framework.apps.session.storage_session import StorageSession
 from framework.apps.utils import AgentConsoleChat
 from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
+from framework.rgb.ws2812 import WS2812Channel
 from moss_in_reachy_mini.utils import load_instructions
 
 
@@ -124,6 +125,20 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         shell.main_channel.import_channels(
             ChineseChessChannel(server_url="ws://115.191.2.88:8765/ws")
         )
+
+    if os.getenv("ENABLE_JETARM", "") == "1":
+        jetarm_address = os.getenv("JETARM_CHANNEL_ADDRESS")
+        jetarm_chan = ZMQChannelProxy(
+            name="jetarm",
+            address=jetarm_address,
+            send_timeout=3,
+            recv_timeout=3,
+        )
+        shell.main_channel.import_channels(jetarm_chan)
+
+    if os.getenv("ENABLE_RGB", "") == "1":
+        rgb_chan = WS2812Channel(name="rgb", description="基于ws2812b的rgb")
+        shell.main_channel.import_channels(rgb_chan)
 
     container.set(MOSSShell, shell)
 
@@ -273,8 +288,8 @@ async def main() -> None:
         # 控制台语音交互
         container.set(
             BaseChat,
-            ConsolePTTChat(eventbus=eventbus)
-            # ConsoleChat()
+            # ConsolePTTChat(eventbus=eventbus)
+            ConsoleChat()
         )
 
         main_agent = await build_main_agent(parent=container, agent_id=main_agent_id)

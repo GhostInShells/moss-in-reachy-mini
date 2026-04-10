@@ -38,6 +38,10 @@ douyin_live = [
     "mini_racer==0.12.4",
 ]
 
+rgb = [
+    "pyserial-asyncio==0.6"
+]
+
 [tool.uv.sources]
 ghoshell-moss = { path = "./dependencies/ghoshell_moss-0.1.0a0-py3-none-any.whl" }
 

@@ -474,6 +474,8 @@ class MusicSearch:
             f"=== 节拍信息 ===\n"
             f"每拍时长: {beat_dur}s（BPM={bpm}）\n"
             f"系统会自动将每个动作对齐到最近的节拍点。\n"
+            f"=== RGB灯光（当有rgb通道的时，优先输出rgb:bpm_flash命令）\n"
+            f"- <rgb:bpm_flash bpm=... mode=... duration=...>"
             f"\n"
             f"=== 动作时长表（固定，不随歌曲BPM变化）===\n"
             f"{dance_table}\n"
@@ -481,7 +483,7 @@ class MusicSearch:
             f"  head_move: 由duration参数决定\n"
             f"  antennas_move: 由duration参数决定\n"
             f"\n"
-            f"=== 可用CTML命令 ===\n"
+            f"=== 可用动作CTML命令 ===\n"
             f'- <reachy_mini:dance name="..."/>  舞蹈动作\n'
             f'- <reachy_mini:emotion emoji="..."/>  表情动作\n'
             f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>  头部律动\n'
