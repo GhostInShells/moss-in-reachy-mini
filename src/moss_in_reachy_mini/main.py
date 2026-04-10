@@ -12,6 +12,7 @@ from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
 from framework.apps.chinese_chess.channel import IS_ENABLE_CHINESE_CHESS, ChineseChessChannel
+from framework.rgb.ws2812 import WS2812Channel
 from moss_in_reachy_mini.audio.mixer import AudioMixer
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_hub import AgentHub, EventBus
@@ -214,6 +215,10 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
             recv_timeout=3,
         )
         shell.main_channel.import_channels(jetarm_chan)
+
+    if os.getenv("ENABLE_RGB", "") == "1":
+        rgb_chan = WS2812Channel(name="rgb", description="基于ws2812b的rgb")
+        shell.main_channel.import_channels(rgb_chan)
 
     ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(

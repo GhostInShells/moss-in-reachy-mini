@@ -44,8 +44,8 @@ class WS2812Channel(Channel):
         self._command_delay = command_delay
 
         self._runtime: Optional[ChannelRuntime] = None
-        self._serial_writer = None
-        self._serial_reader = None
+        self._serial_writer: Optional[asyncio.StreamWriter] = None
+        self._serial_reader: Optional[asyncio.StreamReader] = None
 
         self.logger = logger or logging.getLogger("WS2812Channel")
 
@@ -68,10 +68,8 @@ class WS2812Channel(Channel):
         chan.build.command()(self.fill_color)
         chan.build.command()(self.clear)
 
-        chan.build.command()(self.marquee)
         chan.build.command()(self.rainbow)
         chan.build.command()(self.breath)
-        chan.build.command()(self.wave)
         chan.build.command()(self.bpm_flash)
 
         chan.build.start_up(self.on_start_up)
@@ -98,7 +96,8 @@ class WS2812Channel(Channel):
     async def send_command(self, cmd):
         """发送命令到串口"""
         try:
-            await self._serial_writer.write((cmd + "\r\n").encode('utf-8'))
+            self._serial_writer.write((cmd + "\r\n").encode('utf-8'))
+            await self._serial_writer.drain()
         except Exception as e:
             pass
 
@@ -159,7 +158,7 @@ class WS2812Channel(Channel):
             )
 
         cmd = f"FILL {start} {end} {r} {g} {b}"
-        return self.send_command(cmd)
+        return await self.send_command(cmd)
 
     async def clear(self):
         """
@@ -167,48 +166,13 @@ class WS2812Channel(Channel):
         """
         return await self.send_command("CLEAR")
 
-    async def marquee(self, speed=0.05, r: int=255, g: int=0, b: int=0, length: int=5):
-        """
-        跑马灯
-
-        :param speed: 跑马灯速度
-        :param r: RGB的R，0-255
-        :param g: RGB的G，0-255
-        :param b: RGB的B，0-255
-        :param length: 跑马灯的长度（亮的LED数量）
-        """
-        if length < 1 or length > self._led_count:
-            raise CommandError(
-                message=f"错误：跑马灯长度必须在1-{self._led_count}之间"
-            )
-
-        try:
-            for start in range(-length, self._led_count + length):
-                await self.clear()
-                for offset in range(length):
-                    led_idx = start + offset
-                    if 0 <= led_idx < self._led_count:
-                        await self.send_command(f"LED {led_idx} {r} {g} {b}")
-                await asyncio.sleep(speed)
-
-            for start in range(self._led_count + length, -length - 1, -1):
-                await self.clear()
-                for offset in range(length):
-                    led_idx = start + offset
-                    if 0 <= led_idx < self._led_count:
-                        await self.send_command(f"LED {led_idx} {r} {g} {b}")
-                await asyncio.sleep(speed)
-        except Exception as e:
-            self.logger.warning(f"跑马灯效果异常: {e}")
-        finally:
-            await self.clear()
-
-    async def rainbow(self, cycles: int=3, speed: float=0.1):
+    async def rainbow(self, speed: float=0.1, duration: float=5.0):
         """
         彩虹渐变
         """
+        start = time.time()
         try:
-            for cycle in range(cycles):
+            while time.time() - start < duration:
                 # 生成彩虹颜色（从红到紫）
                 for hue in range(0, 360, 360 // self._led_count):
                     # 将HSV转换为RGB
@@ -237,12 +201,13 @@ class WS2812Channel(Channel):
         finally:
             await self.clear()
 
-    async def breath(self, r: int, g: int, b: int, cycles: int=5, breath_time: float=2.0):
+    async def breath(self, r: int, g: int, b: int, breath_time: float=2.0, duration: float=5.0):
         """
         呼吸灯
         """
+        start = time.time()
         try:
-            for _ in range(cycles):
+            while time.time() - start < duration:
                 # 淡入（0-255）
                 steps = int(breath_time / 0.1) / 2
                 if steps > 0:
@@ -266,34 +231,6 @@ class WS2812Channel(Channel):
 
         except Exception as e:
             print(f"呼吸灯效果异常: {e}")
-        finally:
-            await self.clear()
-
-    async def wave(self, r: int, g: int, b: int, speed=0.1, width=10):
-        """颜色波浪效果"""
-        try:
-            # 波浪从左到右移动
-            for pos in range(self._led_count + width):
-                # 清屏
-                await self.clear()
-
-                # 绘制波浪
-                for offset in range(width):
-                    led_idx = pos - offset
-                    if 0 <= led_idx < self._led_count:
-                        # 计算亮度衰减
-                        brightness = 1.0 - (offset / width)
-                        r_adj = int(r * brightness)
-                        g_adj = int(g * brightness)
-                        b_adj = int(b * brightness)
-                        await self.send_command(f"LED {led_idx} {r_adj} {g_adj} {b_adj}")
-
-                await asyncio.sleep(speed)
-
-            await self.clear()
-
-        except Exception as e:
-            print(f"波浪效果异常: {e}")
         finally:
             await self.clear()
 

@@ -237,6 +237,12 @@ class ConsolePTTChat(BaseChat):
                         self._handle_space_key_press(),
                         loop
                     )
+                elif key == keyboard.Key.enter:
+                    # 处理回车键打断
+                    asyncio.run_coroutine_threadsafe(
+                        self._handle_enter_key_operation(),
+                        loop
+                    )
             except Exception as e:
                 self.logger.error(f"Error in on_press: {e}")
 
@@ -265,7 +271,7 @@ class ConsolePTTChat(BaseChat):
             on_release=on_release
         )
         self.keyboard_listener.start()
-        self.console.print("[green]键盘监听已启动，长按空格说话，松开空格提交，按 'q' 退出。[/green]")
+        self.console.print("[green]键盘监听已启动，长按空格说话，松开空格提交，按 '回车键' 打断输出，按 'q' 退出。[/green]")
 
         # 等待退出事件
         try:
@@ -342,6 +348,11 @@ class ConsolePTTChat(BaseChat):
         if not self.listener_service:
             return
 
+        # 在pynput模式下，回车键仅用于打断流式输出，不用于控制录音
+        if self.keyboard_listener and not self.is_streaming:
+            # pynput模式已激活且不在流式输出状态，回车键不执行任何操作
+            return
+
         if self.is_streaming:
             self.interrupted = True
             self.is_streaming = False
@@ -414,7 +425,8 @@ class ConsolePTTChat(BaseChat):
 操作方法:
 1. **长按空格键**：开始录音 (切换到 pdt_listening 状态)
 2. **松开空格键**：结束录音并提交给 Agent 处理
-3. 按 `q` 键：退出程序
+3. 按 `回车键`：打断 AI 的流式输出
+4. 按 `q` 键：退出程序
 """),
             title="PTT (Space Key Control)",
         ))
@@ -483,7 +495,7 @@ class ConsolePTTChat(BaseChat):
         self.ai_response_done.set()
 
         # 根据模式显示不同的提示
-        self.console.print("> 长按空格说话，松开空格提交: ")
+        self.console.print("> 长按空格说话，松开空格提交，按回车键打断输出: ")
 
     def print_exception(self, exception: Any, context: str = ""):
         """打印异常信息"""
