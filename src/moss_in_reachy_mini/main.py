@@ -51,6 +51,16 @@ from moss_in_reachy_mini.state.enrolling import EnrollingStateProvider
 from moss_in_reachy_mini.state.teaching import TeachingState, TeachingStateProvider
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
+from ghoshell_moss.speech.volcengine_tts.tts import SPEAKER_INFO_MAP, SpeakerInfo
+
+SPEAKER_INFO_MAP.update({
+    "en_female_dacey_uranus_bigtts": SpeakerInfo(
+        display_name="Dacey", language="英文", supports_english=True, use_case="通用场景"
+    ),
+    "en_female_stokie_uranus_bigtts": SpeakerInfo(
+        display_name="Stokie", language="英文", supports_english=True, use_case="通用场景"
+    ),
+})
 
 MEMORY = os.getenv("REACHY_MINI_MEMORY", "memory")
 CURRENT_DIR = pathlib.Path(__file__).parent
@@ -211,8 +221,10 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         jetarm_chan = ZMQChannelProxy(
             name="jetarm",
             address=jetarm_address,
-            send_timeout=3,
-            recv_timeout=3,
+            send_timeout=5.0,
+            recv_timeout=5.0,
+            heartbeat_interval=5.0,
+            heartbeat_timeout=10.0,
         )
         shell.main_channel.import_channels(jetarm_chan)
 

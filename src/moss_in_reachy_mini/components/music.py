@@ -476,6 +476,8 @@ class MusicSearch:
             f"系统会自动将每个动作对齐到最近的节拍点。\n"
             f"=== RGB灯光（当有rgb通道的时，优先输出rgb:bpm_flash命令）\n"
             f"- <rgb:bpm_flash bpm=... mode=... duration=...>"
+            f"=== 机械臂（**必须**加入到可用动作CTML命令）\n"
+            f"- <jetarm:motion ...>"
             f"\n"
             f"=== 动作时长表（固定，不随歌曲BPM变化）===\n"
             f"{dance_table}\n"
@@ -488,6 +490,7 @@ class MusicSearch:
             f'- <reachy_mini:emotion emoji="..."/>  表情动作\n'
             f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>  头部律动\n'
             f'- <reachy_mini:antennas_move left=".." right=".." duration=".."/>  天线摆动\n'
+            f"- <jetarm:motion ...> 机械臂\n"
             f'- <sleep duration=".."/>  节拍停顿（用beat的倍数：{beat_dur}s=一拍，{round(beat_dur * 2, 2)}s=两拍）\n'
             f"\n"
             f"=== 编排要求 ===\n"

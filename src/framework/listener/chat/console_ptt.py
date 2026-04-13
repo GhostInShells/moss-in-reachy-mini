@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import os
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import traceback
 
 try:
     from pynput import keyboard
-    HAS_PYNPUT = True
+    HAS_PYNPUT = os.getenv("ENABLE_PYNPUT", "") == "1"
 except ImportError:
     HAS_PYNPUT = False
     # 如果需要使用空格键控制，请安装 pynput 库: pip install pynput
