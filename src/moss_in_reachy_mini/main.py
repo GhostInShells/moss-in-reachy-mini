@@ -6,6 +6,7 @@ from ghoshell_common.contracts import LoggerItf, Workspace
 from ghoshell_container import Container, IoCContainer, get_container
 from ghoshell_moss import MOSSShell, new_ctml_shell
 from ghoshell_moss.speech import BaseTTSSpeech
+from ghoshell_moss.speech.player.pyaudio_player import PyAudioStreamPlayer
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy, ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
@@ -415,14 +416,21 @@ def get_speech(
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
+
+    player = PyAudioStreamPlayer(
+
+    )
+
+    # player = ReachyMiniStreamPlayer(
+    #         mini,
+    #         logger=container.get(LoggerItf),
+    #         recorder=recorder,
+    #         mixer=mixer,
+    #     )
+
     speech = BaseTTSSpeech(
         tts=VolcengineTTS(conf=tts_conf),
-        player=ReachyMiniStreamPlayer(
-            mini,
-            logger=container.get(LoggerItf),
-            recorder=recorder,
-            mixer=mixer,
-        ),
+        player=player,
     )
     # speech.commands = lambda: []
     return speech
@@ -445,4 +453,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    import tracemalloc
+    tracemalloc.start()
     asyncio.run(main())
+    snapshot = tracemalloc.take_snapshot()

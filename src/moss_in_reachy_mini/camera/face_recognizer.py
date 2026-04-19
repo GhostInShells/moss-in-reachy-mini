@@ -17,6 +17,7 @@ import numpy as np
 from ghoshell_common.contracts import Storage, LoggerItf
 from ghoshell_container import IoCContainer, Container
 from insightface.app import FaceAnalysis
+from insightface.data import image
 from numpy.typing import NDArray
 from scipy.optimize import linear_sum_assignment
 
@@ -60,7 +61,7 @@ class FaceRecognizer:
                 name=model_name,
                 providers=['CPUExecutionProvider'] if device == "cpu" else ['CUDAExecutionProvider']
             )
-            self.app.prepare(ctx_id=0, det_thresh=det_thresh, det_size=det_size)
+            self.app.prepare(ctx_id=-1, det_thresh=det_thresh, det_size=det_size)
             logger.info(f"InsightFace model '{model_name}' loaded on {device}")
         except Exception as e:
             logger.error(f"Failed to load InsightFace model: {e}")
@@ -77,6 +78,7 @@ class FaceRecognizer:
         h, w = img.shape[:2]
         start = time.time()
         faces = self.app.get(img)
+        image.ImageCache.data.clear()
         self.logger.debug(f"Model cost {time.time() - start} seconds")
         positions: List[Position] = []
         for i, face in enumerate(faces):

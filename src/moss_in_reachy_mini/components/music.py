@@ -476,8 +476,6 @@ class MusicSearch:
             f"系统会自动将每个动作对齐到最近的节拍点。\n"
             f"=== RGB灯光（当有rgb通道的时，优先输出rgb:bpm_flash命令）\n"
             f"- <rgb:bpm_flash bpm=... mode=... duration=...>"
-            f"=== 机械臂（**必须**加入到可用动作CTML命令）\n"
-            f"- <jetarm:motion ...>"
             f"\n"
             f"=== 动作时长表（固定，不随歌曲BPM变化）===\n"
             f"{dance_table}\n"
@@ -486,11 +484,11 @@ class MusicSearch:
             f"  antennas_move: 由duration参数决定\n"
             f"\n"
             f"=== 可用动作CTML命令 ===\n"
+            f"- <jetarm:motion ...> 机械臂舞蹈动作\n"
             f'- <reachy_mini:dance name="..."/>  舞蹈动作\n'
             f'- <reachy_mini:emotion emoji="..."/>  表情动作\n'
             f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>  头部律动\n'
             f'- <reachy_mini:antennas_move left=".." right=".." duration=".."/>  天线摆动\n'
-            f"- <jetarm:motion ...> 机械臂\n"
             f'- <sleep duration=".."/>  节拍停顿（用beat的倍数：{beat_dur}s=一拍，{round(beat_dur * 2, 2)}s=两拍）\n'
             f"\n"
             f"=== 编排要求 ===\n"
@@ -501,6 +499,7 @@ class MusicSearch:
             f"5. 根据歌曲风格搭配（快歌→headbanger_combo/chicken_peck，慢歌→pendulum_swing/side_to_side_sway）\n"
             f"6. 高潮段密集动作，安静段多用sleep留白\n"
             f"7. 不要说话，只输出CTML动作标签\n"
+            f"8. 必须使用机械臂动作\n"
         )
         logger.info("Pushing choreography event for %s (BPM=%d, %.1fs)", title, bpm, duration_s)
         await self._eventbus.put(ReactAgentEvent(
@@ -555,7 +554,7 @@ class MusicSearch:
     # Public async API (exposed as CTML commands)
     # ------------------------------------------------------------------
 
-    async def play_music(self, query: str, count: int = 1, duration: float = -1.0, continuous: bool = False) -> str:
+    async def play_music(self, query: str, count: int = 1, duration: float = -1.0, continuous: str = "False") -> str:
         """搜索并播放音乐。query 必须是具体的「歌手+歌名」或「歌名」。
 
         禁止将用户的模糊描述（如"下雨天适合听的歌"）直接作为 query。
@@ -566,6 +565,8 @@ class MusicSearch:
         :param duration: 不要传此参数，除非用户明确要求只听指定秒数。默认-1播完整首歌
         :param continuous: 连续播放模式。当用户要求播放多首歌曲时设为True，播完后系统会提示你继续选歌
         """
+        continuous = continuous == "True"
+
         self._loop = asyncio.get_running_loop()
 
         # Reject stale continuous callbacks that arrive after stop_music
