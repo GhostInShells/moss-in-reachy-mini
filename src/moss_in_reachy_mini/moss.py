@@ -323,6 +323,16 @@ class MossInReachyMini:
         )(self.music.search_music)
 
         reachy_mini.build.command(
+            name="save_performance",
+            doc=(
+                "保存当前歌曲的舞蹈编排供下次直接复用（无需重新调用LLM）。"
+                "当用户说'保存这段舞蹈'、'记住这个编排'、'下次直接用这个'时调用。"
+                "仅在 rich 模式且当前有歌曲时有效。"
+            ),
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.music.save_performance)
+
+        reachy_mini.build.command(
             doc=(
                 "启动人脸注册/录入流程。当用户说'录入人脸'、'注册人脸'、或同意进行人脸注册时，"
                 "必须立即调用此指令，不要自己尝试拍照或引导。"

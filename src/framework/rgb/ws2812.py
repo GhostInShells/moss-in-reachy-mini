@@ -81,24 +81,29 @@ class WS2812Channel(Channel):
     async def on_start_up(self):
         port = auto_detect_port()
         if not port:
-            raise RuntimeError("serial port not found")
+            self.logger.warning("WS2812: serial port not found, RGB commands will be no-ops")
+            return
 
-        reader, writer = await serial_asyncio.open_serial_connection(
-            url=port, baudrate=self._baudrate
-        )
-
-        self._serial_writer = writer
-        self._serial_reader = reader
+        try:
+            reader, writer = await serial_asyncio.open_serial_connection(
+                url=port, baudrate=self._baudrate
+            )
+            self._serial_writer = writer
+            self._serial_reader = reader
+        except Exception:
+            self.logger.warning("WS2812: failed to open serial port %s, RGB commands will be no-ops", port)
 
     async def on_close(self):
         await self.clear()
 
     async def send_command(self, cmd):
         """发送命令到串口"""
+        if self._serial_writer is None:
+            return
         try:
             self._serial_writer.write((cmd + "\r\n").encode('utf-8'))
             await self._serial_writer.drain()
-        except Exception as e:
+        except Exception:
             pass
 
     async def set_led(self, index: int, r: int, g: int, b: int):
@@ -170,6 +175,9 @@ class WS2812Channel(Channel):
         """
         彩虹渐变
         """
+        asyncio.create_task(self._rainbow_task(speed, duration))
+
+    async def _rainbow_task(self, speed: float, duration: float):
         start = time.time()
         try:
             while time.time() - start < duration:
@@ -205,6 +213,9 @@ class WS2812Channel(Channel):
         """
         呼吸灯
         """
+        asyncio.create_task(self._breath_task(r, g, b, breath_time, duration))
+
+    async def _breath_task(self, r: int, g: int, b: int, breath_time: float, duration: float):
         start = time.time()
         try:
             while time.time() - start < duration:
@@ -240,8 +251,9 @@ class WS2812Channel(Channel):
         :param mode: all, alter, running, gradient
         :param duration: 时长
         """
-        """BPM闪烁线程"""
-        # 计算每拍的时间（秒）
+        asyncio.create_task(self._bpm_flash_task(bpm, mode, duration))
+
+    async def _bpm_flash_task(self, bpm: int, mode: str, duration: float):
         beat_interval = 60.0 / bpm
         start = time.time()
         try:
