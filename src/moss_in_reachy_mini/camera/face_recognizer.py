@@ -1,3 +1,4 @@
+import gc
 import warnings
 # 抑制insightface的skimage弃用警告
 warnings.filterwarnings(
@@ -19,9 +20,12 @@ from ghoshell_container import IoCContainer, Container
 from insightface.app import FaceAnalysis
 from insightface.data import image
 from numpy.typing import NDArray
-from scipy.optimize import linear_sum_assignment
 
 from moss_in_reachy_mini.camera.model import KnownFace, Position
+
+from moss_in_reachy_mini.camera.magic import get_model
+from insightface.model_zoo import model_zoo
+model_zoo.get_model = get_model
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +63,7 @@ class FaceRecognizer:
         try:
             self.app = FaceAnalysis(
                 name=model_name,
-                providers=['CPUExecutionProvider'] if device == "cpu" else ['CUDAExecutionProvider']
+                providers=['CoreMLExecutionProvider', 'CPUExecutionProvider'] if device == "cpu" else ['CUDAExecutionProvider'],
             )
             self.app.prepare(ctx_id=-1, det_thresh=det_thresh, det_size=det_size)
             logger.info(f"InsightFace model '{model_name}' loaded on {device}")
@@ -78,7 +82,6 @@ class FaceRecognizer:
         h, w = img.shape[:2]
         start = time.time()
         faces = self.app.get(img)
-        image.ImageCache.data.clear()
         self.logger.debug(f"Model cost {time.time() - start} seconds")
         positions: List[Position] = []
         for i, face in enumerate(faces):
@@ -106,6 +109,8 @@ class FaceRecognizer:
             )
             positions.append(position)
 
+        del faces
+        gc.collect()
         return positions
 
     def _recognize_with_img(
@@ -158,6 +163,7 @@ class FaceRecognizer:
 
             # 检测人脸并提取特征
             faces = self.app.get(bgr_img)
+            image.ImageCache.data.clear()
 
             if len(faces) > 0:
                 # 返回第一个检测到的人脸特征
