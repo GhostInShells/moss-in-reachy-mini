@@ -465,6 +465,9 @@ def _tee_to_log() -> None:
     log_path = pathlib.Path(__file__).parent / ".workspace/runtime/logs/terminal.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    import re
+    _ansi_re = re.compile(r"\x1b\[[0-9;]*[mKABCDEFGHJSTfhilmnprsu]")
+
     class _Tee:
         def __init__(self, original, file):
             self._orig = original
@@ -472,7 +475,7 @@ def _tee_to_log() -> None:
 
         def write(self, data):
             self._orig.write(data)
-            self._file.write(data)
+            self._file.write(_ansi_re.sub("", data))
 
         def flush(self):
             self._orig.flush()

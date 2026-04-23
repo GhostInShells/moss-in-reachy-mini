@@ -114,26 +114,39 @@ def score_ctml(ctml: str) -> tuple[int, int]:
 
 def clean_ctml(raw: str) -> str:
     """
-    Remove lines containing exception/traceback noise and strip ANSI codes.
-    Exception noise: lines starting with 'Traceback', 'Task exception', indented
-    stack frames (starting with spaces), and bare 'KeyError' / 'Exception' etc.
+    Remove noise injected into stdout mid-stream and strip ANSI codes.
+    Noise appears inside CTML tags (splitting attribute values or tag names),
+    so we use regex replacement on the raw string before any line processing.
     """
+    # [MEM] monitor lines may appear mid-attribute, e.g. <sleep duration[MEM]...\n="0.48"/>
+    raw = re.sub(r"\[MEM\][^\n]*\n?", "", raw)
+
+    # "Task exception was never retrieved" blocks may appear mid-tag-name,
+    # e.g. <jetarm:Task exception...\nTraceback...\nKeyError: '...'\nmotion name="..."/>
+    # Remove from "Task exception" through the terminal XxxError/XxxException line.
+    raw = re.sub(
+        r"Task exception was never retrieved.*?[A-Za-z]+(?:Error|Exception):[^\n]*\n?",
+        "",
+        raw,
+        flags=re.DOTALL,
+    )
+
+    # Standalone Traceback blocks (not preceded by "Task exception")
+    raw = re.sub(
+        r"Traceback \(most recent call last\):.*?[A-Za-z]+(?:Error|Exception):[^\n]*\n?",
+        "",
+        raw,
+        flags=re.DOTALL,
+    )
+
     lines = raw.splitlines()
     cleaned: list[str] = []
-    skip_until_empty = False
     for line in lines:
         stripped = line.strip()
-        # Exception block starters
-        if stripped.startswith(("Traceback (", "Task exception was never retrieved")):
-            skip_until_empty = True
-        if skip_until_empty:
-            if not stripped:
-                skip_until_empty = False
-            continue
-        # Single-line exception mentions
+        # Single-line exception mentions not caught above
         if re.match(r"^[A-Za-z]+Error:", stripped) or re.match(r"^[A-Za-z]+Exception:", stripped):
             continue
-        # Stack frame lines (indented with spaces/tabs starting with File or >)
+        # Stack frame lines
         if re.match(r"^\s+(File |During handling|The above exception)", line):
             continue
         cleaned.append(strip_ansi(line))

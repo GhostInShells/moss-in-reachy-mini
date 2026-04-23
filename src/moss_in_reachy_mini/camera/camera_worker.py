@@ -47,6 +47,13 @@ class CameraWorker:
         self.face_tracking_lock = threading.Lock()
         self.target_track_name = ""
 
+        # Throttle InsightFace inference when not actively tracking a face
+        # to reduce ONNX Runtime memory pressure.
+        # When tracking: use the normal 0.2s loop interval (5 fps).
+        # When idle (no target): run inference at most once every N seconds.
+        self._face_detect_interval_idle = 2.0  # seconds between detections when idle
+        self._last_face_detect_time: float = 0.0
+
         # Face tracking timing variables (same as main_works.py)
         self.last_face_detected_time: float | None = None
         self.interpolation_start_time: float | None = None
@@ -103,8 +110,19 @@ class CameraWorker:
                 if frame is None:
                     continue
 
-                # Handle face tracking if enabled and head tracker available
-                face_positons = self.face_recognizer.get_face_positions(frame)
+                # Throttle InsightFace inference: run every loop tick when tracking
+                # a specific face, but only every _face_detect_interval_idle seconds
+                # when idle (no target set). This reduces ONNX Runtime CPU/memory use.
+                with self.face_tracking_lock:
+                    _tracking_now = bool(self.target_track_name)
+                _should_detect = _tracking_now or (current_time - self._last_face_detect_time >= self._face_detect_interval_idle)
+                if _should_detect:
+                    face_positons = self.face_recognizer.get_face_positions(frame)
+                    self._last_face_detect_time = current_time
+                else:
+                    # Reuse the face positions from the previous latest frame
+                    face_positons = self.latest_frame.face_positons
+
                 track_lost = True
                 face_tracking_offsets = [
                     0.0,

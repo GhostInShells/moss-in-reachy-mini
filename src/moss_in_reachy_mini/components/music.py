@@ -38,7 +38,7 @@ _AUTO_SLOW_DANCES = [
     "pendulum_swing", "side_to_side_sway", "simple_nod", "head_tilt_roll",
     "groovy_sway_and_roll", "uh_huh_tilt", "side_glance_flick",
 ]
-_AUTO_RGB_MODES = ["all", "alter", "running", "gradient"]
+_AUTO_RGB_MODES = ["all", "alter", "running", "gradient", "meteor", "sparkle", "bounce", "strobe", "fire", "chase_clear", "cylon", "heartbeat", "disco", "rainbow_pulse"]
 
 _BILIBILI_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -543,10 +543,22 @@ class MusicSearch:
             f"系统会自动将每个动作对齐到最近的节拍点。\n"
             f"=== RGB灯光（当有rgb通道时，必须输出多个rgb:bpm_flash命令，穿插在整个编排中）===\n"
             f"- <rgb:bpm_flash bpm=... mode=... duration=...>\n"
-            f"- mode可选: all（全闪）, alter（交替）, running（跑动）, gradient（渐变）\n"
-            f"- **重要**: 每个bpm_flash的duration不要超过{round(beat_dur * 16, 1)}秒（约16拍），\n"
-            f"  每隔{round(beat_dur * 8, 1)}~{round(beat_dur * 16, 1)}秒切换一次mode，让灯光在整首歌中持续变化。\n"
-            f"- 示例: all模式{round(beat_dur * 8, 1)}秒 → alter模式{round(beat_dur * 8, 1)}秒 → running模式{round(beat_dur * 8, 1)}秒 …… 如此循环\n"
+            f"- 每个bpm_flash的duration不要超过{round(beat_dur * 16, 1)}秒（约16拍），每隔{round(beat_dur * 8, 1)}~{round(beat_dur * 16, 1)}秒切换一次mode\n"
+            f"- 模式选用指南（根据音乐情绪和段落选择）：\n"
+            f"  * all       全带随机色每拍暴闪 → 最高能，适合副歌高潮、drop段\n"
+            f"  * disco     每拍4次快速换色   → 强烈节奏感，适合快节奏舞曲、高潮\n"
+            f"  * strobe    每拍3次快闪        → 极端刺激，适合EDM drop、最高潮的短暂瞬间\n"
+            f"  * meteor    4路流星积累        → 动感速度感，适合副歌上升段、rap段\n"
+            f"  * sparkle   散点随机亮         → 闪烁星光感，适合副歌、欢快段落\n"
+            f"  * alter     全带整体换色       → 稳定律动感，适合主歌、mid段\n"
+            f"  * running   单点跑马积累       → 逐渐铺满的期待感，适合前奏、intro\n"
+            f"  * chase_clear 单点清屏移动     → 极简追逐感，适合安静段落、间奏\n"
+            f"  * bounce    两点从两端汇聚     → 对称律动，适合bridge、过渡段\n"
+            f"  * cylon     红点来回弹跳       → 机械感，适合电子感强的段落\n"
+            f"  * heartbeat 双脉冲心跳         → 情感张力，适合情绪爆发前的蓄力段\n"
+            f"  * rainbow_pulse 彩虹色逐拍推进 → 梦幻色彩，适合欢快轻盈的段落\n"
+            f"  * gradient  亮度50/100交替     → 最柔和律动，适合慢歌、轻柔段落\n"
+            f"  * fire      暖色循环           → 热烈温暖，适合慢歌高潮、情感段落\n"
             f"=== 机械臂（**必须**加入到可用动作CTML命令）\n"
             f"- <jetarm:motion ...>"
             f"\n"
