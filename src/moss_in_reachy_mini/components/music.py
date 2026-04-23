@@ -569,11 +569,11 @@ class MusicSearch:
             f"  antennas_move: 由duration参数决定\n"
             f"\n"
             f"=== 可用动作CTML命令 ===\n"
+            f"- <jetarm:motion ...> 机械臂舞蹈动作\n"
             f'- <reachy_mini:dance name="..."/>  舞蹈动作\n'
             f'- <reachy_mini:emotion emoji="..."/>  表情动作\n'
             f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>  头部律动\n'
             f'- <reachy_mini:antennas_move left=".." right=".." duration=".."/>  天线摆动\n'
-            f"- <jetarm:motion ...> 机械臂\n"
             f'- <sleep duration=".."/>  节拍停顿（用beat的倍数：{beat_dur}s=一拍，{round(beat_dur * 2, 2)}s=两拍）\n'
             f"\n"
             f"=== 编排要求 ===\n"
@@ -584,6 +584,7 @@ class MusicSearch:
             f"5. 根据歌曲风格搭配（快歌→headbanger_combo/chicken_peck，慢歌→pendulum_swing/side_to_side_sway）\n"
             f"6. 高潮段密集动作，安静段多用sleep留白\n"
             f"7. 不要说话，只输出CTML动作标签\n"
+            f"8. 必须使用机械臂动作\n"
         )
         if save_name:
             prompt += (
@@ -785,6 +786,8 @@ class MusicSearch:
         :param continuous: 连续播放模式。当用户要求播放多首歌曲时设为True，播完后系统会提示你继续选歌
         :param refresh: 强制重新生成编排并覆盖已保存的版本（rich模式有效）。用户说"重新编排"/"换个动作"时设为True
         """
+        continuous = continuous == "True"
+
         self._loop = asyncio.get_running_loop()
         self._refresh = refresh
 

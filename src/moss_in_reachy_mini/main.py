@@ -490,5 +490,8 @@ def _tee_to_log() -> None:
 
 
 if __name__ == "__main__":
+    import tracemalloc
+    tracemalloc.start()
     _tee_to_log()
     asyncio.run(main())
+    snapshot = tracemalloc.take_snapshot()
