@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from ghoshell_common.contracts import Storage, Workspace
 from ghoshell_container import Provider, IoCContainer, INSTANCE
@@ -29,6 +30,26 @@ class CtmlRepo:
 
         self._storage.put(f"{name}.ctml", ctml_text.encode())
 
+    def has_ctml(self, name: str) -> bool:
+        try:
+            data = self._storage.get(f"{name}.ctml")
+            return bool(data)
+        except Exception:
+            return False
+
+    def get_ctml(self, name: str) -> str | None:
+        try:
+            data = self._storage.get(f"{name}.ctml")
+            return data.decode() if data else None
+        except Exception:
+            return None
+
+    def delete_ctml(self, name: str) -> None:
+        try:
+            self._storage.remove(f"{name}.ctml")
+        except Exception:
+            pass
+
     def list_ctml_names(self):
         ctml_filenames = self._storage.dir("", recursive=False, patten="*.ctml")
         ctml_names = [f.split(".")[0] for f in ctml_filenames]
@@ -48,6 +69,7 @@ name list: {self.list_ctml_names()}
     async def execute_ctml(self, name: str):
         ctml_text = self._storage.get(f"{name}.ctml").decode()
         shell = ChannelCtx.get_contract(MOSSShell)
+        ignore = os.getenv("CTML_IGNORE_WRONG_COMMAND", "true").lower() in ("1", "true", "yes")
 
         async def on_result(got: list[CommandTask]) -> CommandStackResult | CommandTaskResult | None:
             for t in got:
@@ -62,7 +84,7 @@ name list: {self.list_ctml_names()}
             )
 
         return CommandStackResult(
-            shell.parse_text_to_tasks(text=ctml_text),
+            shell.parse_text_to_tasks(text=ctml_text, ignore_wrong_command=ignore),
             on_result,
         )
 

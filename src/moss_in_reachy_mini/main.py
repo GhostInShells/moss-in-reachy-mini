@@ -50,6 +50,7 @@ from moss_in_reachy_mini.moss import MossInReachyMini, MossInReachyMiniProvider
 from moss_in_reachy_mini.state import AsleepStateProvider, BoringStateProvider, LiveStateProvider, WakenStateProvider, ChessPlayingStateProvider
 from moss_in_reachy_mini.state.enrolling import EnrollingStateProvider
 from moss_in_reachy_mini.state.teaching import TeachingState, TeachingStateProvider
+from moss_in_reachy_mini.state.waken import WakenState
 from moss_in_reachy_mini.utils import load_instructions
 from moss_in_reachy_mini.video.recorder_worker import VideoRecorderWorker, VideoRecorderWorkerProvider
 from ghoshell_moss.speech.volcengine_tts.tts import SPEAKER_INFO_MAP, SpeakerInfo
@@ -235,7 +236,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
 
     ctml_repo = container.force_fetch(CtmlRepo)
     shell.main_channel.build.command(
-        available=moss.is_available_fn(TeachingState.NAME),  # 只允许示教模式来用这个command
+        available=moss.is_available_fn(TeachingState.NAME, WakenState.NAME),
     )(ctml_repo.save_ctml)
     shell.main_channel.build.command(
         doc=ctml_repo.execute_ctml_docstring,  # 动态加载docstring
@@ -413,20 +414,18 @@ def get_speech(
         access_token=app_token,
         resource_id=resource_id,
         sample_rate=mini.media.get_output_audio_samplerate(),
+        disconnect_on_idle=int(os.environ.get("TTS_DISCONNECT_ON_IDLE", "3600")),
     )
     if default_speaker:
         tts_conf.default_speaker = default_speaker
 
-    player = PyAudioStreamPlayer(
-
-    )
-
-    # player = ReachyMiniStreamPlayer(
-    #         mini,
-    #         logger=container.get(LoggerItf),
-    #         recorder=recorder,
-    #         mixer=mixer,
-    #     )
+    # player = PyAudioStreamPlayer()
+    player = ReachyMiniStreamPlayer(
+            mini,
+            logger=container.get(LoggerItf),
+            recorder=recorder,
+            mixer=mixer,
+        )
 
     speech = BaseTTSSpeech(
         tts=VolcengineTTS(conf=tts_conf),
@@ -452,8 +451,47 @@ async def main():
         await run(container)
 
 
+def _tee_to_log() -> None:
+    """Redirect stdout+stderr to terminal.log (append) while still printing to terminal."""
+    import sys
+    from dotenv import dotenv_values
+
+    env_file = pathlib.Path(__file__).parent.parent.parent.parent / ".env"
+    dot_env = dotenv_values(env_file) if env_file.exists() else {}
+    enabled = (dot_env.get("TERMINAL_LOG") or os.getenv("TERMINAL_LOG", "yes")).lower() not in ("0", "false", "no")
+    if not enabled:
+        return
+
+    log_path = pathlib.Path(__file__).parent / ".workspace/runtime/logs/terminal.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    import re
+    _ansi_re = re.compile(r"\x1b\[[0-9;]*[mKABCDEFGHJSTfhilmnprsu]")
+
+    class _Tee:
+        def __init__(self, original, file):
+            self._orig = original
+            self._file = file
+
+        def write(self, data):
+            self._orig.write(data)
+            self._file.write(_ansi_re.sub("", data))
+
+        def flush(self):
+            self._orig.flush()
+            self._file.flush()
+
+        def __getattr__(self, name):
+            return getattr(self._orig, name)
+
+    _log_file = log_path.open("a", encoding="utf-8", errors="replace")
+    sys.stdout = _Tee(sys.stdout, _log_file)
+    sys.stderr = _Tee(sys.stderr, _log_file)
+
+
 if __name__ == "__main__":
     import tracemalloc
     tracemalloc.start()
+    _tee_to_log()
     asyncio.run(main())
     snapshot = tracemalloc.take_snapshot()

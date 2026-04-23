@@ -294,6 +294,8 @@ class MossInReachyMini:
                 "不要沿用之前对话中的duration设置，每次都按用户最新的要求判断。默认播完整首歌。"
                 "\n播放后系统会向你发送编舞请求，届时请用dance/emotion/head_move/antennas_move自由编排。"
                 "\n停止/暂停/恢复音乐请用 stop_music、pause_music、resume_music。"
+                "\n\n**refresh 参数**：默认False，使用已保存的编舞直接复用。"
+                "用户说'重新编舞'、'换个舞蹈动作'、'重新跳'时传 refresh=True，忽略缓存重新生成。"
             ),
             available=self.is_available_fn(WakenState.NAME, LiveState.NAME),
         )(self.music.play_music)
@@ -321,6 +323,16 @@ class MossInReachyMini:
             doc="搜索音乐返回结果列表，不自动播放。用于让用户选择。",
             available=self.is_available_fn(WakenState.NAME),
         )(self.music.search_music)
+
+        reachy_mini.build.command(
+            name="save_performance",
+            doc=(
+                "保存当前歌曲的舞蹈编排供下次直接复用（无需重新调用LLM）。"
+                "当用户说'保存这段舞蹈'、'记住这个编排'、'下次直接用这个'时调用。"
+                "仅在 rich 模式且当前有歌曲时有效。"
+            ),
+            available=self.is_available_fn(WakenState.NAME),
+        )(self.music.save_performance)
 
         reachy_mini.build.command(
             doc=(

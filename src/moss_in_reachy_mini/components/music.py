@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import math
+import os
+import random
 import re
 import time
 from pathlib import Path
@@ -18,9 +21,24 @@ from reachy_mini_dances_library.collection.dance import AVAILABLE_MOVES
 
 from framework.abcd.agent_event import CTMLAgentEvent, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
+from framework.moss_contrib.ctml_repo import CtmlRepo
 from moss_in_reachy_mini.components.sound import Sound
 
 logger = logging.getLogger(__name__)
+
+# Performance mode constants
+_LOOP_TARGET_SECONDS = 20.0  # loop 模式每个循环单元的目标时长（秒）
+
+# auto 模式舞蹈列表（按 BPM 分快慢）
+_AUTO_FAST_DANCES = [
+    "headbanger_combo", "chicken_peck", "yeah_nod", "neck_recoil",
+    "grid_snap", "sharp_side_tilt", "chin_lead",
+]
+_AUTO_SLOW_DANCES = [
+    "pendulum_swing", "side_to_side_sway", "simple_nod", "head_tilt_roll",
+    "groovy_sway_and_roll", "uh_huh_tilt", "side_glance_flick",
+]
+_AUTO_RGB_MODES = ["all", "alter", "running", "gradient", "meteor", "sparkle", "bounce", "strobe", "fire", "chase_clear", "cylon", "heartbeat", "disco", "rainbow_pulse"]
 
 _BILIBILI_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
@@ -80,9 +98,10 @@ def _analyze_audio(path: str) -> dict:
 class MusicSearch:
     """Search music via Bilibili and play through the existing Sound component."""
 
-    def __init__(self, sound: Sound, workspace: Workspace, eventbus: EventBus) -> None:
+    def __init__(self, sound: Sound, workspace: Workspace, eventbus: EventBus, ctml_repo: CtmlRepo) -> None:
         self._sound = sound
         self._eventbus = eventbus
+        self._ctml_repo = ctml_repo
         self._cache_dir = Path(workspace.runtime().abspath()) / "music_cache"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._index_path = self._cache_dir / "index.json"
@@ -114,6 +133,15 @@ class MusicSearch:
 
         # Set by stop_music() to reject stale continuous callbacks from queued events
         self._music_stopped: bool = False
+
+        # Last successfully played song — retained after playback ends for save_performance
+        self._last_song: dict | None = None
+
+        # Whether to skip saved choreography and regenerate (set per play_music call)
+        self._refresh: bool = False
+
+        # auto/loop mode background task
+        self._perf_task: asyncio.Task | None = None
 
         # Register playback finish callback
         self._sound.set_on_finish(self._on_playback_finish)
@@ -309,6 +337,10 @@ class MusicSearch:
         if self._prefetch_task and not self._prefetch_task.done():
             self._prefetch_task.cancel()
             self._prefetch_task = None
+        # Cancel auto/loop performance task
+        if self._perf_task and not self._perf_task.done():
+            self._perf_task.cancel()
+            self._perf_task = None
         # Stop sound with _stopping guard so callback is a no-op
         if self._current_song is not None:
             self._stopping = True
@@ -349,10 +381,18 @@ class MusicSearch:
             self._duration_timer.cancel()
             self._duration_timer = None
         # Clear remaining dance commands from previous song
-        await self._eventbus.put(CTMLAgentEvent(
-            ctml='<clear chan="reachy_mini"/>',
-            priority=2,
-        ))
+        # In loop mode, the CTML loop primitive will still be running after the song ends — interrupt it
+        mode = os.getenv("REACHY_MINI_PERFORMANCE_MODE", "rich")
+        if mode == "loop":
+            await self._eventbus.put(CTMLAgentEvent(
+                ctml='<interrupt/><clear chan="reachy_mini"/>',
+                priority=2,
+            ))
+        else:
+            await self._eventbus.put(CTMLAgentEvent(
+                ctml='<clear chan="reachy_mini"/>',
+                priority=2,
+            ))
 
         self._playlist_index += 1
 
@@ -361,6 +401,7 @@ class MusicSearch:
             prev = self._current_song
             next_song = self._playlist[self._playlist_index]
             self._current_song = next_song
+            self._last_song = next_song
 
             await self._sound.play_sound(next_song["local_path"])
             self._playback_start_time = time.monotonic()
@@ -368,7 +409,7 @@ class MusicSearch:
 
             # Push transition speech, then choreography for new song
             await self._push_song_transition_event(prev, next_song)
-            await self._push_choreography_event(next_song, remaining_s=remaining_s)
+            await self._dispatch_choreography_event(next_song, remaining_s=remaining_s)
 
             # Prefetch the one after that
             self._start_prefetch()
@@ -384,11 +425,12 @@ class MusicSearch:
             if song:
                 self._playlist.append(song)
                 self._current_song = song
+                self._last_song = song
                 await self._sound.play_sound(song["local_path"])
                 self._playback_start_time = time.monotonic()
                 remaining_s = self._start_duration_timer(song)
                 await self._push_song_transition_event(prev, song)
-                await self._push_choreography_event(song, remaining_s=remaining_s)
+                await self._dispatch_choreography_event(song, remaining_s=remaining_s)
                 self._start_prefetch()
             else:
                 # All remaining downloads failed
@@ -441,15 +483,40 @@ class MusicSearch:
         ))
 
     # ------------------------------------------------------------------
-    # LLM choreography (one event per song, accurate duration)
+    # Choreography dispatch (rich / loop / auto)
     # ------------------------------------------------------------------
 
-    async def _push_choreography_event(self, song: dict, remaining_s: float | None = None) -> None:
-        """Ask the LLM to freely choreograph using normal CTML commands.
+    @staticmethod
+    def _loop_unit_duration(bpm: int) -> float:
+        """计算 loop 模式每个循环单元的时长（秒），对齐到4拍小节。"""
+        beat_dur = 60.0 / bpm if bpm > 0 else 0.5
+        loop_beats = max(8, round(_LOOP_TARGET_SECONDS / beat_dur / 4) * 4)
+        return round(loop_beats * beat_dur, 1)
 
-        :param song: song dict with title, artist, bpm, duration_s
-        :param remaining_s: if set, use this as the duration instead of full song duration
-        """
+    async def _dispatch_choreography_event(self, song: dict, remaining_s: float | None = None) -> None:
+        """根据 REACHY_MINI_PERFORMANCE_MODE 分发到对应的编排策略。"""
+        mode = os.getenv("REACHY_MINI_PERFORMANCE_MODE", "rich")
+        if mode == "loop":
+            await self._start_loop_choreography(song, remaining_s)
+        elif mode == "auto":
+            bpm = song.get("bpm", 120)
+            dur = remaining_s if remaining_s is not None else song.get("duration_s", 0)
+            self._perf_task = asyncio.create_task(self._run_auto_choreography(bpm, dur))
+        else:
+            # rich 模式：有保存的编排且不强制刷新时直接复用
+            bvid = song.get("bvid", "")
+            save_name = f"song_{bvid}" if bvid else None
+            if save_name and not self._refresh and self._ctml_repo.has_ctml(save_name):
+                logger.info("Using saved choreography for %s (%s)", song.get("title", ""), save_name)
+                await self._eventbus.put(CTMLAgentEvent(
+                    ctml=f'<execute_ctml name="{save_name}"/>',
+                    priority=2,
+                ))
+            else:
+                await self._push_rich_choreography_event(song, remaining_s)
+
+    async def _push_rich_choreography_event(self, song: dict, remaining_s: float | None = None, save_name: str | None = None) -> None:
+        """rich 模式：让 LLM 一次性编排整首歌，直接内联输出执行。"""
         title = song.get("title", "")
         artist = song.get("artist", "")
         bpm = song.get("bpm", 0)
@@ -474,8 +541,26 @@ class MusicSearch:
             f"=== 节拍信息 ===\n"
             f"每拍时长: {beat_dur}s（BPM={bpm}）\n"
             f"系统会自动将每个动作对齐到最近的节拍点。\n"
-            f"=== RGB灯光（当有rgb通道的时，优先输出rgb:bpm_flash命令）\n"
-            f"- <rgb:bpm_flash bpm=... mode=... duration=...>"
+            f"=== RGB灯光（当有rgb通道时，必须输出多个rgb:bpm_flash命令，穿插在整个编排中）===\n"
+            f"- <rgb:bpm_flash bpm=... mode=... duration=...>\n"
+            f"- 每个bpm_flash的duration不要超过{round(beat_dur * 16, 1)}秒（约16拍），每隔{round(beat_dur * 8, 1)}~{round(beat_dur * 16, 1)}秒切换一次mode\n"
+            f"- 模式选用指南（根据音乐情绪和段落选择）：\n"
+            f"  * all       全带随机色每拍暴闪 → 最高能，适合副歌高潮、drop段\n"
+            f"  * disco     每拍4次快速换色   → 强烈节奏感，适合快节奏舞曲、高潮\n"
+            f"  * strobe    每拍3次快闪        → 极端刺激，适合EDM drop、最高潮的短暂瞬间\n"
+            f"  * meteor    4路流星积累        → 动感速度感，适合副歌上升段、rap段\n"
+            f"  * sparkle   散点随机亮         → 闪烁星光感，适合副歌、欢快段落\n"
+            f"  * alter     全带整体换色       → 稳定律动感，适合主歌、mid段\n"
+            f"  * running   单点跑马积累       → 逐渐铺满的期待感，适合前奏、intro\n"
+            f"  * chase_clear 单点清屏移动     → 极简追逐感，适合安静段落、间奏\n"
+            f"  * bounce    两点从两端汇聚     → 对称律动，适合bridge、过渡段\n"
+            f"  * cylon     红点来回弹跳       → 机械感，适合电子感强的段落\n"
+            f"  * heartbeat 双脉冲心跳         → 情感张力，适合情绪爆发前的蓄力段\n"
+            f"  * rainbow_pulse 彩虹色逐拍推进 → 梦幻色彩，适合欢快轻盈的段落\n"
+            f"  * gradient  亮度50/100交替     → 最柔和律动，适合慢歌、轻柔段落\n"
+            f"  * fire      暖色循环           → 热烈温暖，适合慢歌高潮、情感段落\n"
+            f"=== 机械臂（**必须**加入到可用动作CTML命令）\n"
+            f"- <jetarm:motion ...>"
             f"\n"
             f"=== 动作时长表（固定，不随歌曲BPM变化）===\n"
             f"{dance_table}\n"
@@ -501,11 +586,146 @@ class MusicSearch:
             f"7. 不要说话，只输出CTML动作标签\n"
             f"8. 必须使用机械臂动作\n"
         )
-        logger.info("Pushing choreography event for %s (BPM=%d, %.1fs)", title, bpm, duration_s)
+        if save_name:
+            prompt += (
+                f"8. **必须**：把所有动作序列整体包在 <save_ctml name=\"{save_name}\">...</save_ctml> 里，"
+                f"系统会自动保存并执行\n"
+            )
+        logger.info("Pushing rich choreography for %s (BPM=%d, %.1fs)", title, bpm, duration_s)
         await self._eventbus.put(ReactAgentEvent(
             messages=[Message.new(role="system").with_content(Text(text=prompt))],
             priority=0,
         ))
+
+    async def _start_loop_choreography(self, song: dict, remaining_s: float | None = None) -> None:
+        """loop 模式：让 LLM 生成一个循环单元并保存，后台任务直接 replay 不再调用 LLM。"""
+        bpm = song.get("bpm", 0)
+        total_s = remaining_s if remaining_s is not None else song.get("duration_s", 0)
+        loop_dur = self._loop_unit_duration(bpm)
+
+        # 清除上一首歌的 music_loop，确保新歌生成新序列
+        self._ctml_repo.delete_ctml("music_loop")
+
+        # 先为全曲发一个覆盖整体时长的 RGB 命令（非阻塞后台运行）
+        rgb_mode = random.choice(_AUTO_RGB_MODES)
+        await self._eventbus.put(CTMLAgentEvent(
+            ctml=f'<rgb:bpm_flash bpm="{bpm}" mode="{rgb_mode}" duration="{total_s}"/>',
+            priority=2,
+        ))
+
+        await self._push_loop_unit_event(song, loop_dur)
+
+        self._perf_task = asyncio.create_task(
+            self._loop_repeat_task(song, loop_dur, total_s)
+        )
+
+    async def _push_loop_unit_event(self, song: dict, loop_dur: float) -> None:
+        """loop 模式：向 LLM 请求一个循环单元，并要求 save_ctml 保存为 music_loop。"""
+        title = song.get("title", "")
+        artist = song.get("artist", "")
+        bpm = song.get("bpm", 0)
+        beat_dur = round(60.0 / bpm, 2) if bpm > 0 else 0.5
+
+        internal_beat_dur = 60.0 / DanceMove.default_bpm
+        dance_lines = []
+        for name, move in AVAILABLE_MOVES.items():
+            _func, _params, meta = move
+            beats = meta.get("default_duration_beats", 4)
+            total_dur = round(internal_beat_dur * beats + _HEAD_RESET_OVERHEAD, 1)
+            dance_lines.append(f"  {name}: {total_dur}s")
+        dance_table = "\n".join(dance_lines)
+
+        prompt = (
+            f"歌曲 {title} - {artist} 正在播放（BPM={bpm}）。\n"
+            f"请为这首歌生成一个约 {loop_dur} 秒的循环动作单元，系统会自动把它重复到歌曲结束。\n"
+            f"\n"
+            f"=== 节拍信息 ===\n"
+            f"每拍时长: {beat_dur}s（BPM={bpm}）；循环单元约 {loop_dur}s\n"
+            f"=== 机械臂（**必须**加入）===\n"
+            f"- <jetarm:motion .../>\n"
+            f"=== 动作时长表 ===\n"
+            f"{dance_table}\n"
+            f"  emotion: ~1.5s  head_move: 由duration决定  antennas_move: 由duration决定\n"
+            f"\n"
+            f"=== 可用动作CTML命令 ===\n"
+            f'- <reachy_mini:dance name="..."/>\n'
+            f'- <reachy_mini:emotion emoji="..."/>\n'
+            f'- <reachy_mini:head_move yaw=".." pitch=".." duration=".."/>\n'
+            f'- <reachy_mini:antennas_move left=".." right=".." duration=".."/>\n'
+            f"- <jetarm:motion .../>\n"
+            f'- <sleep duration=".."/>  节拍停顿\n'
+            f"\n"
+            f"=== 编排要求 ===\n"
+            f"1. 只生成约 {loop_dur} 秒的内容（不要超出），动作要多样\n"
+            f"2. 用<sleep duration=\"{beat_dur}\"/>踩准节奏\n"
+            f"3. **必须**包含至少1个jetarm:motion命令\n"
+            f"4. **只输出** <save_ctml name=\"music_loop\">...动作序列...</save_ctml>，不要在外面再重复输出动作\n"
+            f"5. 不要说话，只输出save_ctml标签\n"
+        )
+        logger.info("Pushing loop unit for %s (BPM=%d, loop=%.1fs)", title, bpm, loop_dur)
+        await self._eventbus.put(ReactAgentEvent(
+            messages=[Message.new(role="system").with_content(Text(text=prompt))],
+            priority=0,
+        ))
+
+    async def _loop_repeat_task(self, song: dict, loop_dur: float, total_s: float) -> None:
+        """轮询等待 LLM 保存 music_loop，然后发一次 loop 原语覆盖整首歌（避免输出翻倍导致截断）。"""
+        try:
+            poll_interval = 2.0
+            max_wait = loop_dur + 15.0
+            waited = 0.0
+            while waited < max_wait:
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+                if not self._current_song:
+                    return
+                if self._ctml_repo.has_ctml("music_loop"):
+                    break
+            else:
+                logger.warning("music_loop not saved within %.0fs, skipping loop repeat", max_wait)
+                return
+
+            loop_ctml = self._ctml_repo.get_ctml("music_loop")
+            if not loop_ctml:
+                return
+            remaining_s = total_s - waited
+            if remaining_s <= 0:
+                return
+            times = max(1, math.ceil(remaining_s / loop_dur))
+            await self._eventbus.put(CTMLAgentEvent(
+                ctml=f'<loop times="{times}">{loop_ctml}</loop>',
+                priority=2,
+            ))
+        except asyncio.CancelledError:
+            pass
+
+    async def _run_auto_choreography(self, bpm: int, remaining_s: float) -> None:
+        """auto 模式：程序化循环，按 BPM 发送固定 CTML 模板，不调用 LLM。"""
+        beat_dur = 60.0 / bpm if bpm > 0 else 0.5
+        dances = _AUTO_FAST_DANCES if bpm >= 100 else _AUTO_SLOW_DANCES
+        # 每段 = 8 拍，与一次 bpm_flash 对齐
+        seg_beats = 8
+        seg_dur = round(beat_dur * seg_beats, 1)
+
+        mode_idx = 0
+        elapsed = 0.0
+        try:
+            while elapsed < remaining_s and self._current_song:
+                dance = random.choice(dances)
+                rgb_mode = _AUTO_RGB_MODES[mode_idx % len(_AUTO_RGB_MODES)]
+                ant_pos = round(random.uniform(0.3, 1.0), 2)
+                ctml = (
+                    f'<reachy_mini:dance name="{dance}"/>'
+                    f'<reachy_mini:antennas_move left="{ant_pos}" right="{1.0 - ant_pos}" duration="{beat_dur * 2}"/>'
+                    f'<rgb:bpm_flash bpm="{bpm}" mode="{rgb_mode}" duration="{seg_dur}"/>'
+                )
+                await self._eventbus.put(CTMLAgentEvent(ctml=ctml, priority=2))
+                mode_idx += 1
+                await asyncio.sleep(seg_dur)
+                elapsed += seg_dur
+        except asyncio.CancelledError:
+            pass
+
 
     async def _stop_after_duration(self, duration_s: float) -> None:
         """Stop playback after specified duration."""
@@ -554,7 +774,7 @@ class MusicSearch:
     # Public async API (exposed as CTML commands)
     # ------------------------------------------------------------------
 
-    async def play_music(self, query: str, count: int = 1, duration: float = -1.0, continuous: str = "False") -> str:
+    async def play_music(self, query: str, count: int = 1, duration: float = -1.0, continuous: bool = False, refresh: bool = False) -> str:
         """搜索并播放音乐。query 必须是具体的「歌手+歌名」或「歌名」。
 
         禁止将用户的模糊描述（如"下雨天适合听的歌"）直接作为 query。
@@ -564,10 +784,12 @@ class MusicSearch:
         :param count: 播放歌曲数量，默认1
         :param duration: 不要传此参数，除非用户明确要求只听指定秒数。默认-1播完整首歌
         :param continuous: 连续播放模式。当用户要求播放多首歌曲时设为True，播完后系统会提示你继续选歌
+        :param refresh: 强制重新生成编排并覆盖已保存的版本（rich模式有效）。用户说"重新编排"/"换个动作"时设为True
         """
         continuous = continuous == "True"
 
         self._loop = asyncio.get_running_loop()
+        self._refresh = refresh
 
         # Reject stale continuous callbacks that arrive after stop_music
         if self._music_stopped:
@@ -614,7 +836,7 @@ class MusicSearch:
                 await self._sound.play_sound(local_path)
                 self._playback_start_time = time.monotonic()
                 remaining_s = self._start_duration_timer(song)
-                await self._push_choreography_event(song, remaining_s=remaining_s)
+                await self._dispatch_choreography_event(song, remaining_s=remaining_s)
                 return (
                     f"正在播放: {title} - {artist}（缓存）。"
                     f"时长: {remaining_s}秒，BPM: {info['bpm']}。"
@@ -640,6 +862,7 @@ class MusicSearch:
         self._playlist = [first_song]
         self._playlist_index = 0
         self._current_song = first_song
+        self._last_song = first_song
         # Keep up to (count - 1) remaining results for prefetch
         self._pending_results = remaining_results[:count - 1]
 
@@ -647,7 +870,7 @@ class MusicSearch:
         await self._sound.play_sound(first_song["local_path"])
         self._playback_start_time = time.monotonic()
         remaining_s = self._start_duration_timer(first_song)
-        await self._push_choreography_event(first_song, remaining_s=remaining_s)
+        await self._dispatch_choreography_event(first_song, remaining_s=remaining_s)
 
         # 6. Start prefetching next song in background
         self._start_prefetch()
@@ -686,6 +909,16 @@ class MusicSearch:
     async def pause_music(self) -> str:
         """暂停音乐播放。"""
         await self._sound.pause_sound()
+        # Cancel background perf task and interrupt any running CTML loop/dance
+        mode = os.getenv("REACHY_MINI_PERFORMANCE_MODE", "rich")
+        if mode in ("loop", "auto"):
+            if self._perf_task and not self._perf_task.done():
+                self._perf_task.cancel()
+                self._perf_task = None
+            await self._eventbus.put(CTMLAgentEvent(
+                ctml='<interrupt/>',
+                priority=2,
+            ))
         return "音乐已暂停。"
 
     async def stop_music(self) -> str:
@@ -693,12 +926,29 @@ class MusicSearch:
         self._music_stopped = True  # Block stale continuous callbacks
         await self._reset_playback()
         self._continuous = False  # Explicitly stop continuous mode
-        # Clear remaining dance commands on reachy_mini channel
+        # Interrupt any running CTML loop and clear reachy_mini channel
         await self._eventbus.put(CTMLAgentEvent(
-            ctml='<clear chan="reachy_mini"/>',
+            ctml='<interrupt/><clear chan="reachy_mini"/>',
             priority=2,
         ))
         return "音乐已停止。"
+
+    async def save_performance(self) -> str:
+        """保存当前（或最近播放）歌曲的舞蹈编排，以便下次播放同一首歌时直接复用，无需重新调用LLM。
+        当用户表示"这段舞蹈跳得不错，保存下来"时调用。会重新生成一次编排并保存（近似版本）。
+        仅在 rich 模式下有意义。
+        """
+        song = self._current_song or self._last_song
+        if song is None:
+            return "没有可保存的歌曲编排，请先播放一首歌。"
+        bvid = song.get("bvid", "")
+        if not bvid:
+            return "无法获取歌曲ID，保存失败。"
+        save_name = f"song_{bvid}"
+        duration_s = song.get("duration_s", 0)
+        logger.info("Saving performance for %s -> %s", song.get("title", ""), save_name)
+        await self._push_rich_choreography_event(song, remaining_s=duration_s, save_name=save_name)
+        return f"正在为《{song.get('title', '')}》重新生成并保存编排，下次播放时将直接复用。"
 
     async def resume_music(self) -> str:
         """恢复音乐播放，并继续配合动作。"""
@@ -712,7 +962,7 @@ class MusicSearch:
 
         # Push a new choreography event with accurate remaining time
         if self._current_song and remaining_s > 0:
-            await self._push_choreography_event(self._current_song, remaining_s=remaining_s)
+            await self._dispatch_choreography_event(self._current_song, remaining_s=remaining_s)
 
         return f"音乐已恢复播放，剩余约{remaining_s:.0f}秒。"
 
@@ -725,4 +975,5 @@ class MusicSearchProvider(Provider[MusicSearch]):
         sound = con.force_fetch(Sound)
         ws = con.force_fetch(Workspace)
         eventbus = con.force_fetch(EventBus)
-        return MusicSearch(sound, ws, eventbus)
+        ctml_repo = con.force_fetch(CtmlRepo)
+        return MusicSearch(sound, ws, eventbus, ctml_repo)
