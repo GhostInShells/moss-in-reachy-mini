@@ -3,7 +3,8 @@ import datetime
 import logging
 import time
 from abc import ABC, abstractmethod
-from typing import Union, Optional, Self, List
+from typing import Union, Optional, List
+from typing_extensions import Self
 
 from ghoshell_common.contracts.logger import LoggerItf
 from ghoshell_container import Container, IoCContainer

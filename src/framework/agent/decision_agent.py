@@ -1,4 +1,5 @@
-from typing import Union, Self, List, Optional
+from typing import Union, List, Optional
+from typing_extensions import Self
 
 from ghoshell_container import IoCContainer, Provider, INSTANCE
 from ghoshell_moss import MOSSShell, Message, Text, PyChannel

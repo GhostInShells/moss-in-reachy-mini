@@ -1,5 +1,6 @@
 import asyncio
-from typing import Optional, Self
+from typing import Optional
+from typing_extensions import Self
 
 from ghoshell_moss import Message, Text, ContentModel, Delta, DeltaModel
 from ghoshell_moss_contrib.agent.chat.base import BaseChat

@@ -1,5 +1,6 @@
 import time
-from typing import TypedDict, Optional, Any, Self, ClassVar, List, Union
+from typing import TypedDict, Optional, Any, ClassVar, List, Union
+from typing_extensions import Self
 
 from ghoshell_common.helpers import uuid
 from ghoshell_moss import Base64Image, Message

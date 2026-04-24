@@ -81,7 +81,7 @@ class FaceRecognizer:
     def get_face_positions(self, img: NDArray) -> List[Position]:
         h, w = img.shape[:2]
         start = time.time()
-        faces = self.app.get(img)
+        faces = self.app.get(img.copy())
         self.logger.debug(f"Model cost {time.time() - start} seconds")
         positions: List[Position] = []
         for i, face in enumerate(faces):
