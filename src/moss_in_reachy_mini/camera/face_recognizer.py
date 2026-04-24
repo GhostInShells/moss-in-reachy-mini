@@ -110,7 +110,6 @@ class FaceRecognizer:
             positions.append(position)
 
         del faces
-        gc.collect()
         return positions
 
     def _recognize_with_img(

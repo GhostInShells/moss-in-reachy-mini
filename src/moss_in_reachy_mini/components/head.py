@@ -58,7 +58,7 @@ class Head:
             z (float): Z coordinate of the position. range: [-4cm, +2.5cm]
             roll (float): Roll angle. range(degree): [-40, +40]
             pitch (float): Pitch angle. range(degree): [-40, +40]
-            yaw (float): Yaw angle. range(degree): [-60, +60]
+            yaw (float): Yaw angle. range(degree)，正数是左转头，负数是右转头: [-60, +60]
             body_yaw (float): Body yaw angle. range(degree): [-155, +155]
             duration (float): Duration in seconds.
         """

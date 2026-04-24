@@ -8,9 +8,10 @@ from typing import List
 from PIL import Image
 from ghoshell_common.contracts import Storage, Workspace, LoggerItf, FileStorage
 from ghoshell_container import Provider, IoCContainer, INSTANCE
-from ghoshell_moss import Message, Base64Image, Text, PyChannel
+from ghoshell_moss import Message, Base64Image, Text, PyChannel, CommandTask, CommandStackResult, ChannelCtx, MOSSShell
+from ghoshell_moss.core.concepts.command import CommandTaskResult
 
-from framework.abcd.agent_event import VisionAgentEvent, CTMLAgentEvent
+from framework.abcd.agent_event import VisionAgentEvent, CTMLAgentEvent, ReactAgentEvent
 from framework.abcd.agent_hub import EventBus
 from moss_in_reachy_mini.camera.camera_worker import CameraWorker
 from moss_in_reachy_mini.camera.model import get_closest_position
@@ -67,12 +68,17 @@ class Vision:
             await asyncio.sleep(interval)
 
         if frames:
-            event = VisionAgentEvent(content=about + ' 本次look成功,你只需要说你看到的视觉就可以了,不需要再次调用look', images=frames)
+            content = about + ' 本次look成功,你只需要说你看到的视觉就可以了,不需要再次调用look'
         else:
-            event = VisionAgentEvent(content=about + ' 本次look失败,没有获取到视觉信息', images=[])
+            content = about + ' 本次look失败,没有获取到视觉信息'
 
-        event.priority = -1  # 降低优先级
-        await self.eventbus.put(event)
+        return CommandTaskResult(
+            observe=True,
+            messages=[Message.new(role="user", name="__look__").with_content(
+                Text(text=content),
+                *frames
+            )]
+        )
 
     # deprecated, using enrolling state
     async def enroll(self, name: str):
