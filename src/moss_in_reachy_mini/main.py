@@ -296,8 +296,8 @@ def common_dependencies(container: IoCContainer):
     container.set(Session, session)
 
     # 默认Agent输出
-    # chat = ConsolePTTChat(container=container)
-    chat = ConsoleChat()
+    chat = ConsolePTTChat(container=container)
+    # chat = ConsoleChat()
     container.set(BaseChat, chat)
 
     # DouyinLive
@@ -414,8 +414,6 @@ def get_speech(
         from framework.speech.xiaomi_tts import XiaomiTTS, XiaomiTTSConf
 
         tts_conf = XiaomiTTSConf(sample_rate=sample_rate)
-        if default_speaker:
-            tts_conf.default_speaker = default_speaker
         tts = XiaomiTTS(conf=tts_conf, logger=container.get(LoggerItf))
     else:
         from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
