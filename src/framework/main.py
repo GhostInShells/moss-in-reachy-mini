@@ -11,8 +11,9 @@ from ghoshell_moss import new_ctml_shell
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy
 from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
-from ghoshell_moss_contrib.example_ws import workspace_container, get_example_speech
+from ghoshell_moss_contrib.example_ws import workspace_container
 
+from framework.speech.example_speech import get_example_speech
 from framework.abcd.agent import AgentConfig, ModelConf
 from framework.abcd.agent_event import ProgramInputAgentEvent
 from framework.abcd.agent_hook import AgentHook
@@ -99,9 +100,9 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # agent task
     agent_task_chan = container.force_fetch(AgentTaskChannel)
 
-    slide_chan = ZMQChannelProxy(
-        name="slide",
-        address="tcp://127.0.0.1:6666",
+    xgo_chan = ZMQChannelProxy(
+        name="xgo",
+        address="tcp://192.168.3.146:9528",
         send_timeout=3,
         recv_timeout=3,
     )
@@ -109,7 +110,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # shell
     shell = new_ctml_shell(
         container=container,
-        # speech=get_example_speech(container, default_speaker="可爱女生"),
+        speech=get_example_speech(container),
         experimental=False,
     )
     shell.main_channel.import_channels(
@@ -118,7 +119,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         douyin_live.as_channel(),
         websearch_chan,
         agent_task_chan,
-        slide_chan
+        xgo_chan
     )
 
     if IS_ENABLE_CHINESE_CHESS:
@@ -306,12 +307,9 @@ async def main() -> None:
         )
         container.set(AgentHub, agent_hub)
 
-        server = AgentFastAPI(eventbus=eventbus)
-
         await asyncio.gather(
             agent_hub.bootstrap(),
             setup_chat(eventbus, container.force_fetch(BaseChat)),
-            # server.run()
         )
 
 

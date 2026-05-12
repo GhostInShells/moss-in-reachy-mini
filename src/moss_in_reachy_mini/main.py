@@ -9,6 +9,7 @@ from ghoshell_moss.speech import BaseTTSSpeech
 from ghoshell_moss.speech.player.pyaudio_player import PyAudioStreamPlayer
 from ghoshell_moss.transports.zmq_channel import ZMQChannelProxy, ZMQChannelHub
 from ghoshell_moss.transports.zmq_channel.zmq_hub import ZMQHubConfig, ZMQProxyConfig
+from ghoshell_moss_contrib.agent import ConsoleChat
 from ghoshell_moss_contrib.agent.chat.base import BaseChat
 from reachy_mini import ReachyMini
 
@@ -295,7 +296,8 @@ def common_dependencies(container: IoCContainer):
     container.set(Session, session)
 
     # 默认Agent输出
-    chat = ConsolePTTChat(container=container)
+    # chat = ConsolePTTChat(container=container)
+    chat = ConsoleChat()
     container.set(BaseChat, chat)
 
     # DouyinLive
@@ -396,42 +398,51 @@ def get_speech(
     default_speaker: str | None = None,
     container: IoCContainer = None,
 ) -> BaseTTSSpeech:
-    from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
-
     container = container or get_container()
     mixer = container.force_fetch(AudioMixer)
     recorder = container.force_fetch(VideoRecorderWorker)
-    app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
-    app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
-    resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")
-    if not app_key or not app_token:
-        raise NotImplementedError(
-            "Env $VOLCENGINE_STREAM_TTS_APP or $VOLCENGINE_STREAM_TTS_ACCESS_TOKEN not configured."
-            "Maybe examples/.env not set, or you need to set $USE_VOICE_SPEECH `no`"
-        )
-    tts_conf = VolcengineTTSConf(
-        app_key=app_key,
-        access_token=app_token,
-        resource_id=resource_id,
-        sample_rate=mini.media.get_output_audio_samplerate(),
-        disconnect_on_idle=int(os.environ.get("TTS_DISCONNECT_ON_IDLE", "3600")),
-    )
-    if default_speaker:
-        tts_conf.default_speaker = default_speaker
+    sample_rate = mini.media.get_output_audio_samplerate()
 
-    # player = PyAudioStreamPlayer()
     player = ReachyMiniStreamPlayer(
-            mini,
-            logger=container.get(LoggerItf),
-            recorder=recorder,
-            mixer=mixer,
+        mini,
+        logger=container.get(LoggerItf),
+        recorder=recorder,
+        mixer=mixer,
+    )
+
+    if os.environ.get("USE_MIMO_TTS", "").lower() in ("1", "true", "yes"):
+        from framework.speech.xiaomi_tts import XiaomiTTS, XiaomiTTSConf
+
+        tts_conf = XiaomiTTSConf(sample_rate=sample_rate)
+        if default_speaker:
+            tts_conf.default_speaker = default_speaker
+        tts = XiaomiTTS(conf=tts_conf, logger=container.get(LoggerItf))
+    else:
+        from ghoshell_moss.speech.volcengine_tts import VolcengineTTS, VolcengineTTSConf
+
+        app_key = os.environ.get("VOLCENGINE_STREAM_TTS_APP")
+        app_token = os.environ.get("VOLCENGINE_STREAM_TTS_ACCESS_TOKEN")
+        resource_id = os.environ.get("VOLCENGINE_STREAM_TTS_RESOURCE_ID", "seed-tts-2.0")
+        if not app_key or not app_token:
+            raise NotImplementedError(
+                "Env $VOLCENGINE_STREAM_TTS_APP or $VOLCENGINE_STREAM_TTS_ACCESS_TOKEN not configured."
+                "Maybe examples/.env not set, or you need to set $USE_VOICE_SPEECH `no`"
+            )
+        tts_conf = VolcengineTTSConf(
+            app_key=app_key,
+            access_token=app_token,
+            resource_id=resource_id,
+            sample_rate=sample_rate,
+            disconnect_on_idle=int(os.environ.get("TTS_DISCONNECT_ON_IDLE", "3600")),
         )
+        if default_speaker:
+            tts_conf.default_speaker = default_speaker
+        tts = VolcengineTTS(conf=tts_conf)
 
     speech = BaseTTSSpeech(
-        tts=VolcengineTTS(conf=tts_conf),
+        tts=tts,
         player=player,
     )
-    # speech.commands = lambda: []
     return speech
 
 

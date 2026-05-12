@@ -148,11 +148,14 @@ class ConsolePTTChat(BaseChat):
                 if result.text and result.text.strip():
                     # 将识别结果作为用户输入处理
                     if result.is_last:
-                        self.console_chat.console.print("", end="\r\033[K")
+                        self.console_chat.console.file.write("\r\033[K")
                         self.console_chat.console.print(f"[cyan]Recognized: {result.text}[/cyan]")
                         await self.console_chat.handle_voice_input(result.text)
                     else:
-                        self.console_chat.console.print(f"[green]Recognizing: {result.text}[/green]", end='\r')
+                        # Rich console.print() 对 \r 处理有差异，用 render_str 转换后直接写 stdout
+                        rendered = self.console_chat.console.render_str(f"[green]Recognizing: {result.text}[/green]")
+                        self.console_chat.console.file.write(f"\r\033[K{rendered}")
+                        self.console_chat.console.file.flush()
 
             async def on_waken(self) -> None:
                 """唤醒事件（跳过实现）"""

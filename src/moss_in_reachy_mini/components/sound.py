@@ -170,7 +170,7 @@ class Sound:
         return [msg]
 
     def as_channel(self) -> PyChannel:
-        chan = PyChannel(name="sound", description="")
+        chan = PyChannel(name="sound", description="reachy mini sound")
         chan.build.command(
             name="play_sound",
             doc=self.play_sound_doc,
