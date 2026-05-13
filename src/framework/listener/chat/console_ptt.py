@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 import traceback
@@ -31,6 +32,107 @@ if check_agent():
     from framework.listener.async_concepts import AsyncListenerService, AsyncListenerStateName, Recognition
 
 
+class ThreadedListenerService:
+    """在独立线程中运行 Listener 服务，与主 event loop 完全解耦。"""
+
+    def __init__(self, inner: AsyncListenerService, main_loop: asyncio.AbstractEventLoop, logger):
+        self._inner = inner
+        self._main_loop = main_loop
+        self._logger = logger
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+
+    def _schedule(self, coro):
+        """在 listener 线程中调度协程，返回 concurrent.futures.Future"""
+        return asyncio.run_coroutine_threadsafe(coro, self._loop)
+
+    async def _await_schedule(self, coro):
+        """在 listener 线程中调度协程，非阻塞等待结果"""
+        future = self._schedule(coro)
+        return await asyncio.wrap_future(future)
+
+    async def _forward_callback(self, callback):
+        """包装回调：从 listener 线程转发到主线程（fire-and-forget）"""
+        from framework.listener.async_concepts import AsyncListenerCallback
+
+        class _ForwardCallback(AsyncListenerCallback):
+            def __init__(self, cb, main_loop, logger):
+                self._cb = cb
+                self._main_loop = main_loop
+                self._logger = logger
+
+            async def on_recognition(self, result):
+                asyncio.run_coroutine_threadsafe(self._cb.on_recognition(result), self._main_loop)
+
+            async def on_state_change(self, state):
+                asyncio.run_coroutine_threadsafe(self._cb.on_state_change(state), self._main_loop)
+
+            async def on_waken(self):
+                asyncio.run_coroutine_threadsafe(self._cb.on_waken(), self._main_loop)
+
+            async def on_error(self, error):
+                asyncio.run_coroutine_threadsafe(self._cb.on_error(error), self._main_loop)
+
+            async def save_batch(self, rec, audio):
+                asyncio.run_coroutine_threadsafe(self._cb.save_batch(rec, audio), self._main_loop)
+
+        return _ForwardCallback(callback, self._main_loop, self._logger)
+
+    async def bootstrap(self):
+        """在独立线程中启动 Listener 服务"""
+        ready = threading.Event()
+
+        def _run():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            try:
+                self._loop.run_until_complete(self._inner.bootstrap())
+                ready.set()
+                self._loop.run_forever()
+            finally:
+                pending = asyncio.all_tasks(self._loop)
+                for t in pending:
+                    t.cancel()
+                if pending:
+                    self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                self._loop.close()
+
+        self._thread = threading.Thread(target=_run, daemon=True, name="listener-service")
+        self._thread.start()
+        ready.wait(timeout=10)
+        if not ready.is_set():
+            raise RuntimeError("Listener service failed to bootstrap within 10s")
+        self._logger.info("ThreadedListenerService started in background thread")
+
+    async def shutdown(self):
+        """关闭 Listener 服务并停止线程"""
+        if self._loop and self._loop.is_running():
+            try:
+                await self._await_schedule(self._inner.shutdown())
+            except Exception as e:
+                self._logger.warning(f"Listener shutdown error: {e}")
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._logger.info("ThreadedListenerService shutdown complete")
+
+    async def set_callback(self, callback):
+        forwarded = await self._forward_callback(callback)
+        await self._await_schedule(self._inner.set_callback(forwarded))
+
+    async def set_state(self, state: str):
+        self._schedule(self._inner.set_state(state))
+
+    async def current_state(self):
+        return await self._await_schedule(self._inner.current_state())
+
+    async def commit(self):
+        self._schedule(self._inner.commit())
+
+    async def clear_buffer(self):
+        self._schedule(self._inner.clear_buffer())
+
+
 class ConsolePTTChat(BaseChat):
     def __init__(
         self,
@@ -43,6 +145,8 @@ class ConsolePTTChat(BaseChat):
         super().__init__()
 
         self.eventbus = eventbus
+        if container and not self.eventbus:
+            self.eventbus = container.get(EventBus)
 
         # 存储完整的对话历史
         self.conversation_history: List[Dict] = []
@@ -99,7 +203,7 @@ class ConsolePTTChat(BaseChat):
             self.console.print("[yellow]Falling back to text input mode.[/yellow]")
 
     async def _initialize_listener_service(self, mini: ReachyMini=None):
-        """异步初始化Listener服务"""
+        """异步初始化Listener服务（在独立线程中运行，与 AI 流程完全解耦）"""
         from framework.listener.async_listener_service import AsyncListenerServiceImpl
         from framework.listener.configs import ListenerConfig
 
@@ -109,7 +213,6 @@ class ConsolePTTChat(BaseChat):
         if self._container is not None:
             try:
                 hub = self._container.force_fetch(MicHub)
-                # Dedicated subscription for ASR/PTT. Drop oldest on overflow to avoid blocking capture.
                 audio_input = hub.new_audio_input(
                     name="ptt_asr",
                     max_queue=800,
@@ -118,19 +221,23 @@ class ConsolePTTChat(BaseChat):
             except Exception as e:
                 self.logger.warning("failed to init MicHub audio input, fallback to PyAudioInput: %s", e)
 
-        # 创建异步Listener服务
-        self.listener_service = AsyncListenerServiceImpl(
+        # 创建底层异步Listener服务
+        inner = AsyncListenerServiceImpl(
             config=config,
             logger=self.logger,
             audio_input=audio_input,
         )
 
-        # 设置异步回调
-        await self.listener_service.set_callback(self._create_listener_callback())
-        # 异步启动服务
-        await self.listener_service.bootstrap()
+        # 包装为线程隔离版本：独立线程 + 独立 event loop
+        main_loop = asyncio.get_running_loop()
+        threaded = ThreadedListenerService(inner, main_loop, self.logger)
 
-        self.logger.info("AsyncListenerService initialized")
+        # 先启动线程（创建 self._loop），再设置回调
+        await threaded.bootstrap()
+        await threaded.set_callback(self._create_listener_callback())
+
+        self.listener_service = threaded
+        self.logger.info("AsyncListenerService initialized (threaded)")
 
     def _create_listener_callback(self):
         """创建异步Listener回调"""
@@ -148,8 +255,9 @@ class ConsolePTTChat(BaseChat):
                 if result.text and result.text.strip():
                     # 将识别结果作为用户输入处理
                     if result.is_last:
+                        reason_tag = f" [{result.commit_reason}]" if result.commit_reason else ""
                         self.console_chat.console.file.write("\r\033[K")
-                        self.console_chat.console.print(f"[cyan]Recognized: {result.text}[/cyan]")
+                        self.console_chat.console.print(f"[cyan]Recognized: {result.text}{reason_tag}[/cyan]")
                         await self.console_chat.handle_voice_input(result.text)
                     else:
                         # Rich console.print() 对 \r 处理有差异，用 render_str 转换后直接写 stdout
@@ -234,7 +342,7 @@ class ConsolePTTChat(BaseChat):
         def on_press(key):
             """键盘按下回调（单击切换录音）"""
             try:
-                if key in [keyboard.Key.space, keyboard.Key.media_play_pause]:
+                if key in [keyboard.Key.media_play_pause]:
                     asyncio.run_coroutine_threadsafe(
                         self._handle_toggle_recording(),
                         loop
@@ -369,21 +477,20 @@ class ConsolePTTChat(BaseChat):
                 self.logger.exception(f"Error handling enter key: {e}")
 
     async def handle_voice_input(self, text: str):
-        """异步处理语音输入"""
-        # 添加用户消息到历史记录
-        if text:
-            self.add_user_message(text)
+        """异步处理语音输入（非阻塞，与 PTT 流程解耦）"""
+        if not text:
+            return
 
-        # 调用输入处理回调
-        if text and self.on_input_callback:
-            # 注意：on_input_callback 可能是同步的，需要适配
+        # 添加用户消息到历史记录
+        self.add_user_message(text)
+
+        # fire-and-forget：不阻塞 PTT 回调链，即使 AI 正在响应也不影响 ASR 流程
+        if self.on_input_callback:
             if asyncio.iscoroutinefunction(self.on_input_callback):
-                await self.on_input_callback(text)
+                asyncio.create_task(self.on_input_callback(text))
             else:
-                # 在 executor 中运行同步回调
-                await asyncio.get_event_loop().run_in_executor(
-                    None, self.on_input_callback, text
-                )
+                loop = asyncio.get_event_loop()
+                loop.run_in_executor(None, self.on_input_callback, text)
 
     def _print_startup_info(self):
         """打印启动信息"""
@@ -550,7 +657,8 @@ class ConsolePTTChat(BaseChat):
         try:
             await self.eventbus.put(
                 AsrInvokeAgentEvent(
-                    priority=99,
+                    priority=-1,
+                    overdue=3,  # 很短的过期时间，只为了保证没有任何的事件时才触发聆听
                 )
             )
         except Exception as e:

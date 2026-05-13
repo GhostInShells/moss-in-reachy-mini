@@ -413,6 +413,9 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
         self._last_recognition: Optional[Recognition] = None
 
         self._next_state: Optional[tuple[str, Optional[np.ndarray]]] = None
+        self._last_non_empty_recognition_time: float = 0.0
+        self._last_non_empty_text: str = ""
+        self._commit_reason: str = ""
 
     def name(self) -> AsyncListenerStateName:
         return AsyncListenerStateName.PDT_LISTENING
@@ -425,6 +428,9 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
         self._closed = False
         self._committed = False
         self._seq = 0
+        self._last_non_empty_recognition_time = 0.0
+        self._last_non_empty_text = ""
+        self._commit_reason = ""
 
         try:
             # 发送初始空识别结果（保持与现有行为兼容）
@@ -499,15 +505,37 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
 
     # AsyncRecognitionCallback 接口
     async def on_recognition(self, result: Recognition) -> None:
-        if self._closed:
-            return
-
         # 更新批次 ID 和序列号
         result.batch_id = self._batch_id
         self._seq += 1
         result.seq = self._seq
 
         self._last_recognition = result
+        # 跟踪最后一条非空识别结果
+        if result.text and result.text.strip():
+            self._last_non_empty_recognition_time = time.time()
+            self._last_non_empty_text = result.text
+
+        # 如果是最后一条结果但文本为空，用最后一条非空文本替换
+        if result.is_last and not result.text and self._last_non_empty_text:
+            self._logger.info(
+                f"PTT final result is empty, using last non-empty text: '{self._last_non_empty_text}'"
+            )
+            result.text = self._last_non_empty_text
+
+        # 最后一条结果附加提交原因
+        if result.is_last:
+            result.commit_reason = self._commit_reason or "manual"
+
+        self._logger.info(
+            f"PTT on_recognition: text='{result.text}', sentence={result.sentence}, "
+            f"is_last={result.is_last}, committed={self._committed}"
+        )
+
+        # 非最终结果且已关闭，跳过回调
+        if self._closed and not result.is_last:
+            return
+
         await self._callback.on_recognition(result)
 
         # 如果是最后一条结果，标记为关闭
@@ -542,12 +570,14 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
                 frame_duration=self._recognizer.frame_duration,
             )
 
-            # 创建 ASR 批次（启用服务端 VAD 作为备份）
+            # 创建 ASR 批次（启用服务端 VAD 作为备份，不按句停止）
+            # stop_on_sentence=False：ASR 不会在句子边界自动结束，
+            # 由本地 VAD 检测静音后 commit，服务端 vad=2000 作为兜底
             self._current_batch = await self._recognizer.new_batch(
                 callback=self,
                 batch_id=self._batch_id,
                 vad=2000,  # 服务端 VAD：2秒静音自动分句
-                stop_on_sentence=True,
+                stop_on_sentence=False,
             )
 
             try:
@@ -582,12 +612,24 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
         finally:
             self._closed = True
 
+    async def _do_auto_commit(self, reason: str) -> None:
+        """统一的自动提交入口，幂等操作"""
+        if self._committed:
+            return
+        self._committed = True
+        self._commit_reason = reason
+        self._logger.info(f"Auto-commit triggered by: {reason}")
+        if self._current_batch:
+            await self._current_batch.commit()
+
     async def _process_audio_batch(self, audio_queue: deque[np.ndarray]) -> None:
         """处理 PTT 音频批次"""
+        self._logger.info("PTT _process_audio_batch started")
+        chunk_count = 0
         while not self._closed:
             # 检查批次是否完成
             if self._current_batch and await self._current_batch.is_done():
-                self._logger.info("PTT ASR batch completed")
+                self._logger.info("PTT ASR batch completed (is_done=True)")
                 break
 
             # 处理音频数据
@@ -598,11 +640,31 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
 
                 # 本地 VAD 静音检测
                 if self._vad is not None and not self._committed:
-                    if self._vad(audio_data):
-                        self._logger.info("VAD detected silence after speech, auto-committing")
-                        self._committed = True
-                        if self._current_batch:
-                            await self._current_batch.commit()
+                    chunk_count += 1
+                    rms = float(np.sqrt(np.mean(audio_data.astype(float) ** 2)))
+                    should_commit = self._vad(audio_data)
+                    # 每50个chunk打印一次诊断信息（约2.5秒）
+                    if chunk_count % 50 == 0:
+                        self._logger.info(
+                            f"PTT VAD diag: chunk={chunk_count}, rms={rms:.1f}, "
+                            f"speech_detected={self._vad._speech_detected}, "
+                            f"silence_start={self._vad._silence_start}, "
+                            f"committed={self._committed}"
+                        )
+                    if should_commit:
+                        self._logger.info(
+                            f"VAD detected silence after speech, auto-committing (rms={rms:.1f})"
+                        )
+                        await self._do_auto_commit("energy_vad")
+
+            # ASR 空文本超时检测：如果已经识别到过文字，且超过 1.5 秒没有新的非空结果，自动提交
+            if not self._committed and self._last_non_empty_recognition_time > 0:
+                elapsed = time.time() - self._last_non_empty_recognition_time
+                if elapsed >= 1.5:
+                    self._logger.info(
+                        f"ASR empty text timeout ({elapsed:.1f}s since last non-empty result), auto-committing"
+                    )
+                    await self._do_auto_commit("empty_text_timeout")
 
             # 检查是否已提交
             if self._committed:
@@ -613,7 +675,7 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
                         timeout=0.5
                     )
                 except asyncio.TimeoutError:
-                    pass
+                    self._logger.warning("PTT wait_until_done timed out")
                 break
 
             # 短暂休眠以避免忙等待

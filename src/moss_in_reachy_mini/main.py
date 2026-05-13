@@ -274,6 +274,9 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
             instructions=instructions,
         ),
     )
+    main_agent.ctml_candidates = [
+        "<say>我正在听</say>"
+    ]
     main_agent.set_state_hook(moss)
     return main_agent
 

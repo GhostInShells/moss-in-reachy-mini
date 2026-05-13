@@ -251,6 +251,10 @@ class BaseMainAgent(Agent, ABC):
         if asr_invoke := AsrInvokeAgentEvent.from_agent_event(event):
             if not self.ctml_candidates:
                 return None
+            now = time.time()
+            if asr_invoke.is_overdue(now):
+                self._logger.info(f"agent receive event overdue: {event}")
+                return None
             return QuickResponse(
                 shell=self.shell,
                 agent_id=self._id,

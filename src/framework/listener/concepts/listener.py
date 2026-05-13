@@ -135,6 +135,7 @@ class Recognition(BaseModel):
 
     is_last: bool = Field(False, description="是不是批次里最后一条识别数据")
     created: float = Field(default_factory=lambda: round(time.time(), 4), description="创建时间")
+    commit_reason: str = Field(default="", description="提交原因，如 energy_vad / empty_text_timeout / manual")
 
 
 class RecognitionCallback(Protocol):

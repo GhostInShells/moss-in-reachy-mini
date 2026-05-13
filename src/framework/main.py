@@ -172,7 +172,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     eventbus = container.force_fetch(EventBus)
     # agent.set_state_hook(DriveSelfState(eventbus=eventbus, douyin=douyin_live))
     agent.ctml_candidates = [
-        # "<say>我正在听</say>"
+        "<say>我正在听</say>"
     ]
     return agent
 
@@ -258,7 +258,7 @@ async def main() -> None:
     ws_dir = pathlib.Path(__file__).parent.parent.joinpath("moss_in_reachy_mini/.workspace")
     with workspace_container(ws_dir) as container:
         container.set(LoggerItf, logging.getLogger())
-        logging.basicConfig(level=logging.WARNING)
+        logging.basicConfig(level=logging.INFO)
 
         # 公共的依赖
         container.set(StorageMemory, StorageMemory(MemoryStorage(dir_="memory")))
