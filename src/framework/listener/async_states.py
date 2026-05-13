@@ -626,6 +626,8 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
         """处理 PTT 音频批次"""
         self._logger.info("PTT _process_audio_batch started")
         chunk_count = 0
+        last_audio_time = time.time()  # 最后一次收到音频的时间
+        has_speech = False  # 是否检测到过语音活动（音频队列非空）
         while not self._closed:
             # 检查批次是否完成
             if self._current_batch and await self._current_batch.is_done():
@@ -635,6 +637,8 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
             # 处理音频数据
             if audio_queue:
                 audio_data = audio_queue.popleft()
+                last_audio_time = time.time()
+                has_speech = True
                 if self._current_batch:
                     await self._current_batch.buffer(audio_data)
 
@@ -656,6 +660,16 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
                             f"VAD detected silence after speech, auto-committing (rms={rms:.1f})"
                         )
                         await self._do_auto_commit("energy_vad")
+
+            # 音频队列空闲检测：如果检测到过语音活动，且音频队列持续为空超过 1.5 秒，自动提交
+            # 这个检测不依赖 ASR 返回空文本，直接基于音频输入
+            if not self._committed and has_speech:
+                audio_idle = time.time() - last_audio_time
+                if audio_idle >= 1.5:
+                    self._logger.info(
+                        f"Audio queue idle for {audio_idle:.1f}s after speech, auto-committing"
+                    )
+                    await self._do_auto_commit("audio_idle")
 
             # ASR 空文本超时检测：如果已经识别到过文字，且超过 1.5 秒没有新的非空结果，自动提交
             if not self._committed and self._last_non_empty_recognition_time > 0:
