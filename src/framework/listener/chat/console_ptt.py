@@ -332,7 +332,7 @@ class ConsolePTTChat(BaseChat):
             self.logger.exception(f"Error in input loop: {e}")
 
     async def _keyboard_listener_loop(self):
-        """异步键盘监听循环，单击空格/媒体键开始录音，静音自动结束"""
+        """异步键盘监听循环，单击媒体键开始录音，静音自动结束"""
         if not HAS_PYNPUT:
             self.logger.error("pynput not available, cannot start keyboard listener")
             return
@@ -352,9 +352,9 @@ class ConsolePTTChat(BaseChat):
                         self._handle_enter_key_operation(),
                         loop
                     )
-                elif key == keyboard.KeyCode.from_char('q'):
-                    self.console.print("[bold red]关闭中....[/bold red]")
-                    self._quit_event.set()
+                # elif key == keyboard.KeyCode.from_char('q'):
+                #     self.console.print("[bold red]关闭中....[/bold red]")
+                #     self._quit_event.set()
             except Exception as e:
                 self.logger.error(f"Error in on_press: {e}")
 
@@ -368,7 +368,7 @@ class ConsolePTTChat(BaseChat):
             on_release=on_release
         )
         self.keyboard_listener.start()
-        self.console.print("[green]键盘监听已启动：按 空格/媒体键 开始录音，静音自动结束，按 '回车键' 打断输出，按 'q' 退出。[/green]")
+        self.console.print("[green]键盘监听已启动：按 媒体键 开始录音，静音自动结束，按 '回车键' 打断输出。[/green]")
 
         # 等待退出事件
         try:
@@ -504,7 +504,6 @@ class ConsolePTTChat(BaseChat):
 2. 停止说话后约 1.5 秒自动结束录音并提交识别
 3. 录音中再按一次可手动结束
 4. 按 `回车键`：打断 AI 的流式输出
-5. 按 `q` 键：退出程序
 """),
             title="Voice (Single Press + Auto Silence Detection)",
         ))
@@ -573,7 +572,7 @@ class ConsolePTTChat(BaseChat):
         self.ai_response_done.set()
 
         # 根据模式显示不同的提示
-        self.console.print("> 按空格/媒体键开始说话，静音自动结束: ")
+        self.console.print("> 按媒体键开始说话，静音自动结束: ")
 
     def print_exception(self, exception: Any, context: str = ""):
         """打印异常信息"""

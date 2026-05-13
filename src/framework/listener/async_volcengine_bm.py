@@ -352,13 +352,12 @@ class AsyncVocEngineBigModelStreamASRBatch(AsyncRecognitionBatch):
             return
 
         try:
-            await self._audio_queue.put(audio)
+            self._audio_queue.put_nowait(audio)
         except asyncio.QueueFull:
-            self.logger.warning(f"Audio queue full for batch {self.batch_id}")
-            # 丢弃最旧的数据
+            # 队列满时丢弃最旧的数据，避免阻塞
             try:
                 self._audio_queue.get_nowait()
-                await self._audio_queue.put(audio)
+                self._audio_queue.put_nowait(audio)
             except asyncio.QueueEmpty:
                 pass
 
@@ -369,11 +368,18 @@ class AsyncVocEngineBigModelStreamASRBatch(AsyncRecognitionBatch):
         self._committed = True
         self.logger.info(f"Committed ASR batch {self.batch_id}")
 
-        # 通知发送循环可以结束
+        # 通知发送循环可以结束：先清空队列再放 sentinel，避免阻塞
         try:
-            await self._audio_queue.put(None)
+            # 清空队列中的音频数据（commit 后不需要再发送）
+            while not self._audio_queue.empty():
+                try:
+                    self._audio_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            self._audio_queue.put_nowait(None)
         except asyncio.QueueFull:
-            # 队列已满，但已提交，发送循环会处理
+            # 极端情况：put_nowait 仍然满，跳过 sentinel
+            # 发送循环会在 0.1s 超时后检测到 self._committed 并自行退出
             pass
 
     async def get_last_recognition(self) -> Optional[Recognition]:
