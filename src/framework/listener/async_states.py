@@ -394,11 +394,13 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
         audio_input: AsyncAudioInput,
         callback: AsyncListenerCallback,
         logger: LoggerItf,
+        vad=None,
     ):
         self._recognizer = recognizer
         self._audio_input = audio_input
         self._callback = callback
         self._logger = logger
+        self._vad = vad
 
         self._batch_id = uuid()
         self._current_batch: Optional[AsyncRecognitionBatch] = None
@@ -525,6 +527,10 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
     async def _main_loop(self) -> None:
         """PTT 主循环"""
         try:
+            # 重置 VAD 状态
+            if self._vad is not None:
+                self._vad.reset()
+
             # 创建音频队列
             audio_queue: deque[np.ndarray] = deque()
 
@@ -536,12 +542,12 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
                 frame_duration=self._recognizer.frame_duration,
             )
 
-            # 创建 ASR 批次（PTT 模式：stop_on_sentence=False）
+            # 创建 ASR 批次（启用服务端 VAD 作为备份）
             self._current_batch = await self._recognizer.new_batch(
                 callback=self,
                 batch_id=self._batch_id,
-                vad=None,  # PTT 模式不使用 VAD
-                stop_on_sentence=False,
+                vad=2000,  # 服务端 VAD：2秒静音自动分句
+                stop_on_sentence=True,
             )
 
             try:
@@ -589,6 +595,14 @@ class AsyncPdtListeningState(AsyncListenerState, AsyncRecognitionCallback):
                 audio_data = audio_queue.popleft()
                 if self._current_batch:
                     await self._current_batch.buffer(audio_data)
+
+                # 本地 VAD 静音检测
+                if self._vad is not None and not self._committed:
+                    if self._vad(audio_data):
+                        self._logger.info("VAD detected silence after speech, auto-committing")
+                        self._committed = True
+                        if self._current_batch:
+                            await self._current_batch.commit()
 
             # 检查是否已提交
             if self._committed:

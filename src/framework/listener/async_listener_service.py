@@ -49,17 +49,17 @@ class AsyncListenerServiceImpl(AsyncListenerService):
         self._callback = callback or AsyncLoggerCallback(logger)
         self._default_state_name = default_state_name or config.default_state_name
 
-        # 初始化 PyAudio
-        self._pa = pyaudio.PyAudio()
-
         # 初始化音频输入
         if audio_input is None:
+            # 仅在没有外部音频输入时创建 PyAudio 实例
+            self._pa = pyaudio.PyAudio()
             audio_input_config = self._config.get_audio_input_config()
             # 注意：这里需要异步创建，但在构造函数中无法异步
             # 我们将在 bootstrap 中完成
             self._audio_input_config = audio_input_config
             self._audio_input: Optional[AsyncAudioInput] = None
         else:
+            self._pa = None
             self._audio_input = audio_input
             self._audio_input_config = None
 
@@ -103,11 +103,13 @@ class AsyncListenerServiceImpl(AsyncListenerService):
                 allow_batch=0,
             )
         elif state_name == AsyncListenerStateName.PDT_LISTENING.value:
+            from .vad import EnergyVAD
             return AsyncPdtListeningState(
                 recognizer=self._recognizer,
                 audio_input=await self.audio_input(),
                 callback=self._callback,
                 logger=self._logger,
+                vad=EnergyVAD(),
             )
         elif state_name == AsyncListenerStateName.PDT_WAITING.value:
             return AsyncPdtWaitingState()
@@ -224,8 +226,9 @@ class AsyncListenerServiceImpl(AsyncListenerService):
         if self._audio_input:
             await self._audio_input.close()
 
-        # 关闭 PyAudio
-        self._pa.terminate()
+        # 关闭 PyAudio（仅当自己创建了实例时）
+        if self._pa is not None:
+            self._pa.terminate()
 
         self._logger.info("AsyncListenerService shutdown complete")
 

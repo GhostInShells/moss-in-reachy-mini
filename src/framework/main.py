@@ -36,6 +36,7 @@ from framework.apps.utils import AgentConsoleChat
 from framework.apps.volc_websearch import VolcWebsearchChannel
 from framework.listener.chat.console_ptt import ConsolePTTChat
 from framework.rgb.ws2812 import WS2812Channel
+from moss_in_reachy_mini.audio.mic_hub import MicHubProvider
 from moss_in_reachy_mini.utils import load_instructions
 
 
@@ -110,7 +111,7 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
     # shell
     shell = new_ctml_shell(
         container=container,
-        speech=get_example_speech(container),
+        # speech=get_example_speech(container),
         experimental=False,
     )
     shell.main_channel.import_channels(
@@ -251,7 +252,6 @@ async def build_decision_agent(parent: Container, agent_id: str) -> DecisionAgen
 
 
 async def main() -> None:
-
     main_agent_id = "main"
     decision_agent_id = "decision"
 
@@ -265,6 +265,7 @@ async def main() -> None:
         eventbus = QueueEventBus()
         container.set(EventBus, eventbus)
         container.register(DouyinLiveProvider())
+        container.register(MicHubProvider())
 
         # main session
         session = StorageSession(MemoryStorage(dir_="session"))
@@ -289,8 +290,8 @@ async def main() -> None:
         # 控制台语音交互
         container.set(
             BaseChat,
-            # ConsolePTTChat(eventbus=eventbus)
-            ConsoleChat()
+            ConsolePTTChat(eventbus=eventbus, container=container)
+            # ConsoleChat()
         )
 
         main_agent = await build_main_agent(parent=container, agent_id=main_agent_id)
