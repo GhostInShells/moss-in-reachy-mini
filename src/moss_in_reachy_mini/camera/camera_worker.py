@@ -263,7 +263,7 @@ class CameraWorker:
                             track_name=self.target_track_name,
                             track_lost=track_lost,
                             image=frame_rgb,  # RGB frame without annotations
-                            raw_image=None,  # We don't need a separate BGR copy
+                            raw_image=frame,  # Keep BGR copy for face enrollment
                         )
 
             except Exception as e:
