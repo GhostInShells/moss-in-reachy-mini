@@ -148,6 +148,21 @@ outline: ...
 - title和outline组成了幻灯片的标题和大纲，当选中一个幻灯片播放时，AI可以看到每一页的标题和大纲。
 - 图片和正文组成了单页幻灯片的内容，当播放到某一页时，AI可以看到该图片和正文的内容。
 
+## XGO 机器人
+
+Reachy Mini 可通过 ZMQ Channel 与 XGO 桌面级四足机器人联动：
+
+```bash
+# .env 配置
+ENABLE_XGO=1
+XGO_CHANNEL_ADDRESS=tcp://<xgo-ip>:<port>
+```
+
+- `ENABLE_XGO`：设为 `1` 启用 XGO 通道
+- `XGO_CHANNEL_ADDRESS`：XGO 机器人的 ZMQ Channel 地址，格式为 `tcp://<ip>:<port>`
+
+启动后，AI Agent 可直接通过 `xgo` channel 控制 XGO 机器人执行动作。
+
 ## RGB灯光
 ```
 .env 新增

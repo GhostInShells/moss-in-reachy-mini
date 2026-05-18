@@ -231,6 +231,18 @@ async def build_main_agent(parent: Container, agent_id: str) -> MainAgent:
         )
         shell.main_channel.import_channels(jetarm_chan)
 
+    if os.getenv("ENABLE_XGO", "") == "1":
+        xgo_address = os.getenv("XGO_CHANNEL_ADDRESS")
+        xgo_chan = ZMQChannelProxy(
+            name="xgo",
+            address=xgo_address,
+            send_timeout=5.0,
+            recv_timeout=5.0,
+            heartbeat_interval=5.0,
+            heartbeat_timeout=10.0,
+        )
+        shell.main_channel.import_channels(xgo_chan)
+
     if os.getenv("ENABLE_RGB", "") == "1":
         rgb_chan = WS2812Channel(name="rgb", description="基于ws2812b的rgb")
         shell.main_channel.import_channels(rgb_chan)
